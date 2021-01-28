@@ -330,4 +330,5 @@ Resources
 - [.NET CLR GC Implementation](https://raw.githubusercontent.com/dotnet/runtime/master/src/coreclr/gc/gc.cpp)
 - [The Garbage Collection Handbook: The Art of Automatic Memory Management](http://www.amazon.com/Garbage-Collection-Handbook-Management-Algorithms/dp/1420082795)
 - [Garbage collection (Wikipedia)](http://en.wikipedia.org/wiki/Garbage_collection_(computer_science))
+- [.NET GC Internals series on YouTube](https://www.youtube.com/playlist?list=PLpUkQYy-K8Y-wYcDgDXKhfs6OT8fFQtVm)
 - [Pro .NET Memory Management](https://prodotnetmemory.com/)
