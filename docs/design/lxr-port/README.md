@@ -14,15 +14,24 @@ These documents record research and design decisions. **No collector code has la
 Full parity with the reference is a requirement, not an aspiration. Approximations, heuristics and
 GC-side workarounds are not acceptable substitutes for a reference mechanism.
 
-Two revisions are in scope as **parity oracles**:
+Two revisions are in scope as **parity oracles**, and an oracle is a **shipped build pair** — a
+binding together with the `mmtk-core` revision that binding actually pins — not a tag or branch name:
 
-| oracle | mmtk-core | date | role |
-|---|---|---|---|
-| `lxr-pldi-2022` | `4d4e516c` | 2022-04-08 | contemporaneous with the paper |
-| `lxr` branch head | `9625c174` | 2026-05-06 | ~4 further years of development |
+| oracle | mmtk-openjdk | mmtk-core (**the oracle**) | roadmap name | relationship |
+|---|---|---|---|---|
+| PLDI 2022 | `abbdd1d` | **`df8d30a3`** | `lxr-pldi-2022` = `4d4e516c` | the named revision is 9 commits **behind** |
+| `lxr` head | `0682434` | **`304ce69d`** | `lxr` head = `9625c174` | the named revision is 9 commits **ahead** |
+
+Neither roadmap-named revision is what its binding builds. All eighteen skew commits are classified
+in [`P0.1-mechanism-diff.md`](P0.1-mechanism-diff.md) §18.
 
 The oracle is chosen **per mechanism**, and each choice is recorded with its reason. Coupled
 mechanisms share one oracle. `lxr-x/simplified` is explicitly excluded.
+
+> **Two conventions worth carrying forward.** `src/plan/lxr/…` paths exist **only at HEAD** — at PLDI
+> LXR is a compile-time feature configuration of the Immix plan, so a missing PLDI path is never a
+> missing mechanism. And MMTk revisions must be ordered with `git merge-base`, never by author date:
+> `df8d30a3` is dated *earlier* than `4d4e516c` yet is nine commits *after* it, having been rebased.
 
 ## Documents
 
@@ -36,14 +45,18 @@ mechanisms share one oracle. `lxr-x/simplified` is explicitly excluded.
 ## P0.1 outcome in one paragraph
 
 Both revisions were pinned as independent clones and built on OpenJDK in WSL2/Ubuntu 22.04, release
-and fastdebug, each against its **task-named oracle** rather than the revision its binding pins.
-**HEAD runs all 8 DaCapo 2006 benchmarks cleanly** — 3 invocations × 5 iterations at 500 MB and
-2000 MB, plus a fastdebug assertion pass — with no crashes and no assertion failures. **PLDI does
-not**: it completes single-iteration runs of 5 of 8 benchmarks and crashes with SIGSEGV under
-sustained execution, faulting alternately in the write barrier and the concurrent marking trace.
-The paper-contemporaneous oracle is therefore usable for **short observation and for reading**, but
-HEAD is the only revision that can be observed across the whole benchmark set. Every mechanism
-recommendation that selects PLDI carries that caveat.
+and fastdebug, as the **shipped pairs** above; the roadmap-named revisions were additionally built via
+a path override as a buildability experiment, and those numbers are quarantined separately.
+**HEAD meets P0.1's correctness criterion**: all 8 DaCapo 2006 benchmarks, 3 invocations × {1, 5}
+iterations at 500 MB and 2000 MB, plus a fastdebug pass — 96/96 runs, no crashes, and no assertion
+failure in any of seven log directories. **PLDI does not.** It completes single-iteration runs of 5
+of 8 benchmarks, crashes with SIGSEGV under sustained execution, and — the finding that matters most
+for the port — in fastdebug it **fails its own barrier assertion**, `assert!(old.is_null() ||
+rc::count(old) != 0)`, i.e. a field being overwritten still refers to an object whose reference count
+has already reached zero. Release builds compile that check out, which is why the same defect appears
+there as a segfault. The paper-contemporaneous oracle therefore remains the clearest **statement** of
+the algorithm but is not a runnable specification: a port cannot be differentially tested against it.
+Every mechanism recommendation that selects PLDI carries that caveat explicitly.
 
 ## Repository scope
 
