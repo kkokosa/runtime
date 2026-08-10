@@ -44,6 +44,21 @@ mechanisms share one oracle. `lxr-x/simplified` is explicitly excluded.
 > needs no checkout, and is reproducible on any machine that has the clone. See
 > [`P0.3-oracle-probes.md`](P0.3-oracle-probes.md) §1.1; `scripts/verify-ledger.sh` enforces it.
 
+> **A fourth convention, and the one that has cost the most.** **A citation is not evidence unless
+> the code is compiled in the configuration under discussion.** A line can exist at the right
+> revision, at the right path, read exactly as the argument needs it to read, and still be
+> `#[cfg(…)]`-gated out or commented out — in which case it describes nothing that ran. This is the
+> single failure mode that has recurred in every step of P0 so far: a TLS failure generalized into
+> "pip is blocked" without running pip; a positional column index that read the wrong column; a
+> table's membership argued from prose when the page could be rendered; and now two
+> `handle_user_collection_request` overrides cited as the oracles' behaviour when both are under
+> `#[cfg(feature = "nogc_no_zeroing")]`, which neither oracle enables. The sharpest example is PLDI's
+> `plan/global.rs:590–598`, whose body is *entirely commented out*: the code is present, correct and
+> inert. Before a citation becomes evidence, establish that its feature gate is satisfied by the
+> build recipe and that it is not commented. `scripts/verify-ledger.sh` §1c flags gated and commented
+> citations, but cannot decide intent — a flagged citation must be either labelled as
+> not-compiled or replaced.
+
 ## Documents
 
 | document | contents |
@@ -85,12 +100,14 @@ re-instated at the HEAD oracle and run under load: **48/48 DaCapo runs pass with
 obligation is transferred to the port, which must carry the assertion from its first commit.
 **Probe 2 resolved the hsqldb p99 anomaly rather than retiring it.** It is not an LXR mechanism
 difference at all: hsqldb's `MemoryWatcherThread` is the only caller of `System.gc()` in DaCapo 2006,
-and while *neither* oracle services the request, HEAD promotes any user-triggered collection to a
-full-heap stop-the-world `Pause::Full` where PLDI deliberately excludes it from pause selection.
+and the two oracles differ in kind — HEAD **services** the request and promotes it to a full-heap
+stop-the-world `Pause::Full`, while PLDI **cannot service one at all** because the body of
+`BasePlan::handle_user_collection_request` is commented out, so its user-triggered flag is never set.
 Running HEAD with `-XX:+DisableExplicitGC` removes all 25 pauses and 39 % of wall time. Seven
 candidate causes were eliminated with evidence along the way. The finding is directly
-portability-relevant — `GC.Collect()` is a public .NET API that can be neither ignored nor made
-unconditionally full-heap — and became its own ledger row.
+portability-relevant — `GC.Collect()` is a public .NET API, and the port must choose deliberately
+among ignoring the request (which HEAD ships as the runtime option `ignore_system_gc`), servicing it
+without promotion, or servicing and promoting to full-heap — and became its own ledger row.
 
 
 

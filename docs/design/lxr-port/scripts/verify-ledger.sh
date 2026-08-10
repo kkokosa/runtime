@@ -91,10 +91,12 @@ PY
 echo "########## 1. citation resolution (read-only, against $REF) ##########"
 n=0
 CITED=$(mktemp)
+CITED_FULL=$(mktemp)
 while IFS='|' read -r gitrepo rev path line; do
   [ -z "$gitrepo" ] && continue
   n=$((n+1))
   echo "$gitrepo|$rev|$path" >> "$CITED"
+  echo "$gitrepo|$rev|$path|$line" >> "$CITED_FULL"
   blob=$(git -C "$REF/$gitrepo" show "$rev:$path" 2>/dev/null)
   if [ -z "$blob" ]; then
     echo "  FAIL  missing file      $path  (at $rev)"; FAIL=1; continue
@@ -130,6 +132,181 @@ while IFS='|' read -r gitrepo rev path; do
 done < <(sort -u "$CITED")
 rm -f "$CITED"
 echo "  identical: $same   differing: $diffn   absent locally: $absent"
+
+echo
+echo "########## 1c. is the cited code actually COMPILED in this configuration? ##########"
+# Section 1 proves a citation resolves.  It does NOT prove the line does anything: a line can sit
+# at the right revision and path, read exactly as the argument needs, and still be #[cfg]-gated
+# out or commented out.  P0.3 shipped that defect once - two handle_user_collection_request
+# overrides cited as the oracles' behaviour, both under #[cfg(feature = "nogc_no_zeroing")], which
+# neither oracle enables - and section 1 passed anyway.  This section closes that gap.
+#
+# Three signals, all heuristic and all deliberately noisy rather than silent:
+#   commented    the cited line itself is a comment
+#   cfg-gated    an enclosing brace block, or the cited line's own item, carries #[cfg(...)]
+#   empty-body   the cited line opens a block whose body has no executable line
+# A flagged citation is NOT automatically an error - dead code may be cited precisely to record
+# that it is dead.  But it must be acknowledged: every flag must appear in ACK below, whose
+# entries are the citations the documents explicitly discuss as not-compiled.  Anything flagged
+# and unacknowledged fails, so a future edit cannot quietly reintroduce the defect.
+python3 - "$CITED_FULL" "$REF" <<'PY'
+import re, subprocess, sys
+
+cited_file, ref = sys.argv[1], sys.argv[2]
+
+# citations the documents explicitly label as not-compiled / commented-out dead code
+ACK = {
+    ('mmtk-core', 'df8d30a3', 'src/plan/immix/global.rs', 532),  # cfg(nogc_no_zeroing)
+    ('mmtk-core', '304ce69d', 'src/plan/lxr/global.rs',   377),  # cfg(nogc_no_zeroing)
+    ('mmtk-core', 'df8d30a3', 'src/plan/global.rs',       590),  # body entirely commented out
+    ('mmtk-core', 'df8d30a3', 'src/plan/global.rs',       591),  # a commented line, cited as such
+    ('mmtk-core', 'df8d30a3', 'src/plan/global.rs',       593),
+    ('mmtk-core', 'df8d30a3', 'src/plan/global.rs',       595),
+    # cfg(object_pinning): enabled by nothing at 304ce69d and not forwarded by the binding.
+    # Ledger row C06 states this - the pinning API is source-only, never compiled.
+    ('mmtk-core', '304ce69d', 'src/policy/sft.rs',                51),
+    ('mmtk-core', '304ce69d', 'src/policy/sft.rs',                53),
+    ('mmtk-core', '304ce69d', 'src/policy/sft.rs',                55),
+    ('mmtk-core', '304ce69d', 'src/policy/immix/immixspace.rs',  170),
+    # cfg(feature = "sanity") applied at the module declaration, util/mod.rs:66.  Probes 4.1 cites
+    # this line precisely to show HEAD's only zero-RC check is compiled OUT under P0.1's recipe.
+    ('mmtk-core', '304ce69d', 'src/util/sanity/sanity_checker.rs', 311),
+    ('mmtk-core', '304ce69d', 'src/util/sanity/sanity_checker.rs', 313),
+}
+
+# Gated, but the gate IS satisfied in the configuration under discussion - acknowledged WITH the
+# reason, because "gated" and "not compiled" are different claims and the distinction is the point.
+ACK_COMPILED = {
+    # cargo builds the mmtk crate with the dev profile inside the fastdebug JDK, so
+    # debug_assertions is ON and this assertion IS compiled there.  It is NOT compiled in the
+    # release build - which is exactly what probes 4 is about.
+    ('mmtk-core', 'df8d30a3', 'src/plan/barriers.rs', 315):
+        'debug_assertions on in the fastdebug build (cargo dev profile)',
+    ('mmtk-core', 'df8d30a3', 'src/plan/barriers.rs', 316):
+        'debug_assertions on in the fastdebug build (cargo dev profile)',
+    ('mmtk-core', 'df8d30a3', 'src/plan/barriers.rs', 317):
+        'debug_assertions on in the fastdebug build (cargo dev profile)',
+}
+
+# Gates applied at the module DECLARATION site are invisible to a per-file scan, so they are
+# recorded here explicitly.  Without this the scan would call sanity_checker.rs compiled.
+MODULE_GATES = {
+    ('mmtk-core', '304ce69d', 'src/util/sanity/'):
+        'cfg(feature = "sanity") at src/util/mod.rs:66',
+}
+
+def code_only(s):
+    """strip string/char literals and line comments so brace counting is not fooled"""
+    s = re.sub(r'"(\\.|[^"\\])*"', '""', s)
+    s = re.sub(r"'(\\.|[^'\\])'", "''", s)
+    return s.split('//')[0]
+
+def is_comment(s):
+    t = s.strip()
+    return t.startswith('//') or t.startswith('/*') or t.startswith('*')
+
+blobs = {}
+def blob(repo, rev, path):
+    key = (repo, rev, path)
+    if key not in blobs:
+        r = subprocess.run(['git', '-C', f'{ref}/{repo}', 'show', f'{rev}:{path}'],
+                           capture_output=True, text=True)
+        blobs[key] = r.stdout.split('\n') if r.returncode == 0 else None
+    return blobs[key]
+
+def attrs_above(lines, i):
+    """#[cfg(...)] in the attribute/comment run immediately above 1-based line i"""
+    found, j = [], i - 2
+    while j >= 0:
+        t = lines[j].strip()
+        if t == '' or t.startswith('//') or t.startswith('#['):
+            if t.startswith('#[') and 'cfg(' in t:
+                found.append(t)
+            j -= 1
+        else:
+            break
+    return found
+
+def enclosing_opens(lines, target):
+    """1-based line numbers of brace blocks still open when `target` is reached"""
+    stack = []
+    for idx in range(min(target - 1, len(lines))):
+        c = code_only(lines[idx])
+        for ch in c:
+            if ch == '{':
+                stack.append(idx + 1)
+            elif ch == '}' and stack:
+                stack.pop()
+    return stack
+
+def empty_block_at(lines, i):
+    """cited line opens a block; True if the body holds no executable line"""
+    if '{' not in code_only(lines[i - 1]):
+        return False
+    depth, body, j = 0, [], i - 1
+    while j < len(lines):
+        c = code_only(lines[j])
+        opened = depth
+        for ch in c:
+            if ch == '{':
+                depth += 1
+            elif ch == '}':
+                depth -= 1
+        if opened > 0 or (j > i - 1 and depth > 0):
+            body.append(lines[j])
+        if depth <= 0 and j >= i - 1 and '{' in code_only(lines[i - 1]):
+            break
+        j += 1
+    inner = body[1:] if body else []
+    return bool(inner) and all(l.strip() == '' or is_comment(l) for l in inner)
+
+flagged, unack = 0, 0
+seen = set()
+for raw in open(cited_file):
+    parts = raw.rstrip('\n').split('|')
+    if len(parts) != 4:
+        continue
+    repo, rev, path, line = parts[0], parts[1], parts[2], int(parts[3])
+    if (repo, rev, path, line) in seen:
+        continue
+    seen.add((repo, rev, path, line))
+    lines = blob(repo, rev, path)
+    if lines is None or line > len(lines):
+        continue
+    why = []
+    if is_comment(lines[line - 1]):
+        why.append('commented')
+    cfgs = attrs_above(lines, line)
+    for op in enclosing_opens(lines, line):
+        cfgs += attrs_above(lines, op)
+    for (mrepo, mrev, prefix), reason in MODULE_GATES.items():
+        if (repo, rev) == (mrepo, mrev) and path.startswith(prefix):
+            cfgs.append(reason)
+    seen_cfg = []
+    for c in cfgs:
+        if c not in seen_cfg:
+            seen_cfg.append(c)
+    if seen_cfg:
+        why.append('cfg-gated ' + ' + '.join(seen_cfg))
+    if empty_block_at(lines, line):
+        why.append('empty-body')
+    if why:
+        flagged += 1
+        key = (repo, rev, path, line)
+        if key in ACK_COMPILED:
+            tag, note = 'ok  ', f'  [COMPILED: {ACK_COMPILED[key]}]'
+        elif key in ACK:
+            tag, note = 'ack ', '  [acknowledged as NOT compiled]'
+        else:
+            tag, note = 'FAIL', '  [unacknowledged - label it or replace it]'
+            unack += 1
+        print(f"  {tag}  {rev} {path}:{line}  <- {'; '.join(why)}{note}")
+
+print(f"  -> flagged: {flagged}   acknowledged: {flagged - unack}   UNACKNOWLEDGED: {unack}")
+sys.exit(1 if unack else 0)
+PY
+[ $? -eq 0 ] || FAIL=1
+rm -f "$CITED_FULL"
 
 echo
 echo "########## 2. ledger structural completeness ##########"
