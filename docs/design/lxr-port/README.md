@@ -59,6 +59,15 @@ mechanisms share one oracle. `lxr-x/simplified` is explicitly excluded.
 > citations, but cannot decide intent — a flagged citation must be either labelled as
 > not-compiled or replaced.
 
+> **Convention — a check must audit the tree it is run in.** The same failure mode reaches tools, and
+> there it is more dangerous, because a tool that reads the wrong artifact still produces a clean,
+> confident result. `scripts/verify-ledger.sh` defaulted its documents directory to an absolute path
+> into one worktree, so running it from a fresh extract silently audited a different — and dirty —
+> checkout. It now derives the default from its own location. Any script in this folder that takes a
+> tree as input must default to the tree it ships in, never to a machine-specific path, and must be
+> demonstrated to fail when that tree is perturbed. A gate that has never been seen to fail has not
+> been shown to be reading anything.
+
 ## Documents
 
 | document | contents |

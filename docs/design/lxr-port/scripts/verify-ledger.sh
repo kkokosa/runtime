@@ -15,7 +15,13 @@ PLDI=/root/.cargo/git/checkouts/mmtk-core-10faf03793f704d0/df8d30a
 HEAD=/root/.cargo/git/checkouts/mmtk-core-91cf05d634be0a1e/304ce69
 PLDI_BIND=/root/lxr/pldi/mmtk-openjdk
 HEAD_BIND=/root/lxr/head/mmtk-openjdk
-DOCS=${1:-/mnt/c/Users/konradkokosa/.copilot/repos/copilot-worktrees/runtime-fork/kkokosa-cautious-sniffle/docs/design/lxr-port}
+# The docs directory defaults to the one this script SHIPS IN, so the gate always audits the tree it
+# is part of.  It used to default to an absolute path into the author's worktree, which meant a run
+# from a fresh extract silently audited a different - and dirty - checkout, reporting on an artifact
+# the operator was not looking at.  That is the same failure this whole step is about, this time
+# inside the tool rather than a document: see probes 8, correction 6.  An explicit argument overrides.
+SELF_DIR=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
+DOCS=${1:-$(cd "$SELF_DIR/.." && pwd)}
 FAIL=0
 
 # Emits "<repo>|<rev>|<path>|<line>" for every citation in the documents.  Handles three forms:
@@ -320,19 +326,25 @@ rm -f "$CITED_FULL"
 echo
 echo "########## 2. ledger structural completeness ##########"
 L=$DOCS/P0.3-parity-ledger.md
+# The expected row count is DERIVED, never hardcoded: the index table is the truth, and 4's
+# self-reported "Rows total" must agree with it.  A literal in the script would have to be edited in
+# three places every time a row is added or retired, and would either fail on a correct new row or
+# keep passing while under-checking it.
 idx=$(grep -cE '^\| (A0|B0|C0|D0|E0|S0|R0)[0-9] \|' "$L")
+declared=$(grep -E '^\| Rows total \|' "$L" | grep -oE '[0-9]+' | head -1)
 echo "  index rows                 : $idx"
+printf '  4 self-reported total      : %s\n' "${declared:-<none>}"
+[ -n "$declared" ] || { echo "     FAIL  4 does not state a row total"; FAIL=1; }
+[ "${declared:-0}" -eq "$idx" ] || { echo "     FAIL  4 says ${declared}, index has $idx"; FAIL=1; }
 for f in "Reason:" "Citation:" "Validation:" "Provenance:" ".NET realization:" "Closure evidence:" "Status:"; do
   c=$(grep -cF "**$f**" "$L")
   printf '  rows carrying %-20s: %s\n' "$f" "$c"
-  # R rows use "Declared oracle:" in place of a separate Reason line; 26 expected for the rest
-  [ "$c" -lt 26 ] && { echo "     FAIL  expected 26"; FAIL=1; }
+  # R rows use "Declared oracle:" in place of a separate Reason line; one per index row for the rest
+  [ "$c" -lt "$idx" ] && { echo "     FAIL  expected $idx"; FAIL=1; }
 done
 det=$(grep -cE '^\*\*(A|B|C|D|E|S|R)0[0-9] — ' "$L")
 echo "  detail blocks              : $det"
-[ "$idx" -eq 26 ] || { echo "  FAIL index rows != 26"; FAIL=1; }
-[ "$det" -eq 26 ] || { echo "  FAIL detail blocks != 26"; FAIL=1; }
-[ "$idx" -eq "$det" ] || { echo "  FAIL index/detail mismatch"; FAIL=1; }
+[ "$idx" -eq "$det" ] || { echo "  FAIL index/detail mismatch ($idx vs $det)"; FAIL=1; }
 
 # A retired identifier must not dangle: the roadmap and later phases cite row IDs externally, so
 # every ID retired in 2.1 needs a redirect block, a struck index row, and a live target row.
