@@ -163,11 +163,16 @@ ACK = {
     ('mmtk-core', 'df8d30a3', 'src/plan/global.rs',       593),
     ('mmtk-core', 'df8d30a3', 'src/plan/global.rs',       595),
     # cfg(object_pinning): enabled by nothing at 304ce69d and not forwarded by the binding.
-    # Ledger row C06 states this - the pinning API is source-only, never compiled.
+    # Ledger row R05 states this - the pinning API is source-only, never compiled.  The row's
+    # load-bearing citations are the UNGATED opt-out sites and are deliberately NOT listed here:
+    # lxr/gc_work.rs:12/:21, lxr/global.rs:707/:708, immixspace.rs:1239/:1243/:1244 must stay
+    # unflagged, because "compiled into every build" is the whole claim.
     ('mmtk-core', '304ce69d', 'src/policy/sft.rs',                51),
     ('mmtk-core', '304ce69d', 'src/policy/sft.rs',                53),
     ('mmtk-core', '304ce69d', 'src/policy/sft.rs',                55),
     ('mmtk-core', '304ce69d', 'src/policy/immix/immixspace.rs',  170),
+    ('mmtk-core', '304ce69d', 'src/policy/immix/immixspace.rs', 1240),
+    ('mmtk-core', '304ce69d', 'src/policy/immix/immixspace.rs', 1241),
     # cfg(feature = "sanity") applied at the module declaration, util/mod.rs:66.  Probes 4.1 cites
     # this line precisely to show HEAD's only zero-RC check is compiled OUT under P0.1's recipe.
     ('mmtk-core', '304ce69d', 'src/util/sanity/sanity_checker.rs', 311),
@@ -328,6 +333,25 @@ echo "  detail blocks              : $det"
 [ "$idx" -eq 26 ] || { echo "  FAIL index rows != 26"; FAIL=1; }
 [ "$det" -eq 26 ] || { echo "  FAIL detail blocks != 26"; FAIL=1; }
 [ "$idx" -eq "$det" ] || { echo "  FAIL index/detail mismatch"; FAIL=1; }
+
+# A retired identifier must not dangle: the roadmap and later phases cite row IDs externally, so
+# every ID retired in 2.1 needs a redirect block, a struck index row, and a live target row.
+echo
+echo "  retired identifiers redirect rather than dangle:"
+retired=$(grep -oE '^\| ~~[A-ESR]0[0-9]~~' "$L" | grep -oE '[A-ESR]0[0-9]' | sort -u)
+if [ -z "$retired" ]; then
+  echo "    none"
+else
+  for r in $retired; do
+    tgt=$(grep -E "^\| $r \(" "$L" | grep -oE '\*\*[A-ESR]0[0-9]\*\*' | tr -d '*' | head -1)
+    blk=$(grep -cE "^\*\*Retired — $r \(" "$L")
+    row=0
+    [ -n "$tgt" ] && row=$(grep -cE "^\| $tgt \|" "$L")
+    printf '    %s -> %-4s redirect block: %s   target index row: %s\n' \
+           "$r" "${tgt:-?}" "$blk" "$row"
+    { [ "$blk" -eq 1 ] && [ "$row" -eq 1 ]; } || { echo "     FAIL  $r dangles"; FAIL=1; }
+  done
+fi
 
 echo
 echo "  every index row has a provenance tag:"

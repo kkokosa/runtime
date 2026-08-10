@@ -108,6 +108,13 @@ candidate causes were eliminated with evidence along the way. The finding is dir
 portability-relevant — `GC.Collect()` is a public .NET API, and the port must choose deliberately
 among ignoring the request (which HEAD ships as the runtime option `ignore_system_gc`), servicing it
 without promotion, or servicing and promoting to full-heap — and became its own ledger row.
+The ledger's sharpest single finding is about **pinning**: LXR does not merely leave it uncompiled,
+it declares it unsupported — `PinningProcessEdges = UnsupportedProcessEdges` in both work contexts,
+the pinning work buckets `set_enabled(false)`, and `is_pinned()` compiled to a constant `false`, all
+of it ungated and present in every measured run. So its unconditional source-block release during
+evacuation is sound only because nothing can be immovable. .NET cannot make that choice — pinned
+objects are heap-resident there, not merely roots — so **there is no reference mechanism to port**
+and the row carries declared oracle `none` (R05).
 
 
 
