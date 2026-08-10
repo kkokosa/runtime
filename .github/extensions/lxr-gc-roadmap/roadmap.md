@@ -72,11 +72,11 @@ consumer rather than the definition.
 ### P0.2 — Extract paper acceptance targets from the PDF
 
 - **Status:** in_progress
-- **Summary:** Read the local PDF directly and quote the real targets: geomean versus G1 at 2x heap, pause p50/p95, the Young/Old-RC/SATB reclamation split, and barrier overhead.
-- **Correctness:** Every quoted number cites a figure or table in the local PDF; numbers previously circulated in this project came from a text proxy and are discarded until re-verified.
-- **Benchmarks:** These targets become the acceptance thresholds for P9, with the caveat that they describe the 2022 artifact, so a row whose oracle is `lxr-head` treats them as a reference point rather than a contract.
+- **Summary:** Targets extracted and independently re-verified against the local PDF; the paper is the arXiv Extended Version of 1 Nov 2022, not the PLDI proceedings, so citations name arXiv table and page numbers and proceedings numbering is not assumed to match.
+- **Correctness:** Every quoted number cites a table or figure in the local PDF, cross-read three ways and spot-checked a fourth time by the coordinator; two errata were found in the paper itself, the `!Lazy%` min/max transposition in Table 7 and a 90th-percentile column that section 4 promises "in tabular form" but Table 4 does not contain.
+- **Benchmarks:** Verified targets are throughput geomean `0.958` versus G1 at 2x heap, LXR-only pause p50/p95 of `5.0`/`7.5` ms mean and `3.0`/`4.7` ms geomean, reclamation split `94.3`/`0.6`/`5.1` from the mean row, and barrier overhead `1.016` geomean measured against a no-barrier full-heap Immix build rather than against G1.
 - **Dependencies:** P0.1
-- **References:** `C:\github\lxr-reference\paper\2210.17175.pdf`
+- **References:** `C:\github\lxr-reference\paper\2210.17175.pdf`; `docs/design/lxr-port/P0.2-paper-targets.md`; Tables 1, 4, 5, 6, 7
 
 ### P0.3 — Build the mechanism parity ledger
 
@@ -522,18 +522,18 @@ consumer rather than the definition.
 - **Status:** planned
 - **Summary:** Close the gap to the paper's pause behavior: frequent light RefCount pauses with a few milliseconds for InitialMark and FinalMark.
 - **Correctness:** Pause improvements never come from deferring work indefinitely; lazy backlog is reported alongside pause figures.
-- **Benchmarks:** Report p50 through p99.99 and maximum, never averages alone, across the full matrix against both baselines.
+- **Benchmarks:** Report p50 through p99.99 and maximum, never averages alone, across the full matrix against both baselines, but read as a characterization rather than a win condition: the paper's only comparative pause table shows LXR's pauses longer than G1's at every percentile while its query latency is far better, so application-observed latency is the acceptance signal and pause distribution is reported alongside it.
 - **Dependencies:** P9.1
-- **References:** paper §5.2, Figure 5
+- **References:** paper §5.2, Figure 5; Table 1 pause versus query-latency split; `docs/design/lxr-port/P0.2-paper-targets.md`
 
 ### P9.3 — Converge throughput
 
 - **Status:** planned
 - **Summary:** Close the throughput gap against both built-in collectors, isolating the barrier's own contribution.
 - **Correctness:** Throughput wins are rejected if verifier offenders, crashes, hangs, or lifecycle failures increase.
-- **Benchmarks:** Full matrix against Workstation and Server GC, with a barrier-isolation measurement against the paper's reported barrier overhead.
+- **Benchmarks:** Full matrix against Workstation and Server GC, with a barrier-isolation measurement against the paper's reported barrier overhead, noting that the paper's throughput advantage is heap-dependent — `0.97` at 1.3x, `0.96` at 2x, and `1.01` at 6x, where LXR is slower than G1 — and that its `1.016` barrier geomean sits inside a noise floor of roughly plus or minus three percent.
 - **Dependencies:** P9.1
-- **References:** paper §5.1, §5.3
+- **References:** paper §5.1, §5.3; Table 5 heap-size sensitivity; `docs/design/lxr-port/P0.2-paper-targets.md`
 
 ### P9.4 — Converge footprint and reclamation mix
 
