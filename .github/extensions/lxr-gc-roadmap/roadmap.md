@@ -420,7 +420,7 @@ consumer rather than the definition.
 
 - **Status:** planned
 - **Summary:** Feed surviving remembered-set slots into the ordinary STW closure and release defragmentation source blocks once their live content has been copied out.
-- **Correctness:** Source blocks are released unconditionally after evacuation, and no slot referencing them survives unforwarded, verified by a post-evacuation heap audit.
+- **Correctness:** Source blocks are released unconditionally after evacuation, and no slot referencing them survives unforwarded, verified by a post-evacuation heap audit. The oracle can release unconditionally only because it never compiles pinning and answers `is_pinned()` with a compile-time `false`; a .NET port must design the release path from the start to tolerate a block holding an immovable object, so P7.4 is a constraint on this step rather than a later addition.
 - **Benchmarks:** Defragmentation effectiveness, evacuation ratio, and its pause cost.
 - **Dependencies:** P6.4
 - **References:** `304ce69d:src/plan/lxr/mature_evac.rs:19` (`EvacuateMatureObjects`)
@@ -460,11 +460,11 @@ consumer rather than the definition.
 ### P7.4 — Honour pinning and interior pointers
 
 - **Status:** planned
-- **Summary:** Consume the pinning and interior-pointer flags the root scanning callback already reports, without extending any runtime surface.
-- **Correctness:** Ordinary roots are never blanket-pinned, which would permanently exclude them from first promotion and mature evacuation; callback-local roots may still be forwarded and rewritten during the callback while the slot is valid.
-- **Benchmarks:** Pinning-heavy I/O scenario, comparing pinned-object counts and fragmentation against both baselines.
-- **Dependencies:** P6.2
-- **References:** `src/coreclr/gc/gcinterface.h` `GC_CALL_INTERIOR` and `GC_CALL_PINNED`
+- **Summary:** Design and implement pinning for a collector that evacuates, consuming the pinning and interior-pointer flags reported by root scanning and additionally honouring heap-resident pinned objects. **The reference provides no realization to port:** LXR declares `PinningProcessEdges = UnsupportedProcessEdges` in both work contexts and disables the `TPinningClosure` and `PinningRootsTrace` buckets, so this mechanism is designed fresh rather than ported.
+- **Correctness:** Ordinary roots are never blanket-pinned, which would permanently exclude them from first promotion and mature evacuation; callback-local roots may still be forwarded and rewritten during the callback while the slot is valid. Pinning is not root-only: `GCHandleType.Pinned`, `fixed`, and the pinned object heap make objects immovable while reachable from the heap, so evacuation and defragmentation must honour a pinned bit rather than assume `is_pinned()` is false. Source-block release must tolerate a block that cannot be fully evacuated.
+- **Benchmarks:** Pinning-heavy I/O scenario, comparing pinned-object counts and fragmentation against both baselines. Because the oracle never ran with pinning compiled, any pinning cost is a .NET-only delta with no reference number to match.
+- **Dependencies:** P6.2, P6.5
+- **References:** `src/coreclr/gc/gcinterface.h` `GC_CALL_INTERIOR` and `GC_CALL_PINNED`; the reference's unbuilt surface at `304ce69d:src/policy/sft.rs:50-55` and `304ce69d:src/policy/immix/immixspace.rs:169-179`, both `cfg(object_pinning)`, against LXR's opt-out at `304ce69d:src/plan/lxr/gc_work.rs:12`, `:21` and `304ce69d:src/plan/lxr/global.rs:707-708`
 
 ## P8 — Triggers, predictors, and tunables
 
