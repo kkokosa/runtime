@@ -183,6 +183,12 @@ ACK = {
     # this line precisely to show HEAD's only zero-RC check is compiled OUT under P0.1's recipe.
     ('mmtk-core', '304ce69d', 'src/util/sanity/sanity_checker.rs', 311),
     ('mmtk-core', '304ce69d', 'src/util/sanity/sanity_checker.rs', 313),
+    # A /// doc comment, cited deliberately and only as evidence of DOCUMENTED INTENT: the reference
+    # states in its own words that UnsupportedProcessEdges is "used for plans that do not support
+    # transitively pinning".  R05's behavioural cites are the five panic! sites at :1457/:1463/
+    # :1478/:1482/:1486, which are ungated and must stay unflagged.
+    ('mmtk-core', '304ce69d', 'src/scheduler/gc_work.rs', 1447),
+    ('mmtk-core', '304ce69d', 'src/scheduler/gc_work.rs', 1448),
 }
 
 # Gated, but the gate IS satisfied in the configuration under discussion - acknowledged WITH the
