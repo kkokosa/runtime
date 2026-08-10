@@ -71,7 +71,7 @@ consumer rather than the definition.
 
 ### P0.2 — Extract paper acceptance targets from the PDF
 
-- **Status:** in_progress
+- **Status:** done
 - **Summary:** Targets extracted and independently re-verified against the local PDF; the paper is the arXiv Extended Version of 1 Nov 2022, not the PLDI proceedings, so citations name arXiv table and page numbers and proceedings numbering is not assumed to match.
 - **Correctness:** Every quoted number cites a table or figure in the local PDF, cross-read four ways including a rendered-page check, with the coordinator independently confirming Tables 1, 5, 6 and 7 from the pixels; two errata were found in the paper itself, Table 7's `!Lazy%` summary rows printing a minimum of 22 above a maximum of 2 against a true range of 0 to 22, and a 90th-percentile column that section 4 promises "in tabular form" but Table 4 does not contain.
 - **Benchmarks:** Verified targets are throughput geomean `0.958` versus G1 at 2x heap, LXR-only pause p50/p95 of `5.0`/`7.5` ms mean and `3.0`/`4.7` ms geomean, reclamation split `94.3`/`0.6`/`5.1` from the mean row, and barrier overhead `1.016` geomean measured against a no-barrier full-heap Immix build rather than against G1.
