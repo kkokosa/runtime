@@ -3,9 +3,13 @@
 Working notes for a from-scratch port of the **LXR** garbage collector to .NET/CoreCLR.
 
 LXR is described in Zhao, Blackburn & McKinley, *Low-Latency, High-Throughput Garbage Collection*
-(PLDI 2022, [arXiv:2210.17175](https://arxiv.org/abs/2210.17175)). It combines coalescing reference
-counting with a concurrent SATB trace over an Immix heap. The reference implementation is the
-`lxr` branch of MMTk (`mmtk-core` + `mmtk-openjdk`).
+(PLDI 2022). It combines coalescing reference counting with a concurrent SATB trace over an Immix
+heap. The reference implementation is the `lxr` branch of MMTk (`mmtk-core` + `mmtk-openjdk`).
+
+The copy of the paper held locally is the **extended version**,
+[arXiv:2210.17175](https://arxiv.org/abs/2210.17175) of 1 November 2022 — *not* the PLDI proceedings
+paper, and its table and figure numbering cannot be assumed to match. Cite it accordingly; see
+[`P0.2-paper-targets.md`](P0.2-paper-targets.md) §1.
 
 These documents record research and design decisions. **No collector code has landed yet.**
 
@@ -40,6 +44,7 @@ mechanisms share one oracle. `lxr-x/simplified` is explicitly excluded.
 | [`P0.1-reference-build.md`](P0.1-reference-build.md) | What was pinned, the resolved (mmtk-core, mmtk-openjdk, OpenJDK, rustc) tuple per revision, the exact build recipe, and what could not be built or run |
 | [`P0.1-mechanism-diff.md`](P0.1-mechanism-diff.md) | The mechanism-organised diff between the two oracles — direct input to the P0.3 parity ledger |
 | [`P0.1-benchmarks.md`](P0.1-benchmarks.md) | Reference pause and throughput behaviour on both revisions, and the characterisation of the PLDI instability |
+| [`P0.2-paper-targets.md`](P0.2-paper-targets.md) | The paper's own acceptance targets — throughput vs G1, pause p50/p95, the reclamation split and barrier overhead — each cited to a table and page, with the measurement context and the paper's errata |
 | [`scripts/`](scripts/) | The clone, build, sanity and benchmark scripts actually used |
 
 ## P0.1 outcome in one paragraph
