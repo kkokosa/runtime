@@ -67,10 +67,10 @@ mechanisms share one oracle. `lxr-x/simplified` is explicitly excluded.
 > tree as input must default to the tree it ships in, never to a machine-specific path, and must be
 > demonstrated to fail when that tree is perturbed. A gate that has never been seen to fail has not
 > been shown to be reading anything. `scripts/verify-gate.sh` is that demonstration for
-> `verify-ledger.sh`: it runs the committed gate on a clean `git archive` extract, deletes one index
-> row **from the extract**, requires the gate to fail on it, and confirms the working tree was never
-> touched. Step B is the whole point — A and C alone would have passed just as happily while the
-> path was hardcoded.
+> `verify-ledger.sh`: it runs the committed gate on a clean `git archive` extract, then on a copy
+> differing by one deleted index row, and requires the same gate to pass on one and fail on the
+> other. Step B is the whole point — A and C alone would have passed just as happily while the path
+> was hardcoded.
 
 ## Documents
 
