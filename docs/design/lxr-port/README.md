@@ -36,10 +36,13 @@ mechanisms share one oracle. `lxr-x/simplified` is explicitly excluded.
 > LXR is a compile-time feature configuration of the Immix plan, so a missing PLDI path is never a
 > missing mechanism. MMTk revisions must be ordered with `git merge-base`, never by author date:
 > `df8d30a3` is dated *earlier* than `4d4e516c` yet is nine commits *after* it, having been rebased.
-> And **no working tree anywhere is checked out at either oracle** — the oracle `mmtk-core` sources
-> exist only as cargo git checkouts, so every citation must name its revision and be resolved in the
-> roots listed in [`P0.3-oracle-probes.md`](P0.3-oracle-probes.md) §1. Reading a checked-out tree
-> silently cites a revision that is nine commits away.
+> And **no working tree anywhere is checked out at either oracle** — every `mmtk-core` working tree
+> sits at a *named* revision nine commits away, so a citation taken from a checked-out tree silently
+> names the wrong revision. Cite instead with `git show <rev>:<path>` against the read-only reference
+> clone, which holds all four revisions as objects:
+> `git -C C:\github\lxr-reference\mmtk-core show 304ce69d:src/plan/lxr/barrier.rs`. That is read-only,
+> needs no checkout, and is reproducible on any machine that has the clone. See
+> [`P0.3-oracle-probes.md`](P0.3-oracle-probes.md) §1.1; `scripts/verify-ledger.sh` enforces it.
 
 ## Documents
 

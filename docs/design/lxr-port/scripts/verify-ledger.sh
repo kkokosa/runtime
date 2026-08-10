@@ -1,8 +1,16 @@
 #!/bin/bash
 # P0.3 verification - resolve EVERY "<oracle> <hash> <path>:<line>" citation in the ledger and the
-# probes document against the actual oracle source, and check the ledger's structural completeness.
-# Exits non-zero if any citation does not resolve.
+# probes document against the READ-ONLY reference oracle, and check the ledger's structural
+# completeness.  Exits non-zero if any citation does not resolve.
+#
+# Citations resolve with `git show <rev>:<path>` against C:\github\lxr-reference, which holds all
+# four revisions as objects.  Nothing is checked out and nothing is written: `git show`, `ls-tree`
+# and `cat-file` are read-only.  This is preferred over the cargo git checkouts because the clone
+# is the declared oracle and is reproducible on any machine that has it, whereas a cargo checkout
+# is a machine-local cache that cargo may prune.  Section 1b proves the two agree byte for byte
+# for every cited file, so citations derived from the cargo checkouts transfer unchanged.
 set -uo pipefail
+REF=${REF:-/mnt/c/github/lxr-reference}
 PLDI=/root/.cargo/git/checkouts/mmtk-core-10faf03793f704d0/df8d30a
 HEAD=/root/.cargo/git/checkouts/mmtk-core-91cf05d634be0a1e/304ce69
 PLDI_BIND=/root/lxr/pldi/mmtk-openjdk
@@ -10,19 +18,20 @@ HEAD_BIND=/root/lxr/head/mmtk-openjdk
 DOCS=${1:-/mnt/c/Users/konradkokosa/.copilot/repos/copilot-worktrees/runtime-fork/kkokosa-cautious-sniffle/docs/design/lxr-port}
 FAIL=0
 
-# Emits "<root>|<path>|<line>" for every citation in the documents.  Handles three forms:
+# Emits "<repo>|<rev>|<path>|<line>" for every citation in the documents.  Handles three forms:
 #   full     <hash> `src/foo.rs:123`      /  <hash> `openjdk/bar.cpp:12`
-#   shorthand `:456` continuing the most recent full citation on the SAME line
+#   shorthand `:456` continuing the most recent full citation in the SAME bullet
 #   ranges    `src/foo.rs:116-126`        -> first line of the range
-# Both core hashes (df8d30a / 304ce69) and binding hashes (abbdd1d / 0682434) are resolved.
+# A revision hash selects the SIDE; the path prefix selects the REPO.
 extract () {
-  python3 - "$PLDI" "$HEAD" "$PLDI_BIND" "$HEAD_BIND" "$@" <<'PY'
+  python3 - "$@" <<'PY'
 import re, sys
-pldi, head, pldi_b, head_b = sys.argv[1:5]
-# a revision hash selects the SIDE; the path prefix selects the REPO (core vs binding)
+# a revision hash selects the SIDE; the path prefix selects the REPO
 side = {'df8d30a': 'pldi', 'abbdd1d': 'pldi', '304ce69': 'head', '0682434': 'head'}
-repo = {('pldi', 'src'): pldi, ('pldi', 'openjdk'): pldi_b,
-        ('head', 'src'): head, ('head', 'openjdk'): head_b}
+repo = {('pldi', 'src'): ('mmtk-core', 'df8d30a3'),
+        ('pldi', 'openjdk'): ('mmtk-openjdk', 'abbdd1d'),
+        ('head', 'src'): ('mmtk-core', '304ce69d'),
+        ('head', 'openjdk'): ('mmtk-openjdk', '0682434')}
 HASH = r'(df8d30a|304ce69|abbdd1d|0682434)'
 PATH = r'`((?:src|openjdk)/[\w/.\-]+\.(?:rs|cpp|toml)):(\d+)(?:[-\u2013]\d+)?`'
 BARE = r'`:(\d+)(?:[-\u2013]\d+)?`'
@@ -32,9 +41,10 @@ out = set()
 def emit(s, p, l):
     key = (s, p.split('/')[0])
     if key in repo:
-        out.add((repo[key], p, l))
+        r, rev = repo[key]
+        out.add((r, rev, p, l))
 
-for path in sys.argv[5:]:
+for path in sys.argv[1:]:
     cur_side = cur_path = None      # context, scoped to one bullet
     col_side = {}                   # for comparison tables: column index -> side
     for line in open(path, encoding='utf-8'):
@@ -73,28 +83,53 @@ for path in sys.argv[5:]:
                 if cur_side: emit(cur_side, cur_path, m.group(3))
             elif m.group(4) and cur_side and cur_path:
                 emit(cur_side, cur_path, m.group(4))
-for r, p, l in sorted(out):
-    print(f"{r}|{p}|{l}")
+for r, rev, p, l in sorted(out):
+    print(f"{r}|{rev}|{p}|{l}")
 PY
 }
 
-echo "########## 1. citation resolution ##########"
+echo "########## 1. citation resolution (read-only, against $REF) ##########"
 n=0
-while IFS='|' read -r root path line; do
-  [ -z "$root" ] && continue
+CITED=$(mktemp)
+while IFS='|' read -r gitrepo rev path line; do
+  [ -z "$gitrepo" ] && continue
   n=$((n+1))
-  f="$root/$path"
-  if [ ! -f "$f" ]; then
-    echo "  FAIL  missing file      $path  (in $(basename "$root"))"; FAIL=1; continue
+  echo "$gitrepo|$rev|$path" >> "$CITED"
+  blob=$(git -C "$REF/$gitrepo" show "$rev:$path" 2>/dev/null)
+  if [ -z "$blob" ]; then
+    echo "  FAIL  missing file      $path  (at $rev)"; FAIL=1; continue
   fi
-  total=$(wc -l < "$f")
+  total=$(printf '%s\n' "$blob" | wc -l)
   if [ "$line" -gt "$total" ] || [ "$line" -lt 1 ]; then
-    echo "  FAIL  line out of range $path:$line  (file has $total lines)"; FAIL=1; continue
+    echo "  FAIL  line out of range $path:$line  (at $rev the file has $total lines)"; FAIL=1; continue
   fi
-  txt=$(sed -n "${line}p" "$f" | sed 's/^[[:space:]]*//' | cut -c1-72)
-  printf '  ok    %-46s :%-5s %s\n' "$path" "$line" "$txt"
+  txt=$(printf '%s\n' "$blob" | sed -n "${line}p" | sed 's/^[[:space:]]*//' | cut -c1-64)
+  printf '  ok    %-8s %-40s :%-5s %s\n' "$rev" "$path" "$line" "$txt"
 done < <(extract "$DOCS/P0.3-parity-ledger.md" "$DOCS/P0.3-oracle-probes.md")
 echo "  -> $n distinct citations checked"
+
+echo
+echo "########## 1b. cargo checkouts vs the reference clone, for every cited file ##########"
+# P0.3's citations were derived from the cargo git checkouts.  This proves those trees are
+# byte-identical to the reference clone at the pinned revision, so the citations transfer.
+same=0; diffn=0; absent=0
+while IFS='|' read -r gitrepo rev path; do
+  case "$gitrepo|$rev" in
+    "mmtk-core|df8d30a3")    local_f="$PLDI/$path" ;;
+    "mmtk-core|304ce69d")    local_f="$HEAD/$path" ;;
+    "mmtk-openjdk|abbdd1d")  local_f="$PLDI_BIND/$path" ;;
+    "mmtk-openjdk|0682434")  local_f="$HEAD_BIND/$path" ;;
+    *) continue ;;
+  esac
+  if [ ! -f "$local_f" ]; then absent=$((absent+1)); echo "  absent locally  $rev $path"; continue; fi
+  if git -C "$REF/$gitrepo" show "$rev:$path" 2>/dev/null | diff -q - "$local_f" >/dev/null 2>&1; then
+    same=$((same+1))
+  else
+    diffn=$((diffn+1)); echo "  DIFFERS  $rev $path"; FAIL=1
+  fi
+done < <(sort -u "$CITED")
+rm -f "$CITED"
+echo "  identical: $same   differing: $diffn   absent locally: $absent"
 
 echo
 echo "########## 2. ledger structural completeness ##########"
