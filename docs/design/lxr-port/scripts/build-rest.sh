@@ -1,7 +1,8 @@
 #!/bin/bash
 # P0.1 - build the remaining three JDK configurations sequentially.
 set -uo pipefail
-SF=/mnt/c/Users/konradkokosa/.copilot/session-state/8d853da5-db52-44ad-84cc-bf102a4df700/files
+# Sibling scripts live next to this one; resolve them relative to it.
+SF="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 STATUS=/root/lxr/logs/build-status.txt
 mkdir -p /root/lxr/logs
 : > "$STATUS"
