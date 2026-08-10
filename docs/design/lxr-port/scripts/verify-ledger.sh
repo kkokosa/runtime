@@ -186,6 +186,10 @@ ACK_COMPILED = {
         'debug_assertions on in the fastdebug build (cargo dev profile)',
     ('mmtk-core', 'df8d30a3', 'src/plan/barriers.rs', 317):
         'debug_assertions on in the fastdebug build (cargo dev profile)',
+    ('mmtk-core', 'df8d30a3', 'src/plan/barriers.rs', 318):
+        'debug_assertions on in the fastdebug build (cargo dev profile)',
+    ('mmtk-core', 'df8d30a3', 'src/plan/barriers.rs', 319):
+        'debug_assertions on in the fastdebug build (cargo dev profile)',
 }
 
 # Gates applied at the module DECLARATION site are invisible to a per-file scan, so they are
