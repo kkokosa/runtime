@@ -81,7 +81,7 @@ consumer rather than the definition.
 
 ### P0.3 — Build the mechanism parity ledger
 
-- **Status:** planned
+- **Status:** in_progress
 - **Summary:** One row per reference mechanism recording the declared oracle, its coupled-mechanism group, file and line in that revision, the required .NET realization, and the evidence that will close it.
 - **Correctness:** A row with no recorded oracle or group is incomplete; rows in a coupled group share one oracle, every row carries an `[obs-oracle]`/`[obs-override]`/`[read-only]` provenance tag, and the ledger rather than prose is what P9.1 audits. Because PLDI trips its own `zero rc count` barrier assertion under load, RC and SATB rows follow a specify-from-PLDI, validate-against-HEAD rule, and this step decides explicitly whether root-causing that violation is on the critical path.
 - **Benchmarks:** None directly; the ledger defines which mechanisms later benchmark deltas must be attributable to. It also inherits P0.1's open hsqldb p99 anomaly (PLDI 0.34-0.40 ms versus HEAD 54-56 ms) as a question to resolve or retire rather than carry silently.
