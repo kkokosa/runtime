@@ -296,7 +296,7 @@ consumer rather than the definition.
 - **Correctness:** First promotion stamps the object start, arms field unlog bits in bulk, marks straddle lines, and recursively enqueues child slots; recursive increments drain synchronously within the packet so they cannot leak past the bucket boundary.
 - **Benchmarks:** Increment rate and promotion rate against the paper's reported figures.
 - **Dependencies:** P4.1
-- **References:** `mmtk-core/src/plan/lxr/gc_work/rc.rs`; paper §3.1
+- **References:** `304ce69d:src/plan/lxr/rc.rs:40` (`ProcessIncs`); paper §3.1
 
 ### P4.3 — Implement decrement packets and recursive death
 
@@ -305,7 +305,7 @@ consumer rather than the definition.
 - **Correctness:** No object memory is zeroed and only metadata is cleared; large objects are released through their own path; sticky counts are never decremented.
 - **Benchmarks:** Decrement processing cost and its share of pause time, plus the cyclic garbage scenario where RC alone cannot reclaim.
 - **Dependencies:** P4.1
-- **References:** `mmtk-core/src/plan/lxr/gc_work/rc.rs`; `mmtk-core/src/util/rc.rs:747-814`
+- **References:** `304ce69d:src/plan/lxr/rc.rs:669` (`ProcessDecs`); PLDI `df8d30a3:src/util/rc.rs:747` (`impl ProcessDecs`)
 
 ### P4.4 — Implement one-epoch-delayed root decrements
 
@@ -323,7 +323,7 @@ consumer rather than the definition.
 - **Correctness:** The sweep never calls any size or layout query and walks at 8-byte granularity; reclaimed regions match what the reference would reclaim on identical heaps.
 - **Benchmarks:** Nursery reclamation rate and sweep cost as a share of pause time; this path is where an object-parsing design would show up as cost proportional to live heap.
 - **Dependencies:** P2.4, P4.2
-- **References:** `mmtk-core/src/plan/lxr/gc_work/nursery_sweeping.rs`; `mmtk-core/src/policy/immix/block.rs:632-652`
+- **References:** `304ce69d:src/policy/immix/rc_work.rs:128` (`SweepBlocksAfterDecs`); `304ce69d:src/policy/immix/block.rs:634` (`rc_dead`), `:658` (`sweep`)
 
 ## P5 — SATB concurrent trace and cycle reclamation
 
@@ -337,7 +337,7 @@ consumer rather than the definition.
 - **Correctness:** Concurrent marking state and remembered-set recording turn on at pause end, not pause start, matching the reference's ordering.
 - **Benchmarks:** InitialMark pause duration against the paper's reported pause distribution.
 - **Dependencies:** P3.2, P4.2
-- **References:** `mmtk-core/src/plan/lxr/gc_work/tracing.rs`; paper §3.2
+- **References:** `304ce69d:src/plan/lxr/cm.rs:328` (`ProcessModBufSATB`); paper §3.2
 
 ### P5.2 — Implement concurrent, preemptible trace packets
 
@@ -346,7 +346,7 @@ consumer rather than the definition.
 - **Correctness:** An interrupted packet resumes without losing or double-visiting objects; the packet count reaching zero is the termination signal that makes the next pause a FinalMark.
 - **Benchmarks:** Concurrent marking duration and its mutator overhead, plus pause p99 during marking.
 - **Dependencies:** P5.1
-- **References:** `mmtk-core/src/plan/lxr/gc_work/tracing.rs:47`
+- **References:** `304ce69d:src/plan/lxr/cm.rs:32` (`LXRConcurrentTraceObjects`), `:286` (its `GCWork` impl)
 
 ### P5.3 — Implement the mark-and-scan-on-delete invariant
 
@@ -355,7 +355,7 @@ consumer rather than the definition.
 - **Correctness:** This is the paper's core safety property; a targeted test constructs the race — an object dying by RC during concurrent marking with unmarked children — and shows the children survive. The barrier's decrement buffer is shared into both the SATB modbuf processing and decrement processing, with modbuf processing ordered before the decrement bucket.
 - **Benchmarks:** Frequency of the mark-on-delete path and its cost, plus the cyclic garbage scenario.
 - **Dependencies:** P4.3, P5.2
-- **References:** `mmtk-core/src/util/rc.rs:747-814,870-874`; paper §3.3
+- **References:** PLDI `df8d30a3:src/util/rc.rs:747` (`impl ProcessDecs`), `:870-874` (packet dispatch); HEAD `304ce69d:src/plan/lxr/rc.rs:669` (`ProcessDecs`); paper §3.3
 
 ### P5.4 — Implement FinalMark
 
@@ -373,7 +373,7 @@ consumer rather than the definition.
 - **Correctness:** Dead-cycle handling deliberately does not recurse, unlike the RC death path; sweeping parses no objects; whole-block release happens only after the bulk dead check passes.
 - **Benchmarks:** Cycle reclamation share of total reclamation, compared against the paper's Young/Old-RC/SATB split.
 - **Dependencies:** P3.4, P5.4
-- **References:** `mmtk-core/src/plan/lxr/gc_work/mature_sweeping.rs:59-86`; `mmtk-core/src/policy/immix/block.rs:632-652`
+- **References:** `304ce69d:src/policy/immix/rc_work.rs:181` (`SweepDeadCycles`); `304ce69d:src/policy/immix/block.rs:658` (`sweep`)
 
 ## P6 — Evacuation and defragmentation
 
@@ -396,7 +396,7 @@ consumer rather than the definition.
 - **Correctness:** Source blocks stay unavailable while forwarding metadata is still observable; exceeding the pause budget during increment processing disables evacuation for the remainder of that pause rather than truncating it mid-object.
 - **Benchmarks:** Nursery survival rate, copy volume, and pause duration with and without nursery evacuation.
 - **Dependencies:** P4.2, P6.1
-- **References:** `mmtk-core/src/plan/lxr/gc_work/rc.rs`; paper §3.1
+- **References:** `304ce69d:src/plan/lxr/rc.rs:40` (`ProcessIncs`, nursery evacuation path); paper §3.1
 
 ### P6.3 — Implement mature evacuation candidate selection
 
@@ -414,7 +414,7 @@ consumer rather than the definition.
 - **Correctness:** An entry whose reuse counter no longer matches is discarded, as are slots inside the collection set and slots in unallocated blocks; a targeted test reuses a line during concurrent marking and confirms the stale entry is rejected.
 - **Benchmarks:** Remembered-set size, stale-entry rate, and replay cost.
 - **Dependencies:** P2.4, P6.3
-- **References:** `mmtk-core/src/plan/lxr/mature_evac.rs:30-48`; `mmtk-core/src/plan/lxr/gc_work/mature_evac.rs:133-164`
+- **References:** `304ce69d:src/plan/lxr/remset.rs:39` (`MatureEvecRemSet`)
 
 ### P6.5 — Implement mature evacuation and source block release
 
@@ -423,7 +423,7 @@ consumer rather than the definition.
 - **Correctness:** Source blocks are released unconditionally after evacuation, and no slot referencing them survives unforwarded, verified by a post-evacuation heap audit.
 - **Benchmarks:** Defragmentation effectiveness, evacuation ratio, and its pause cost.
 - **Dependencies:** P6.4
-- **References:** `mmtk-core/src/plan/lxr/gc_work/mature_evac.rs`
+- **References:** `304ce69d:src/plan/lxr/mature_evac.rs:19` (`EvacuateMatureObjects`)
 
 ## P7 — Managed object lifecycle
 
