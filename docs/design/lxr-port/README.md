@@ -66,7 +66,11 @@ mechanisms share one oracle. `lxr-x/simplified` is explicitly excluded.
 > checkout. It now derives the default from its own location. Any script in this folder that takes a
 > tree as input must default to the tree it ships in, never to a machine-specific path, and must be
 > demonstrated to fail when that tree is perturbed. A gate that has never been seen to fail has not
-> been shown to be reading anything.
+> been shown to be reading anything. `scripts/verify-gate.sh` is that demonstration for
+> `verify-ledger.sh`: it runs the committed gate on a clean `git archive` extract, deletes one index
+> row **from the extract**, requires the gate to fail on it, and confirms the working tree was never
+> touched. Step B is the whole point — A and C alone would have passed just as happily while the
+> path was hardcoded.
 
 ## Documents
 
@@ -78,7 +82,7 @@ mechanisms share one oracle. `lxr-x/simplified` is explicitly excluded.
 | [`P0.2-paper-targets.md`](P0.2-paper-targets.md) | The paper's own acceptance targets — throughput vs G1, pause p50/p95, the reclamation split and barrier overhead — each cited to a table and page, with the measurement context and the paper's errata |
 | [`P0.3-parity-ledger.md`](P0.3-parity-ledger.md) | **The mechanism parity ledger** — 26 rows, each with its declared oracle and reason, coupled group, validation oracle, citation at the declared oracle revision, provenance tag, required .NET realization and closure evidence. This is the artifact P9.1 audits |
 | [`P0.3-oracle-probes.md`](P0.3-oracle-probes.md) | The evidence behind the ledger: the citation-basis correction, three P0.1 open items resolved from source, the two oracle probes, and the two questions P0.3 had to close |
-| [`scripts/`](scripts/) | The clone, build, sanity, benchmark and probe scripts actually used |
+| [`scripts/`](scripts/) | The clone, build, sanity, benchmark and probe scripts actually used, plus `verify-ledger.sh` (the ledger's gate) and `verify-gate.sh` (the gate's own positive control) |
 
 ## P0.1 outcome in one paragraph
 
