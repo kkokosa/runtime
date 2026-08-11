@@ -79,7 +79,11 @@ run_gate() {
     local root="$1"
     local label="$2"
     local out
-    out=$(bash "$root/docs/design/lxr-port/harness/scripts/verify-harness.sh" "$root" 2>&1)
+    # --results is passed explicitly rather than left to inference. The gate now refuses to guess when
+    # a results directory is empty, because inferring "skip the results checks" from their absence is
+    # what let an extract print PASS while the collector-identity checks had not run at all.
+    out=$(bash "$root/docs/design/lxr-port/harness/scripts/verify-harness.sh" "$root" \
+        --results "$root/artifacts/lxr-harness/runs" 2>&1)
     local code=$?
     printf '%s\n' "$out" | tail -n 3 | sed 's/^/      /'
     printf '      exit=%d\n' "$code"
@@ -138,6 +142,77 @@ if run_gate "$EXTRACT" "C"; then
     printf '  C PASSED as expected\n'
 else
     printf '  C FAILED - the perturbation leaked into the original\n'
+    STATUS=1
+fi
+
+# --- D ---------------------------------------------------------------------
+# The mode itself is a control. Before this existed, running the gate the way an auditor naturally
+# would - git archive extract, no arguments - silently dropped the entire results section, including
+# the collector-identity checks that carry P0.4's stated correctness criterion, and still printed an
+# unqualified PASS. Three modes are exercised here, and two of them must refuse to report a clean
+# pass. A mode that has not been shown to refuse is indistinguishable from one that cannot.
+printf '\n[D] results-mode is explicit, not inferred from an empty directory\n'
+BARE="$WORK/bare"
+mkdir -p "$BARE/docs/design"
+cp -r "$EXTRACT/docs/design/lxr-port" "$BARE/docs/design/lxr-port"
+GATE_BARE="$BARE/docs/design/lxr-port/harness/scripts/verify-harness.sh"
+
+D_OUT=$(bash "$GATE_BARE" "$BARE" 2>&1); D_CODE=$?
+printf '  no arguments, no results:      exit=%d\n' "$D_CODE"
+if [[ $D_CODE -eq 2 ]] && ! printf '%s\n' "$D_OUT" | grep -q 'RESULT: PASS'; then
+    printf '  REFUSED as required - it does not guess, and it does not print PASS.\n'
+else
+    printf '  DID NOT REFUSE. An unaudited tree can still report a pass.\n'
+    printf '%s\n' "$D_OUT" | tail -n 3 | sed 's/^/      /'
+    STATUS=1
+fi
+
+D_OUT=$(bash "$GATE_BARE" "$BARE" --no-results 2>&1); D_CODE=$?
+printf '  --no-results:                  exit=%d\n' "$D_CODE"
+if [[ $D_CODE -eq 3 ]] && printf '%s\n' "$D_OUT" | grep -q 'RESULT: DEGRADED'; then
+    printf '  DEGRADED as required, and on its own exit code so exit-0 callers cannot be fooled.\n'
+    printf '%s\n' "$D_OUT" | grep -E '^  SKIP' | sed 's/^/      /'
+else
+    printf '  did not report DEGRADED on an elected skip.\n'
+    printf '%s\n' "$D_OUT" | tail -n 3 | sed 's/^/      /'
+    STATUS=1
+fi
+
+D_OUT=$(bash "$GATE_BARE" "$BARE" --results "$BARE/artifacts/lxr-harness/runs" 2>&1); D_CODE=$?
+printf '  --results on an empty dir:     exit=%d\n' "$D_CODE"
+if [[ $D_CODE -eq 2 ]] && ! printf '%s\n' "$D_OUT" | grep -q 'RESULT: PASS'; then
+    printf '  REFUSED as required - naming a directory is a claim that it holds results.\n'
+else
+    printf '  accepted an empty results directory it was told to audit.\n'
+    STATUS=1
+fi
+
+# --- E ---------------------------------------------------------------------
+# The general form of the same defect: a section that runs no checks and does not declare a skip is
+# a gate bug, so removing a section's only check must fail rather than quietly shrink the total.
+printf '\n[E] a section that contributes no checks cannot read as a section that passed\n'
+SILENT="$WORK/silent"
+mkdir -p "$SILENT/docs/design"
+cp -r "$EXTRACT/docs/design/lxr-port" "$SILENT/docs/design/lxr-port"
+prepare_root "$SILENT"
+GATE_SILENT="$SILENT/docs/design/lxr-port/harness/scripts/verify-harness.sh"
+# Neuter the stray-results section: keep the section header, remove every check it can run. awk
+# rather than python, because the harness carries no tooling dependencies and neither should its gate.
+awk '
+    /^section .no result was written outside/ { print; skipping = 1; next }
+    skipping && /^# ---/                     { skipping = 0 }
+    skipping                                 { next }
+                                             { print }
+' "$GATE_SILENT" > "$GATE_SILENT.tmp" && mv "$GATE_SILENT.tmp" "$GATE_SILENT"
+
+E_OUT=$(bash "$GATE_SILENT" "$SILENT" --results "$SILENT/artifacts/lxr-harness/runs" 2>&1); E_CODE=$?
+printf '  section emptied of checks:     exit=%d\n' "$E_CODE"
+if [[ $E_CODE -eq 1 ]] && printf '%s\n' "$E_OUT" | grep -q 'ran no checks and did not declare a skip'; then
+    printf '  DETECTED as required.\n'
+    printf '%s\n' "$E_OUT" | grep -E 'ran no checks' | sed 's/^/      /'
+else
+    printf '  a silently empty section still produced a clean verdict.\n'
+    printf '%s\n' "$E_OUT" | tail -n 3 | sed 's/^/      /'
     STATUS=1
 fi
 
