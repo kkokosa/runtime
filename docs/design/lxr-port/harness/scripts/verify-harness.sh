@@ -157,11 +157,17 @@ while read -r id; do
         bad "$id: document says timeout '$DOC_TIMEOUT', catalogue says '$SRC_TIMEOUT'"
     fi
 
-    # the primary metric, same two-source treatment
+    # the primary metric, same two-source treatment. The empty-source guard mirrors the timeout check
+    # above: without it, a doc column that moved AND a grep window that missed would both yield the
+    # empty string, compare equal, and report ok - a check that passes hardest when it is most broken.
     DOC_PRIMARY=$(printf '%s' "$ROW" | awk -F'|' '{print $5}' | tr -d ' ')
     SRC_PRIMARY=$(grep -A8 "Id = \"$id\"," "$SRC/Lxr.Harness.Core/ScenarioCatalog.cs" \
         | grep -oE 'Primary = PrimaryMetric\.[A-Za-z]+' | head -n 1 | sed 's/.*\.//' | tr 'A-Z' 'a-z')
-    if [[ "$DOC_PRIMARY" == "$SRC_PRIMARY" ]]; then
+    if [[ -z "$SRC_PRIMARY" ]]; then
+        bad "$id: no Primary = PrimaryMetric.* in the catalogue"
+    elif [[ -z "$DOC_PRIMARY" ]]; then
+        bad "$id: the document's matrix table has no primary-metric column value"
+    elif [[ "$DOC_PRIMARY" == "$SRC_PRIMARY" ]]; then
         ok "$id: primary metric '$SRC_PRIMARY', document and catalogue agree"
     else
         bad "$id: document says primary '$DOC_PRIMARY', catalogue says '$SRC_PRIMARY'"
@@ -210,12 +216,19 @@ else
     bad "$CONTROL_COUNT controls described but $FIRED pasted FIRED lines"
 fi
 
-# the control suite must be able to fail. A suite that can only pass is not a suite.
-if grep -q 'Fired = false' "$SRC/Lxr.Harness.Runner/ControlSuite.cs" \
-    || grep -qE 'Fired *=[^;]*(==|!=|&&|>=|<=)' "$SRC/Lxr.Harness.Runner/ControlSuite.cs"; then
-    ok "control outcomes are computed from observations, not hard-coded true"
+# The control suite must be able to fail. A suite that can only pass is not a suite.
+#
+# The count is what makes this check real. An earlier version accepted a single literal 'Fired = false'
+# anywhere in the file, which one early-out branch already satisfied - so the gate would have gone on
+# passing even if all seven controls had been rewritten to 'Fired = true'. Requiring at least as many
+# computed Fired expressions as there are controls means each one has to derive its outcome from
+# something observed.
+COMPUTED_FIRED=$(grep -cE 'Fired *=[^;]*(==|!=|&&|\|\||>=|<=|>|<|\bis\b)' "$SRC/Lxr.Harness.Runner/ControlSuite.cs" || true)
+note "ControlSuite computes $COMPUTED_FIRED Fired value(s) from observations, for $CONTROL_COUNT control(s)"
+if [[ "$COMPUTED_FIRED" -ge "$CONTROL_COUNT" ]]; then
+    ok "every control derives its outcome from an observation rather than a literal"
 else
-    bad "ControlSuite never computes a Fired value from an observation"
+    bad "$CONTROL_COUNT controls described but only $COMPUTED_FIRED computed Fired expression(s)"
 fi
 
 if grep -qE '^\s*bool\s+allFired|AllFired|control\.Fired' "$SRC/Lxr.Harness.Runner/ControlSuite.cs" \

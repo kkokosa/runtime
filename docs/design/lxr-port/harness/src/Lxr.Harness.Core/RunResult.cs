@@ -51,15 +51,20 @@ public sealed class RunResult
 
     public double OperationsPerSecond { get; set; }
 
-    public double PauseAverageMs { get; set; }
+    /// <remarks>
+    /// Null rather than zero when the run observed no collection. v1's rule is to use null for an
+    /// unavailable metric, and a zero here would read as a collector that paused for no time at all.
+    /// </remarks>
+    public double? PauseAverageMs { get; set; }
 
-    public double PauseP99Ms { get; set; }
+    public double? PauseP99Ms { get; set; }
 
-    public double PauseMaxMs { get; set; }
+    public double? PauseMaxMs { get; set; }
 
     public double WorkingSetMb { get; set; }
 
-    public double CommittedMb { get; set; }
+    /// <remarks>Null when no collection completed, so <c>GCMemoryInfo</c> was never populated.</remarks>
+    public double? CommittedMb { get; set; }
 
     public string Notes { get; set; } = string.Empty;
 
@@ -171,6 +176,16 @@ public sealed class RunResult
     public bool Noisy { get; set; }
 }
 
+/// <summary>
+/// A checkpoint: one set of results gathered under one configuration, at one point in the project.
+/// </summary>
+/// <remarks>
+/// The <c>checkpoints</c> wrapper is load-bearing rather than decorative. The roadmap canvas loads
+/// every <c>*.json</c> in its results directory, merges each file's <c>checkpoints</c> array and
+/// orders the result by date. A document that carried its rows at the top level would parse as JSON,
+/// contribute nothing, and report no error - so the shape is asserted by
+/// <see cref="ResultConformance"/> rather than left to reviewers to notice.
+/// </remarks>
 public sealed class ResultDocument
 {
     public required string Id { get; init; }
@@ -194,6 +209,8 @@ public static class ResultWriter
 
         writer.WriteStartObject();
         writer.WriteNumber("schemaVersion", RunResult.SchemaVersion);
+        writer.WriteStartArray("checkpoints");
+        writer.WriteStartObject();
         writer.WriteString("id", document.Id);
         writer.WriteString("date", document.Date);
         writer.WriteString("stepId", document.StepId);
@@ -207,6 +224,8 @@ public static class ResultWriter
 
         writer.WriteEndArray();
         writer.WriteEndObject();
+        writer.WriteEndArray();
+        writer.WriteEndObject();
         writer.Flush();
     }
 
@@ -217,11 +236,11 @@ public static class ResultWriter
         writer.WriteString("scenario", r.Scenario);
         writer.WriteString("collector", r.Collector);
         writer.WriteNumber("operationsPerSecond", Round(r.OperationsPerSecond));
-        writer.WriteNumber("pauseAverageMs", Round(r.PauseAverageMs));
-        writer.WriteNumber("pauseP99Ms", Round(r.PauseP99Ms));
-        writer.WriteNumber("pauseMaxMs", Round(r.PauseMaxMs));
+        WriteOptionalNumber(writer, "pauseAverageMs", r.PauseAverageMs);
+        WriteOptionalNumber(writer, "pauseP99Ms", r.PauseP99Ms);
+        WriteOptionalNumber(writer, "pauseMaxMs", r.PauseMaxMs);
         writer.WriteNumber("workingSetMb", Round(r.WorkingSetMb));
-        writer.WriteNumber("committedMb", Round(r.CommittedMb));
+        WriteOptionalNumber(writer, "committedMb", r.CommittedMb);
         writer.WriteString("notes", r.Notes);
 
         WriteOptionalNumber(writer, "latencyP50Ms", r.LatencyP50Ms);

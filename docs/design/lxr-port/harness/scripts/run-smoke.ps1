@@ -52,7 +52,11 @@ param(
     [string]$RunId,
     [int]$WarmupSeconds = 1,
     [int]$DurationSeconds = 3,
-    [int]$Invocations = 1,
+    # Three is Aggregator.MinimumInvocationsForBootstrap: below it the bootstrap has nothing to
+    # resample and a ratio is refused rather than fabricated. A smoke run is proof of function, not a
+    # measurement, but it should still exercise the path that publishes a ratio.
+    [ValidateRange(3, 1000)]
+    [int]$Invocations = 3,
     [switch]$Controls,
     [switch]$SkipBuild
 )

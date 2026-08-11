@@ -33,6 +33,20 @@ public static class Aggregator
 {
     public const string CiMethodDescription = "percentile bootstrap over invocations, B=10000, seed=20040, 95%";
 
+    /// <summary>
+    /// The fewest valid invocations per arm from which a ratio may be published.
+    /// </summary>
+    /// <remarks>
+    /// The bootstrap resamples invocations with replacement. At n=1 every one of the B resamples draws
+    /// the same single value, so the resample distribution is a point mass: the interval collapses to
+    /// zero width and reports that it excludes 1.0 for any ratio at all. That is not a weak result, it
+    /// is a fabricated one - it claims significance for the difference between two single runs. At n=2
+    /// the interval is real but still far too wide to be useful; the floor is set at 3 so that a
+    /// published interval always has some spread behind it, and control 7's resolution ladder is what
+    /// determines the invocation count an actual measurement needs.
+    /// </remarks>
+    public const int MinimumInvocationsForBootstrap = 3;
+
     public static CellAggregate Aggregate(MatrixCell cell, List<InvocationOutcome> outcomes)
     {
         var aggregate = new CellAggregate { Cell = cell, Outcomes = outcomes };
@@ -151,10 +165,28 @@ public static class Aggregator
         double[] samples = aggregate.PrimarySamples;
         if (samples.Length > 0)
         {
-            Array.Sort(samples);
             if (cell.Primary is PrimaryMetric.Latency)
             {
-                result.LatencyP99Ms = Stats.Percentile(samples, 50);
+                // Every latency percentile is aggregated the same way: the mean across invocations of
+                // that invocation's percentile. Two properties matter and neither is free.
+                //
+                // First, one estimator for the whole family. Taking p99 from one place and its siblings
+                // from another put two different runs in one record, so ValidatePercentileOrdering
+                // could reject a perfectly good document whenever the last invocation happened to be
+                // the fastest, and 'latencyP99Ms' silently meant different things in latency-primary
+                // and throughput-primary rows.
+                //
+                // Second, the mean specifically, because Stats.BootstrapRatio resamples invocations and
+                // takes their mean. Publishing a median here while the ratio bootstraps a mean would
+                // mean a reader dividing the two published p99 values could not reproduce the published
+                // ratio - which is exactly the kind of quiet inconsistency this harness exists to catch
+                // rather than commit.
+                result.LatencyP50Ms = MeanAcross(aggregate, "latencyP50Ms");
+                result.LatencyP99Ms = MeanAcross(aggregate, "latencyP99Ms");
+                result.LatencyP999Ms = MeanAcross(aggregate, "latencyP999Ms");
+                result.LatencyP9999Ms = MeanAcross(aggregate, "latencyP9999Ms");
+                result.LatencyMaxMs = MeanAcross(aggregate, "latencyMaxMs");
+                result.ServiceTimeP99Ms = MeanAcross(aggregate, "serviceTimeP99Ms");
             }
             else
             {
@@ -234,9 +266,9 @@ public static class Aggregator
 
         if (report.TryGetProperty("gc", out JsonElement gc))
         {
-            result.PauseAverageMs = ReadDouble(gc, "pauseAverageMs") ?? 0;
-            result.PauseP99Ms = ReadDouble(gc, "pauseP99Ms") ?? 0;
-            result.PauseMaxMs = ReadDouble(gc, "pauseMaxMs") ?? 0;
+            result.PauseAverageMs = ReadDouble(gc, "pauseAverageMs");
+            result.PauseP99Ms = ReadDouble(gc, "pauseP99Ms");
+            result.PauseMaxMs = ReadDouble(gc, "pauseMaxMs");
             result.InducedCollections = (int)(ReadDouble(gc, "inducedCollections") ?? 0);
             result.Gen0Collections = (int)(ReadDouble(gc, "gen0Collections") ?? 0);
             result.Gen1Collections = (int)(ReadDouble(gc, "gen1Collections") ?? 0);
@@ -247,7 +279,7 @@ public static class Aggregator
         if (report.TryGetProperty("process", out JsonElement process))
         {
             result.WorkingSetMb = ReadDouble(process, "workingSetMb") ?? 0;
-            result.CommittedMb = ReadDouble(process, "committedMb") ?? 0;
+            result.CommittedMb = ReadDouble(process, "committedMb");
         }
 
         if (report.TryGetProperty("runtime", out JsonElement runtime))
@@ -319,12 +351,40 @@ public static class Aggregator
             return (null, $"candidate cell {candidate.Cell.Id} has {candidate.Outcomes.Count - candidate.ValidOutcomes.Count} invalid invocation(s)");
         }
 
-        if (baseline.PrimarySamples.Length == 0 || candidate.PrimarySamples.Length == 0)
+        if (baseline.PrimarySamples.Length < MinimumInvocationsForBootstrap ||
+            candidate.PrimarySamples.Length < MinimumInvocationsForBootstrap)
         {
-            return (null, "one or both cells produced no primary samples");
+            return (null,
+                $"fewer than {MinimumInvocationsForBootstrap} valid invocations per arm " +
+                $"(baseline={baseline.PrimarySamples.Length}, candidate={candidate.PrimarySamples.Length}); " +
+                "a bootstrap over one sample resamples the same value every time and reports a " +
+                "zero-width interval, which would assert significance it has not measured");
         }
 
         return (Stats.BootstrapRatio(baseline.PrimarySamples, candidate.PrimarySamples), null);
+    }
+
+    /// <summary>
+    /// The mean across valid invocations of a per-invocation metric, or null when no invocation
+    /// reported it. Null rather than zero: a metric nobody measured is absent, not zero.
+    /// </summary>
+    private static double? MeanAcross(CellAggregate aggregate, string metric)
+    {
+        double total = 0;
+        int count = 0;
+
+        foreach (InvocationOutcome outcome in aggregate.ValidOutcomes)
+        {
+            if (outcome.Report is JsonElement report &&
+                report.TryGetProperty("metrics", out JsonElement metrics) &&
+                ReadDouble(metrics, metric) is double value)
+            {
+                total += value;
+                count++;
+            }
+        }
+
+        return count > 0 ? total / count : null;
     }
 
     private static double? ReadDouble(JsonElement element, string name) =>

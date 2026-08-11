@@ -255,7 +255,7 @@ public static class WorkerEntryPoint
         {
             WriteReport(outputPath, options, descriptor, verification, gc, openLoop, throughput, knobs, gcConfig,
                 identityFailures, configPinFailures, unverifiedKnobs, runtime, machine, memoryInfo, workingSet,
-                collectorConfirmed, valid, invalidReason, operationsCompleted);
+                collectorConfirmed, valid, invalidReason, operationsCompleted, steadySeconds);
         }
 
         // The marker is the deterministic success signal. It is printed only when the scenario itself
@@ -342,7 +342,8 @@ public static class WorkerEntryPoint
         bool collectorConfirmed,
         bool valid,
         string? invalidReason,
-        long operationsCompleted)
+        long operationsCompleted,
+        double steadySeconds)
     {
         Directory.CreateDirectory(Path.GetDirectoryName(Path.GetFullPath(path))!);
         using FileStream stream = File.Create(path);
@@ -357,7 +358,13 @@ public static class WorkerEntryPoint
         writer.WriteNumber("seed", options.Seed);
         writer.WriteNumber("workerCount", options.WorkerCount);
         writer.WriteNumber("warmupSeconds", options.WarmupSeconds);
-        writer.WriteNumber("steadyStateSeconds", options.SteadyStateSeconds);
+
+        // The duration the run actually used, not the one it was asked for. Under --partial-work these
+        // differ, and this is the field whose only job is to let someone reproduce the number. Writing
+        // the requested value here would also have falsified control 6's own published claim that a
+        // truncated run is visible in its recorded steady-state duration.
+        writer.WriteNumber("steadyStateSeconds", steadySeconds);
+        writer.WriteNumber("steadyStateSecondsRequested", options.SteadyStateSeconds);
         writer.WriteNumber("processId", Environment.ProcessId);
 
         writer.WriteBoolean("collectorConfirmed", collectorConfirmed);
@@ -434,20 +441,30 @@ public static class WorkerEntryPoint
 
         double[] pauses = [.. gc.PauseSamplesMs];
         Array.Sort(pauses);
-        writer.WriteNumber("pauseAverageMs", gc.MeanPauseMs);
-        writer.WriteNumber("pauseP99Ms", pauses.Length > 0 ? Stats.Percentile(pauses, 99) : 0);
-        writer.WriteNumber("pauseMaxMs", pauses.Length > 0 ? pauses[^1] : 0);
+
+        // A run that observed no pause has no pause distribution. Emitting 0 would be indistinguishable
+        // from a collector that paused for zero milliseconds, which is the flattering reading, and the
+        // board would chart it as a real measurement. The v1 result schema says to use null for an
+        // unavailable metric, so that is what an absent distribution reports.
+        WriteNullableNumber(writer, "pauseAverageMs", gc.MeanPauseMs);
+        WriteNullableNumber(writer, "pauseP99Ms", pauses.Length > 0 ? Stats.Percentile(pauses, 99) : null);
+        WriteNullableNumber(writer, "pauseMaxMs", pauses.Length > 0 ? pauses[^1] : null);
         writer.WriteEndObject();
 
         writer.WriteStartObject("process");
         writer.WriteNumber("workingSetMb", workingSet / (1024.0 * 1024.0));
-        writer.WriteNumber("committedMb", memoryInfo.TotalCommittedBytes / (1024.0 * 1024.0));
-        writer.WriteNumber("heapSizeMb", memoryInfo.HeapSizeBytes / (1024.0 * 1024.0));
-        writer.WriteNumber("totalAvailableMemoryMb", memoryInfo.TotalAvailableMemoryBytes / (1024.0 * 1024.0));
 
-        // GCMemoryInfo reports the last collection, so it is all zero in a run where no collection
-        // happened. Allocated bytes and the live-heap estimate are always meaningful, and without them
-        // a scenario that never collects would appear to have used no memory at all.
+        // GCMemoryInfo describes the last completed collection, so in a run where none happened every
+        // field of it is zero. Index is the documented signal for that: it is the sequence number of
+        // the collection being described, and stays 0 until one completes. Reporting 0 MB committed
+        // for such a run would be a fabricated measurement, not a small one.
+        bool memoryInfoIsPopulated = memoryInfo.Index > 0;
+        WriteNullableNumber(writer, "committedMb", memoryInfoIsPopulated ? memoryInfo.TotalCommittedBytes / (1024.0 * 1024.0) : null);
+        WriteNullableNumber(writer, "heapSizeMb", memoryInfoIsPopulated ? memoryInfo.HeapSizeBytes / (1024.0 * 1024.0) : null);
+        WriteNullableNumber(writer, "totalAvailableMemoryMb", memoryInfoIsPopulated ? memoryInfo.TotalAvailableMemoryBytes / (1024.0 * 1024.0) : null);
+
+        // Allocated bytes and the live-heap estimate do not depend on a collection having happened, and
+        // without them a scenario that never collects would appear to have used no memory at all.
         writer.WriteNumber("totalAllocatedMb", GC.GetTotalAllocatedBytes(precise: false) / (1024.0 * 1024.0));
         writer.WriteNumber("totalMemoryMb", GC.GetTotalMemory(forceFullCollection: false) / (1024.0 * 1024.0));
         writer.WriteEndObject();
@@ -564,6 +581,18 @@ public static class WorkerEntryPoint
     }
 
     private static double Safe(double value) => double.IsNaN(value) || double.IsInfinity(value) ? 0.0 : value;
+
+    private static void WriteNullableNumber(Utf8JsonWriter writer, string name, double? value)
+    {
+        if (value is null)
+        {
+            writer.WriteNull(name);
+        }
+        else
+        {
+            writer.WriteNumber(name, value.Value);
+        }
+    }
 
     private static void WriteNullableString(Utf8JsonWriter writer, string name, string? value)
     {

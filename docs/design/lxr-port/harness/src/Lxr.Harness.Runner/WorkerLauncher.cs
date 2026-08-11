@@ -3,6 +3,7 @@
 
 using System;
 using System.Collections.Generic;
+using System.ComponentModel;
 using System.Diagnostics;
 using System.Globalization;
 using System.IO;
@@ -200,14 +201,34 @@ public sealed class WorkerLauncher
         {
             // A timeout is a recorded failure, never a missing run. The whole tree is killed because a
             // hung worker can have live child processes and orphaning them would poison later cells.
+            //
+            // Every plausible failure is swallowed, because this is the one path whose entire purpose is
+            // to turn a hang into a recorded result. Kill(bool) is documented to throw AggregateException
+            // when part of the tree survives and Win32Exception when TerminateProcess fails - the latter
+            // being the ordinary outcome of the very race the catch is here to absorb, since a tree
+            // member can exit between enumeration and termination. Letting either escape would convert
+            // one hung worker into the loss of an entire matrix run.
             try
             {
                 process.Kill(entireProcessTree: true);
                 process.WaitForExit(30_000);
             }
-            catch (InvalidOperationException)
+            catch (Exception ex) when (ex is InvalidOperationException or Win32Exception or AggregateException or NotSupportedException)
             {
-                // Raced with exit; nothing to kill.
+                // Raced with exit, or part of the tree was already gone. Either way there is nothing
+                // left to do but record the timeout.
+            }
+
+            // WaitForExit(int) does not wait for the async output readers to drain, so without this the
+            // stdout and stderr captured for a timed-out invocation can be truncated - and that output
+            // is the primary diagnostic for why it hung.
+            try
+            {
+                process.WaitForExit();
+            }
+            catch (Exception ex) when (ex is InvalidOperationException or SystemException)
+            {
+                // The process object may already be gone; the partial output stands.
             }
 
             status = RunStatus.Timeout;

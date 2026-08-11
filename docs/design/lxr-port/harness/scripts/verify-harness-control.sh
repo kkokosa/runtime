@@ -105,8 +105,11 @@ fi
 # other reason is also caught.
 printf '\n[B] perturbed copy - one scenario row removed from the matrix table\n'
 COPY="$WORK/perturbed"
-cp -r "$EXTRACT" "$COPY"
-rm -f "$COPY/artifacts/lxr-harness"
+# Copy only the committed subtree. Copying $EXTRACT wholesale would drag in whatever prepare_root
+# put at artifacts/lxr-harness, which on a host without working symlinks is a real (and large)
+# directory that the follow-up prepare_root then cannot overwrite.
+mkdir -p "$COPY/docs/design"
+cp -r "$EXTRACT/docs/design/lxr-port" "$COPY/docs/design/lxr-port"
 prepare_root "$COPY"
 
 DOC_COPY="$COPY/docs/design/lxr-port/P0.4-harness.md"

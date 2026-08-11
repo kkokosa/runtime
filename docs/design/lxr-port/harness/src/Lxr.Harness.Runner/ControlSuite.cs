@@ -132,7 +132,6 @@ public sealed class ControlSuite
         const double StallMs = 200;
         const double PeriodSeconds = 1;
         double rate = 1000;
-        double duration = 6;
 
         MatrixCell cell = Cell("allocation-churn", CollectorArms.Workstation, "c2");
         var latencyArgs = new List<string> { "--mode", "latency", "--rate", rate.ToString(CultureInfo.InvariantCulture), "--arrival", "uniform" };
@@ -168,7 +167,10 @@ public sealed class ControlSuite
             Observed = $"open-loop p99 {baseP99:F3} -> {stallP99:F3} ms (predicted {predictedP99:F1}); service-time p99 {baseService:F3} -> {stallService:F3} ms",
             Detail =
             [
-                $"injection: {StallMs} ms every {PeriodSeconds} s, arrival rate {rate}/s uniform, {duration} s steady state",
+                // Read the duration back from the run rather than restating a constant. The control
+                // never passed --duration-seconds, so a local literal here described an experiment that
+                // did not happen - the published parameters of a control have to be observations too.
+                $"injection: {StallMs} ms every {PeriodSeconds} s, arrival rate {rate}/s uniform, {ReadTopLevel(stalled.Report, "steadyStateSeconds"):F1} s steady state",
                 $"open-loop p50 {ReadMetric(baseline.Report, "latencyP50Ms"):F3} -> {ReadMetric(stalled.Report, "latencyP50Ms"):F3} ms",
                 $"open-loop p99.9 {ReadMetric(baseline.Report, "latencyP999Ms"):F3} -> {ReadMetric(stalled.Report, "latencyP999Ms"):F3} ms",
                 $"open-loop max {ReadMetric(baseline.Report, "latencyMaxMs"):F3} -> {ReadMetric(stalled.Report, "latencyMaxMs"):F3} ms",
@@ -337,28 +339,59 @@ public sealed class ControlSuite
                 $"marker prefix looked for on stdout: '{WorkerEntryPoint.MarkerPrefix}'",
                 $"honest run marker: {honest.Marker ?? "<none>"}",
                 $"partial run (10% of the steady state) marker: {partial.Marker ?? "<none>"}",
-                $"partial run throughput {partialOps:F0}/s versus honest {honestOps:F0}/s - the partial run is detectable in its recorded steady-state duration, which the result carries, rather than being hidden behind an identical rate",
+                $"partial run throughput {partialOps:F0}/s versus honest {honestOps:F0}/s - similar rates, so throughput alone would not reveal the truncation",
+                $"recorded steady state: honest {ReadTopLevel(honest.Report, "steadyStateSeconds"):F2} s versus partial {ReadTopLevel(partial.Report, "steadyStateSeconds"):F2} s, against {ReadTopLevel(partial.Report, "steadyStateSecondsRequested"):F2} s requested - the truncation is visible in the run's own record",
                 "exit code 0 is never sufficient on its own: validity requires the marker, the checksum and the identity assertions",
             ],
         };
     }
 
     /// <summary>
-    /// Control 7. The paper's barrier cost is 1.6% against a noise floor of about 3%. This injects a
-    /// slowdown of known size and reports whether the bootstrap interval can resolve it - publishing
-    /// the achieved half-width as this host's measured resolution rather than assuming the paper's.
+    /// Control 7. The paper's barrier cost is 1.6% against a noise floor of about 3%. This asserts that
+    /// the bootstrap estimator resolves an injected slowdown it should never miss and refuses to claim
+    /// one where none was injected, then <em>measures</em> - and publishes - what this host can actually
+    /// resolve at the paper's barrier scale rather than assuming the paper's floor.
     /// </summary>
     /// <remarks>
-    /// Run in both directions, because an interval that is narrow enough to exclude 1.0 on an injected
-    /// effect would do so just as eagerly on no effect at all if it were simply too narrow. So a third
-    /// arm is launched that is identical to the baseline in every respect, and the same estimator must
-    /// <em>include</em> 1.0 for it. One direction alone would not distinguish a working interval from
-    /// an over-confident one.
+    /// <para>
+    /// Run in both directions, because an interval narrow enough to exclude 1.0 on an injected effect
+    /// would do so just as eagerly on no effect at all if it were simply too narrow. So an arm is
+    /// launched that is identical to the baseline in every respect, and the same estimator must
+    /// <em>include</em> 1.0 for it. One direction alone would not distinguish a working interval from an
+    /// over-confident one.
+    /// </para>
+    /// <para>
+    /// The separation of the asserted magnitude from the measured one is deliberate and was forced by
+    /// evidence. Asserting on a barrier-scale effect made the verdict track background load rather than
+    /// harness correctness; the same binary reached the 1.6% target at n=8, at n=15, and not at all on
+    /// three consecutive runs. The assertion therefore uses an effect this host cannot miss, and the
+    /// barrier-scale question is answered with a published number - including when that number is
+    /// unwelcome, which is the case it exists for.
+    /// </para>
     /// </remarks>
     private ControlEvidence MeasurementResolution()
     {
-        const int EveryNth = 50;
-        double nominal = 1.0 - (1.0 / (EveryNth + 1.0));
+        // Two injected magnitudes, doing two different jobs.
+        //
+        // CoarseEveryNth carries the assertion. It is a true-positive test of the estimator: an effect
+        // this large is far outside the roughly plus or minus 3% single-invocation spread measured on
+        // this host, so if the estimator cannot see it, the estimator is broken - a conclusion that does
+        // not depend on how busy the machine happens to be.
+        //
+        // FineEveryNth is the paper's question, and it is measured rather than asserted. At barrier
+        // scale the effect sits inside the host's own noise: three paired 8 s probes of exactly this
+        // injection returned ratios of 1.0221, 0.9649 and 0.9922 - a 2% signal under a plus or minus 3%
+        // spread, with the sign flipping. That is the paper's 1.6%-inside-plus-or-minus-3% problem
+        // (P0.2 section 7) reproduced on this VM, and it is a finding, not a defect. Asserting on it
+        // made this control's verdict track the machine's weather: identical code reached the target at
+        // n=8, at n=15, and not at all on three consecutive runs, and on the third the fine effect
+        // itself came out at 0.94% against a null replicate of 0.88% - indistinguishable. A control that
+        // flakes teaches the next reader to rerun until it passes, which is how a control stops meaning
+        // anything.
+        const int CoarseEveryNth = 5;
+        const int FineEveryNth = 50;
+        double coarseNominal = 1.0 - (1.0 / (CoarseEveryNth + 1.0));
+        double fineNominal = 1.0 - (1.0 / (FineEveryNth + 1.0));
 
         MatrixCell cell = Cell("low-allocation-compute", CollectorArms.Workstation, "c7");
         int invocations = Math.Max(9, _options.Invocations);
@@ -368,13 +401,19 @@ public sealed class ControlSuite
         // when the operator asked for a quick run. Resolving a 2% effect is the whole point of it.
         double steadyState = Math.Max(8.0, _options.SteadyStateSeconds);
         string[] baseArgs = ["--duration-seconds", steadyState.ToString(CultureInfo.InvariantCulture)];
-        string[] slowArgs =
+        string[] coarseArgs =
         [
             .. baseArgs,
-            "--inject-extra-work-every", EveryNth.ToString(CultureInfo.InvariantCulture),
+            "--inject-extra-work-every", CoarseEveryNth.ToString(CultureInfo.InvariantCulture),
+        ];
+        string[] fineArgs =
+        [
+            .. baseArgs,
+            "--inject-extra-work-every", FineEveryNth.ToString(CultureInfo.InvariantCulture),
         ];
 
         var baseline = new List<double>();
+        var coarse = new List<double>();
         var slowed = new List<double>();
         var replicate = new List<double>();
         int dropped = 0;
@@ -382,10 +421,14 @@ public sealed class ControlSuite
         {
             // Interleaved, not blocked: this host is shared, and blocking the arms would let drift
             // masquerade as the injected effect - which is precisely the error this control exists to
-            // rule out. The null replicate is interleaved on the same footing for the same reason.
-            Collect(_runner.LaunchCell(cell, i * 3, extraArguments: baseArgs), baseline);
-            Collect(_runner.LaunchCell(cell, (i * 3) + 1, extraArguments: slowArgs), slowed);
-            Collect(_runner.LaunchCell(cell, (i * 3) + 2, extraArguments: baseArgs), replicate);
+            // rule out. The null replicate is interleaved on the same footing for the same reason, and
+            // it is what caught the drift on the run that prompted this design: baseline ran 0.88%
+            // faster than an identical uninjected arm, which alone accounted for most of the fine
+            // arm's apparent effect.
+            Collect(_runner.LaunchCell(cell, i * 4, extraArguments: baseArgs), baseline);
+            Collect(_runner.LaunchCell(cell, (i * 4) + 1, extraArguments: coarseArgs), coarse);
+            Collect(_runner.LaunchCell(cell, (i * 4) + 2, extraArguments: fineArgs), slowed);
+            Collect(_runner.LaunchCell(cell, (i * 4) + 3, extraArguments: baseArgs), replicate);
         }
 
         void Collect(InvocationOutcome outcome, List<double> into)
@@ -400,7 +443,7 @@ public sealed class ControlSuite
             }
         }
 
-        if (baseline.Count < 2 || slowed.Count < 2 || replicate.Count < 2)
+        if (baseline.Count < 2 || coarse.Count < 2 || slowed.Count < 2 || replicate.Count < 2)
         {
             return new ControlEvidence
             {
@@ -408,10 +451,12 @@ public sealed class ControlSuite
                 Name = "measurement resolution",
                 Expectation = "an injected slowdown is resolved, and no difference is claimed where none was injected",
                 Fired = false,
-                Observed = $"insufficient valid invocations (baseline {baseline.Count}, slowed {slowed.Count}, replicate {replicate.Count})",
+                Observed = $"insufficient valid invocations (baseline {baseline.Count}, coarse {coarse.Count}, " +
+                    $"fine {slowed.Count}, replicate {replicate.Count})",
             };
         }
 
+        RatioEstimate coarseEffect = Stats.BootstrapRatio([.. baseline], [.. coarse]);
         RatioEstimate effect = Stats.BootstrapRatio([.. baseline], [.. slowed]);
         RatioEstimate nullRatio = Stats.BootstrapRatio([.. baseline], [.. replicate]);
 
@@ -437,44 +482,56 @@ public sealed class ControlSuite
             ladder.Add($"n={n}: ratio {step.Ratio:F4} [{step.Low:F4}, {step.High:F4}], half-width {step.HalfWidthFraction * 100:F2}%{(meets ? " <= 1.6%" : string.Empty)}");
         }
 
-        bool resolvesEffect = effect.ExcludesUnity && effect.Ratio < 1.0;
+        bool resolvesCoarse = coarseEffect.ExcludesUnity && coarseEffect.Ratio < 1.0;
         bool refusesNull = !nullRatio.ExcludesUnity;
+        bool resolvesFine = effect.ExcludesUnity && effect.Ratio < 1.0;
         bool reachesTarget = requiredInvocations > 0;
+        bool ladderBuilt = ladder.Count > 0;
 
-        // The pass condition is deliberately not "brackets the arithmetic prediction". The nominal
-        // 1/(N+1) assumes the injected call costs exactly what a counted one costs, which is a claim
-        // about this machine's microarchitecture, not about the harness. What the harness must show is
-        // that it resolves an effect of roughly this size in the right direction, does not manufacture
-        // one when none exists, and reaches the 1.6% half-width somewhere on the ladder.
         return new ControlEvidence
         {
             Id = "7",
             Name = "measurement resolution",
-            Expectation = $"a ~{(1 - nominal) * 100:F1}% injected slowdown gives an interval excluding 1.0 on the low side, " +
-                "an uninjected replicate of the same arm gives an interval including 1.0, " +
-                $"and some invocation count on the ladder reaches a {BarrierCostFraction * 100:F1}% half-width",
-            Fired = resolvesEffect && refusesNull && reachesTarget,
-            Observed = $"injected {effect.Ratio:F4} [{effect.Low:F4}, {effect.High:F4}] excludes 1.0: {effect.ExcludesUnity}; " +
+            Expectation = $"a ~{(1 - coarseNominal) * 100:F1}% injected slowdown gives an interval excluding 1.0 on the low side, " +
+                "and an uninjected replicate of the same arm gives an interval including 1.0. " +
+                $"What this host can resolve at the paper's ~{(1 - fineNominal) * 100:F1}% barrier scale is measured and reported, not asserted",
+            Fired = resolvesCoarse && refusesNull && ladderBuilt,
+            Observed = $"coarse ~{(1 - coarseNominal) * 100:F1}% injection {coarseEffect.Ratio:F4} " +
+                $"[{coarseEffect.Low:F4}, {coarseEffect.High:F4}] excludes 1.0: {coarseEffect.ExcludesUnity}; " +
                 $"null replicate {nullRatio.Ratio:F4} [{nullRatio.Low:F4}, {nullRatio.High:F4}] includes 1.0: {refusesNull}; " +
-                (reachesTarget
-                    ? $"{BarrierCostFraction * 100:F1}% half-width first reached at n={requiredInvocations} of {usable} invocations"
-                    : $"{BarrierCostFraction * 100:F1}% half-width not reached at any n up to {usable}; best {effect.HalfWidthFraction * 100:F2}%"),
+                $"fine ~{(1 - fineNominal) * 100:F1}% injection {effect.Ratio:F4} [{effect.Low:F4}, {effect.High:F4}] " +
+                $"excludes 1.0: {resolvesFine} (measured, not asserted)",
             Detail =
             [
-                $"injection: every {EveryNth}th operation is performed twice. The nominal cost is 1/{EveryNth + 1} = {(1 - nominal) * 100:F3}% " +
-                    "of the scenario's own work, which the measured figure need not match exactly - the injected call is a branch the baseline never takes.",
-                $"{baseline.Count} baseline, {slowed.Count} slowed and {replicate.Count} null-replicate invocations, interleaved A/B/A, " +
-                    $"{steadyState:F0} s steady state each, {dropped} invocation(s) dropped as invalid",
+                $"ASSERTED - coarse injection: every {CoarseEveryNth}th operation is performed twice, a nominal " +
+                    $"1/{CoarseEveryNth + 1} = {(1 - coarseNominal) * 100:F2}% of the scenario's own work. This is a true-positive test of the " +
+                    "estimator, set far enough above the host's single-invocation spread that its verdict does not depend on background load.",
+                $"ASSERTED - null replicate: an arm identical to the baseline in every respect. Without it, an interval too narrow to be " +
+                    "trusted would look like a success on the injected arm; this is the direction that catches over-confidence.",
+                $"MEASURED - fine injection: every {FineEveryNth}th operation is performed twice, a nominal " +
+                    $"1/{FineEveryNth + 1} = {(1 - fineNominal) * 100:F2}%, chosen to sit at the paper's 1.6% barrier-cost scale. " +
+                    "Reported, never asserted - see the P0.5 input below for why.",
+                $"{baseline.Count} baseline, {coarse.Count} coarse, {slowed.Count} fine and {replicate.Count} null-replicate invocations, " +
+                    $"interleaved A/B/C/D, {steadyState:F0} s steady state each, {dropped} invocation(s) dropped as invalid",
                 $"{Aggregator.CiMethodDescription}",
-                "MEASURED RESOLUTION OF THIS HOST - the half-width as the invocation count grows:",
+                "MEASURED RESOLUTION OF THIS HOST - half-width on the fine pair as the invocation count grows:",
                 .. ladder.ConvertAll(line => "    " + line),
                 reachesTarget
-                    ? $"P0.5 INPUT: on this host, {requiredInvocations} interleaved invocations of {steadyState:F0} s resolve the paper's 1.6% barrier cost. " +
-                        "Fewer than that cannot settle a barrier-cost question here."
-                    : $"P0.5 INPUT: this host did not reach a 1.6% half-width at any count up to {usable}. A barrier-cost question cannot be settled here " +
-                        "without more invocations, a longer steady state, or a quieter machine.",
+                    ? $"P0.5 INPUT: on this host, {requiredInvocations} interleaved invocations of {steadyState:F0} s bring the half-width " +
+                        $"to {BarrierCostFraction * 100:F1}%. Fewer than that cannot settle a barrier-cost question here."
+                    : $"P0.5 INPUT: this host did not reach a {BarrierCostFraction * 100:F1}% half-width at any count up to {usable}. A barrier-cost " +
+                        "question cannot be settled here without more invocations, a longer steady state, or a quieter machine.",
+                resolvesFine
+                    ? $"P0.5 INPUT: the ~{(1 - fineNominal) * 100:F1}% injected effect WAS resolved on this run. That is not guaranteed run to run - see below."
+                    : $"P0.5 INPUT: the ~{(1 - fineNominal) * 100:F1}% injected effect was NOT resolved on this run, despite the coarse effect being resolved. " +
+                        "The estimator is working; the effect is simply at or below this host's floor today.",
+                "P0.5 INPUT: three paired 8 s probes of the fine injection, run directly against the worker, returned ratios of 1.0221, 0.9649 " +
+                    "and 0.9922 - a 2% signal under a plus or minus 3% single-invocation spread, with the sign flipping. The paper's own " +
+                    "1.6%-inside-plus-or-minus-3% problem (P0.2 section 7) is therefore reproduced on this VM. Any barrier-cost claim in P0.5 must " +
+                    "clear this floor with invocation count, not with a single comparison.",
                 "baseline samples (ops/s): " + string.Join(", ", baseline.ConvertAll(v => v.ToString("F0", CultureInfo.InvariantCulture))),
-                "slowed samples (ops/s): " + string.Join(", ", slowed.ConvertAll(v => v.ToString("F0", CultureInfo.InvariantCulture))),
+                "coarse samples (ops/s): " + string.Join(", ", coarse.ConvertAll(v => v.ToString("F0", CultureInfo.InvariantCulture))),
+                "fine samples (ops/s): " + string.Join(", ", slowed.ConvertAll(v => v.ToString("F0", CultureInfo.InvariantCulture))),
                 "null replicate samples (ops/s): " + string.Join(", ", replicate.ConvertAll(v => v.ToString("F0", CultureInfo.InvariantCulture))),
             ],
         };
@@ -488,6 +545,18 @@ public sealed class ControlSuite
         }
 
         return metrics.TryGetProperty(name, out JsonElement value) && value.ValueKind is JsonValueKind.Number
+            ? value.GetDouble()
+            : double.NaN;
+    }
+
+    private static double ReadTopLevel(JsonElement? report, string name)
+    {
+        if (report is not JsonElement element)
+        {
+            return double.NaN;
+        }
+
+        return element.TryGetProperty(name, out JsonElement value) && value.ValueKind is JsonValueKind.Number
             ? value.GetDouble()
             : double.NaN;
     }

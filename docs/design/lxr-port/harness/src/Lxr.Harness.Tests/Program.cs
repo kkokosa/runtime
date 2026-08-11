@@ -4,6 +4,7 @@
 using System;
 using System.Collections.Generic;
 using System.IO;
+using System.Text.Json;
 using Lxr.Harness.Core;
 using Lxr.Harness.Runner;
 using Lxr.Harness.Scenarios;
@@ -398,7 +399,143 @@ Test("conformance is checked against the written file, not the object model", ()
     }
 });
 
+Test("the emitted document nests its rows under the canvas's checkpoints array", () =>
+{
+    // The board loads every *.json in its directory, merges each file's "checkpoints" array and
+    // orders by date. A document that carried its rows at the top level would be valid JSON,
+    // contribute nothing and report no error - the quietest possible failure. This test exists
+    // because the emitter did exactly that until the v1 schema was read from the artifact rather
+    // than from a description of it.
+    string path = Path.Combine(Path.GetTempPath(), $"lxr-shape-{Guid.NewGuid():N}.json");
+    try
+    {
+        ResultWriter.Write(path, Document(Sample()));
+        using JsonDocument parsed = JsonDocument.Parse(File.ReadAllText(path));
+        JsonElement root = parsed.RootElement;
+
+        True(root.TryGetProperty("checkpoints", out JsonElement checkpoints), "the document must carry a checkpoints array");
+        True(checkpoints.ValueKind is JsonValueKind.Array && checkpoints.GetArrayLength() == 1, "one Write call is one checkpoint");
+        True(checkpoints[0].TryGetProperty("results", out _), "the results live inside the checkpoint, not beside it");
+        False(root.TryGetProperty("results", out _), "results must not also sit at the top level");
+
+        foreach (string field in new[] { "id", "date", "stepId", "notes" })
+        {
+            True(checkpoints[0].TryGetProperty(field, out _), $"checkpoint field '{field}' belongs inside the checkpoint");
+        }
+    }
+    finally
+    {
+        File.Delete(path);
+    }
+
+    // And the reject direction: the flattened shape the emitter used to produce must not conform.
+    string flattened = """
+    { "schemaVersion": 2, "id": "x", "date": "2026-08-11", "stepId": "P0.4", "notes": "", "results": [] }
+    """;
+    string flatPath = Path.Combine(Path.GetTempPath(), $"lxr-flat-{Guid.NewGuid():N}.json");
+    try
+    {
+        File.WriteAllText(flatPath, flattened);
+        False(ResultConformance.CheckFile(flatPath).Ok, "a top-level 'results' document contributes nothing to the board and must be rejected");
+    }
+    finally
+    {
+        File.Delete(flatPath);
+    }
+});
+
+Test("a ratio is refused rather than fabricated when an arm has too few invocations", () =>
+{
+    // At n=1 every bootstrap resample draws the same single value, so the interval collapses to zero
+    // width and reports that it excludes 1.0 for any ratio at all - asserting significance for the
+    // difference between two single runs. Refusing is the only honest output, and the refusal has to
+    // name the reason so it is visible rather than silent.
+    for (int n = 1; n < Aggregator.MinimumInvocationsForBootstrap; n++)
+    {
+        CellAggregate baseline = AggregateWithSamples(CollectorArms.Workstation, n, 100.0);
+        CellAggregate candidate = AggregateWithSamples(CollectorArms.Server(8), n, 103.0);
+
+        (RatioEstimate? estimate, string? refusal) = Aggregator.Ratio(baseline, candidate);
+        True(estimate is null, $"a ratio must not be published from {n} invocation(s) per arm");
+        True(refusal is not null && refusal.Contains("fewer than", StringComparison.Ordinal),
+            $"the refusal at n={n} must say why: {refusal}");
+    }
+
+    // And the accept direction, or the check above would pass just as well if Ratio always refused.
+    CellAggregate okBaseline = AggregateWithSamples(CollectorArms.Workstation, Aggregator.MinimumInvocationsForBootstrap, 100.0);
+    CellAggregate okCandidate = AggregateWithSamples(CollectorArms.Server(8), Aggregator.MinimumInvocationsForBootstrap, 103.0);
+    (RatioEstimate? okEstimate, string? okRefusal) = Aggregator.Ratio(okBaseline, okCandidate);
+    True(okEstimate is not null, $"a ratio must be published at the floor: {okRefusal}");
+    True(okEstimate!.Value.High > okEstimate.Value.Low, "a published interval must have non-zero width");
+});
+
+Test("mean GC pause divides by suspensions, not by triple-counted collection totals", () =>
+{
+    // GC.CollectionCount(0) counts every collection of gen0 or higher, so Gen1 and Gen2 are subsets of
+    // Gen0 rather than disjoint from it. Summing the three counts gen1 twice and gen2 three times,
+    // deflating the mean by a factor that varies with the generation mix - so it would not even cancel
+    // between the two arms being compared.
+    var summary = new GcSummary
+    {
+        Gen0Collections = 20,
+        Gen1Collections = 19,
+        Gen2Collections = 2,
+        InducedCollections = 0,
+        TotalPauseMs = 79.156,
+        ObservedPauseCount = 20,
+        PauseShortfall = 0,
+        PauseSamplesMs = [],
+        PauseSource = "test",
+    };
+
+    double expected = 79.156 / 20;
+    True(summary.MeanPauseMs is double mean && Math.Abs(mean - expected) < 1e-9,
+        $"expected {expected:F4} ms from 20 suspensions, got {summary.MeanPauseMs}");
+
+    double tripleCounted = 79.156 / (20 + 19 + 2);
+    True(summary.MeanPauseMs is double m2 && Math.Abs(m2 - tripleCounted) > 1e-6,
+        "the triple-counted denominator must not be what is returned");
+
+    // No collection observed at all is an absent measurement, not a zero-millisecond pause.
+    var empty = new GcSummary
+    {
+        Gen0Collections = 0,
+        Gen1Collections = 0,
+        Gen2Collections = 0,
+        InducedCollections = 0,
+        TotalPauseMs = 0,
+        ObservedPauseCount = 0,
+        PauseShortfall = 0,
+        PauseSamplesMs = [],
+        PauseSource = "test",
+    };
+    True(empty.MeanPauseMs is null, "a run with no collections has no mean pause");
+});
+
 return Summarize();
+
+static CellAggregate AggregateWithSamples(CollectorArm arm, int invocations, double magnitude)
+{
+    // The bootstrap floor is about sample count, so the outcomes only need to exist and be valid;
+    // PrimarySamples is what Ratio actually resamples. Real spread is included so that the accept
+    // direction produces a genuinely non-degenerate interval rather than passing by accident.
+    var outcomes = new List<InvocationOutcome>();
+    var samples = new double[invocations];
+    for (int i = 0; i < invocations; i++)
+    {
+        outcomes.Add(new InvocationOutcome { Status = RunStatus.Ok, MarkerSeen = true });
+        samples[i] = magnitude + i;
+    }
+
+    var aggregate = new CellAggregate
+    {
+        Cell = Cell(arm, invocations, null),
+        Outcomes = outcomes,
+        PrimarySamples = samples,
+    };
+    aggregate.ValidOutcomes.AddRange(outcomes);
+    return aggregate;
+}
 
 static MatrixCell Cell(CollectorArm arm, int invocations, string? tag) => new()
 {

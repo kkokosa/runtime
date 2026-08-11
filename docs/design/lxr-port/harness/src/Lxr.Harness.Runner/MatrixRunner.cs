@@ -150,7 +150,14 @@ public sealed class MatrixRunner
             }
 
             (RatioEstimate? estimate, string? refusal) = Aggregator.Ratio(baseline, aggregates[cell.Id]);
-            result.RatioStatistic = cell.Primary is PrimaryMetric.Latency ? "latencyP99Ms" : "operationsPerSecond";
+
+            // Name the statistic the bootstrap actually resamples, not just the field it came from.
+            // "latencyP99Ms" alone would let a reader assume the ratio is of the two published p99
+            // values as-is; it is the ratio of their means across invocations, which is the same thing
+            // only because the published field is now that mean too.
+            result.RatioStatistic = cell.Primary is PrimaryMetric.Latency
+                ? "mean over invocations of latencyP99Ms"
+                : "mean over invocations of operationsPerSecond";
 
             if (estimate is RatioEstimate ratio)
             {

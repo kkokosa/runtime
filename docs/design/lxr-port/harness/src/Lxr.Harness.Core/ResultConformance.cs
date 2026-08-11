@@ -120,24 +120,47 @@ public static class ResultConformance
                 violations.Add($"{path}: schemaVersion must be {RunResult.SchemaVersion}");
             }
 
-            foreach (string field in new[] { "id", "date", "stepId", "notes" })
+            // The canvas merges every file's 'checkpoints' array. A document that carried its rows at
+            // the top level would parse, contribute nothing and report no error, so the wrapper is
+            // checked explicitly rather than assumed.
+            if (!root.TryGetProperty("checkpoints", out JsonElement checkpoints) || checkpoints.ValueKind is not JsonValueKind.Array)
             {
-                if (!root.TryGetProperty(field, out JsonElement value) || value.ValueKind is not JsonValueKind.String)
-                {
-                    violations.Add($"{path}: missing or non-string checkpoint field '{field}'");
-                }
-            }
-
-            if (!root.TryGetProperty("results", out JsonElement results) || results.ValueKind is not JsonValueKind.Array)
-            {
-                violations.Add($"{path}: missing 'results' array");
+                violations.Add($"{path}: missing 'checkpoints' array (v1 nests every checkpoint under it)");
                 return violations;
             }
 
-            int index = 0;
-            foreach (JsonElement result in results.EnumerateArray())
+            if (checkpoints.GetArrayLength() == 0)
             {
-                ValidateResult(path, index++, result, violations);
+                violations.Add($"{path}: 'checkpoints' is empty, so this file contributes nothing to the board");
+            }
+
+            foreach (JsonElement checkpoint in checkpoints.EnumerateArray())
+            {
+                if (checkpoint.ValueKind is not JsonValueKind.Object)
+                {
+                    violations.Add($"{path}: checkpoint is {checkpoint.ValueKind}, expected an object");
+                    continue;
+                }
+
+                foreach (string field in new[] { "id", "date", "stepId", "notes" })
+                {
+                    if (!checkpoint.TryGetProperty(field, out JsonElement value) || value.ValueKind is not JsonValueKind.String)
+                    {
+                        violations.Add($"{path}: missing or non-string checkpoint field '{field}'");
+                    }
+                }
+
+                if (!checkpoint.TryGetProperty("results", out JsonElement results) || results.ValueKind is not JsonValueKind.Array)
+                {
+                    violations.Add($"{path}: missing 'results' array");
+                    continue;
+                }
+
+                int index = 0;
+                foreach (JsonElement result in results.EnumerateArray())
+                {
+                    ValidateResult(path, index++, result, violations);
+                }
             }
         }
 

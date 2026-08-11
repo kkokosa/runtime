@@ -229,6 +229,12 @@ public sealed class GcTelemetry : EventListener
 
 public sealed class GcSummary
 {
+    /// <remarks>
+    /// <c>GC.CollectionCount(0)</c> counts every collection of generation 0 <em>or higher</em>, so this
+    /// is the cumulative total across all generations, not the gen0-only figure its name suggests.
+    /// <see cref="Gen1Collections"/> and <see cref="Gen2Collections"/> are subsets of it. Summing the
+    /// three therefore counts gen1 twice and gen2 three times.
+    /// </remarks>
     public required int Gen0Collections { get; init; }
 
     public required int Gen1Collections { get; init; }
@@ -254,8 +260,24 @@ public sealed class GcSummary
     /// <summary>Which mechanism produced the pause figures, so a reader knows what they are.</summary>
     public required string PauseSource { get; init; }
 
-    public double MeanPauseMs =>
-        Gen0Collections + Gen1Collections + Gen2Collections is var total && total > 0
-            ? TotalPauseMs / total
-            : 0.0;
+    /// <summary>Mean suspension, or null when nothing was observed to average.</summary>
+    /// <remarks>
+    /// <para><see cref="TotalPauseMs"/> is a <c>GC.GetTotalPauseDuration</c> delta: the total time the
+    /// EE spent suspended. The matching denominator is therefore the number of <em>suspensions</em>,
+    /// which <see cref="ObservedPauseCount"/> gives directly whenever the event stream was usable. It
+    /// is the better denominator even than a corrected collection count, because a background gen2
+    /// collection suspends the EE twice - the case already documented where large-object-pressure
+    /// reported 4726 pauses against 3195 collections.</para>
+    /// <para>Falling back to <see cref="Gen0Collections"/> uses the cumulative all-generation total.
+    /// Adding the three generation counts would inflate the denominator and deflate the mean by a
+    /// factor that varies with the gen1/gen2 mix, so it would not even cancel between two arms being
+    /// compared.</para>
+    /// </remarks>
+    public double? MeanPauseMs =>
+        (ObservedPauseCount, Gen0Collections) switch
+        {
+            ( > 0, _) => TotalPauseMs / ObservedPauseCount,
+            (_, > 0) => TotalPauseMs / Gen0Collections,
+            _ => null,
+        };
 }
