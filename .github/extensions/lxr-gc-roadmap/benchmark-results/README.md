@@ -77,10 +77,3 @@ from the charts while remaining on disk for provenance. `archive/baseline-2026-0
 checkpoint from the abandoned `C:\github\runtimelab` prototype: its `lxr` rows measure a collector
 that no longer exists and its baseline rows came from a different harness, so it must not be compared
 against results produced by the current roadmap. Fresh baselines come from step P0.5.
-
-
-The canvas reads only the top level of this directory, so anything moved into `archive/` disappears
-from the charts while remaining on disk for provenance. `archive/baseline-2026-08-03.json` holds the
-checkpoint from the abandoned `C:\github\runtimelab` prototype: its `lxr` rows measure a collector
-that no longer exists and its baseline rows came from a different harness, so it must not be compared
-against results produced by the current roadmap. Fresh baselines come from step P0.5.
