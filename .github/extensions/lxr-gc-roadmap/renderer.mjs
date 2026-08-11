@@ -54,6 +54,8 @@ export function renderHtml() {
         .legend { display: flex; gap: 18px; justify-content: center; margin-top: 2px; font-size: 12px; }
         .legend span::before { content: ""; width: 9px; height: 9px; display: inline-block; border-radius: 50%; margin-right: 5px; background: var(--legend-color); }
         .benchmark-note { margin-top: 8px; font-size: 12px; }
+        .issue { margin-top: 6px; font-size: 12px; padding: 5px 8px; border-radius: 6px; background: var(--background-color-muted, #f6f8fa); color: var(--text-color-muted, #656d76); }
+        .issue.error { background: #ffebe9; color: #cf222e; }
         .board {
             display: grid;
             grid-auto-flow: column;
@@ -164,6 +166,11 @@ export function renderHtml() {
                 <div class="chart-controls">
                     <select id="scenario" aria-label="Benchmark scenario"></select>
                     <select id="metric" aria-label="Benchmark metric">
+                        <option value="latencyP99Ms">App latency p99 (ms)</option>
+                        <option value="latencyP999Ms">App latency p99.9 (ms)</option>
+                        <option value="latencyP9999Ms">App latency p99.99 (ms)</option>
+                        <option value="latencyP50Ms">App latency p50 (ms)</option>
+                        <option value="latencyMaxMs">App latency max (ms)</option>
                         <option value="pauseP99Ms">Pause p99 (ms)</option>
                         <option value="pauseAverageMs">Pause average (ms)</option>
                         <option value="pauseMaxMs">Pause max (ms)</option>
@@ -180,6 +187,7 @@ export function renderHtml() {
                 <span style="--legend-color:#1a7f37">Server</span>
             </div>
             <div id="benchmark-note" class="benchmark-note muted"></div>
+            <div id="benchmark-issues"></div>
         </section>
         <section id="board" class="board" aria-label="Implementation phases"></section>
     </main>
@@ -329,15 +337,25 @@ export function renderHtml() {
             return element;
         }
 
+        function isChartable(result, metric) {
+            return result.valid !== false
+                && (result.status === undefined || result.status === "ok")
+                && Number.isFinite(result[metric]);
+        }
+
+        function isExcluded(result) {
+            return result.valid === false || (result.status !== undefined && result.status !== "ok");
+        }
+
         function renderChart() {
             var svg = document.getElementById("chart");
             var scenario = document.getElementById("scenario").value;
             var metric = document.getElementById("metric").value;
             var checkpoints = state.benchmarks.checkpoints.filter(function (checkpoint) {
-                return checkpoint.results.some(function (result) { return result.scenario === scenario && result[metric] !== null; });
+                return checkpoint.results.some(function (result) { return result.scenario === scenario && isChartable(result, metric); });
             });
             var values = checkpoints.flatMap(function (checkpoint) {
-                return checkpoint.results.filter(function (result) { return result.scenario === scenario && result[metric] !== null; })
+                return checkpoint.results.filter(function (result) { return result.scenario === scenario && isChartable(result, metric); })
                     .map(function (result) { return result[metric]; });
             });
             svg.replaceChildren();
@@ -345,6 +363,7 @@ export function renderHtml() {
             if (!values.length) {
                 svg.appendChild(svgElement("text", { x: 500, y: 125, "text-anchor": "middle", fill: "currentColor" }, "No benchmark results."));
                 document.getElementById("benchmark-note").textContent = "";
+                renderBenchmarkIssues(scenario);
                 return;
             }
             var margin = { left: 76, right: 28, top: 20, bottom: 54 };
@@ -366,7 +385,7 @@ export function renderHtml() {
             ["lxr", "workstation", "server"].forEach(function (collector) {
                 var points = checkpoints.map(function (checkpoint, index) {
                     var result = checkpoint.results.find(function (item) { return item.scenario === scenario && item.collector === collector; });
-                    return result && result[metric] !== null ? { x: x(index), y: y(result[metric]), value: result[metric] } : null;
+                    return result && isChartable(result, metric) ? { x: x(index), y: y(result[metric]), value: result[metric] } : null;
                 }).filter(Boolean);
                 if (points.length > 1) {
                     svg.appendChild(svgElement("polyline", { points: points.map(function (point) { return point.x + "," + point.y; }).join(" "), fill: "none", stroke: colors[collector], "stroke-width": 3 }));
@@ -379,6 +398,36 @@ export function renderHtml() {
             document.getElementById("benchmark-note").textContent = checkpoints.map(function (checkpoint) {
                 return checkpoint.stepId + ": " + (checkpoint.notes || checkpoint.id);
             }).join(" · ");
+            renderBenchmarkIssues(scenario);
+        }
+
+        function renderBenchmarkIssues(scenario) {
+            var host = document.getElementById("benchmark-issues");
+            host.replaceChildren();
+            var problems = state.benchmarks.problems || [];
+            var excluded = state.benchmarks.checkpoints.flatMap(function (checkpoint) {
+                return checkpoint.results
+                    .filter(function (result) { return result.scenario === scenario && isExcluded(result); })
+                    .map(function (result) {
+                        return checkpoint.stepId + " " + result.collector + ": "
+                            + (result.invalidReason || result.skipReason || result.status || "marked invalid");
+                    });
+            });
+            if (!problems.length && !excluded.length) {
+                return;
+            }
+            problems.forEach(function (item) {
+                var line = document.createElement("div");
+                line.className = "issue error";
+                line.textContent = "Ignored file " + item.file + " — it " + item.problem + ".";
+                host.appendChild(line);
+            });
+            excluded.forEach(function (text) {
+                var line = document.createElement("div");
+                line.className = "issue";
+                line.textContent = "Listed but not charted — " + text;
+                host.appendChild(line);
+            });
         }
 
         function renderAll() {

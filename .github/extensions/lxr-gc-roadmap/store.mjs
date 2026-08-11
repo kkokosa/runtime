@@ -7,6 +7,8 @@ const extensionDirectory = dirname(fileURLToPath(import.meta.url));
 const roadmapPath = join(extensionDirectory, "roadmap.md");
 const benchmarkResultsDirectory = join(extensionDirectory, "benchmark-results");
 const statuses = new Set(["planned", "in_progress", "done", "failed"]);
+const currentSchemaVersion = 2;
+const supportedSchemaVersions = new Set([1, 2]);
 let mutationQueue = Promise.resolve();
 
 function serializeMutation(operation) {
@@ -106,22 +108,76 @@ async function readBenchmarkDocuments() {
         .filter((file) => file.endsWith(".json"))
         .sort();
     return Promise.all(
-        files.map(async (file) => ({
-            file,
-            document: JSON.parse(await readFile(join(benchmarkResultsDirectory, file), "utf8")),
-        })),
+        files.map(async (file) => {
+            try {
+                return {
+                    file,
+                    document: JSON.parse(await readFile(join(benchmarkResultsDirectory, file), "utf8")),
+                };
+            } catch (error) {
+                return { file, document: null, problem: `is not valid JSON: ${error.message}` };
+            }
+        }),
     );
+}
+
+function collectCheckpoints(sources, problems) {
+    const checkpoints = [];
+    for (const { file, document, problem } of sources) {
+        if (problem) {
+            problems.push({ file, problem });
+            continue;
+        }
+        if (!supportedSchemaVersions.has(document.schemaVersion)) {
+            problems.push({
+                file,
+                problem: `declares schemaVersion ${JSON.stringify(document.schemaVersion)}; expected one of ${[...supportedSchemaVersions].join(", ")}`,
+            });
+            continue;
+        }
+        if (!Array.isArray(document.checkpoints)) {
+            problems.push({ file, problem: "has no top-level `checkpoints` array" });
+            continue;
+        }
+        for (const checkpoint of document.checkpoints) {
+            const invalid = describeCheckpointProblem(checkpoint);
+            if (invalid) {
+                problems.push({ file, problem: invalid });
+                continue;
+            }
+            checkpoints.push({ ...checkpoint, sourceFile: file });
+        }
+    }
+    return checkpoints;
+}
+
+function describeCheckpointProblem(checkpoint) {
+    if (!checkpoint || typeof checkpoint !== "object") {
+        return "contains a checkpoint that is not an object";
+    }
+    if (typeof checkpoint.id !== "string" || !checkpoint.id) {
+        return "contains a checkpoint with no `id`";
+    }
+    if (typeof checkpoint.date !== "string" || !/^\d{4}-\d{2}-\d{2}$/.test(checkpoint.date)) {
+        return `checkpoint ${checkpoint.id} has no valid YYYY-MM-DD \`date\``;
+    }
+    if (!Array.isArray(checkpoint.results)) {
+        return `checkpoint ${checkpoint.id} has no \`results\` array`;
+    }
+    return null;
 }
 
 async function readBenchmarks() {
     const sources = await readBenchmarkDocuments();
+    const problems = [];
+    const checkpoints = collectCheckpoints(sources, problems)
+        .sort((left, right) => left.date.localeCompare(right.date) || left.id.localeCompare(right.id));
 
     return {
-        schemaVersion: 1,
-        metrics: Object.assign({}, ...sources.map(({ document }) => document.metrics ?? {})),
-        checkpoints: sources
-            .flatMap(({ document }) => document.checkpoints ?? [document])
-            .sort((left, right) => left.date.localeCompare(right.date)),
+        schemaVersion: currentSchemaVersion,
+        metrics: Object.assign({}, ...sources.map(({ document }) => document?.metrics ?? {})),
+        checkpoints,
+        problems,
         sourceFiles: sources.map(({ file }) => file),
     };
 }
@@ -218,11 +274,11 @@ export async function addBenchmarkResult(input) {
         }
 
         const sources = await readBenchmarkDocuments();
-        const source = sources.find(({ document }) =>
-            (document.checkpoints ?? [document]).some((item) => item.id === checkpoint),
+        const usable = sources.filter(({ document }) => Array.isArray(document?.checkpoints));
+        const source = usable.find(({ document }) =>
+            document.checkpoints.some((item) => item?.id === checkpoint),
         );
-        const existing = (source?.document.checkpoints ?? (source ? [source.document] : []))
-            .find((item) => item.id === checkpoint);
+        const existing = source?.document.checkpoints.find((item) => item.id === checkpoint);
         if (existing && (existing.date !== date || existing.stepId !== stepId)) {
             throw new Error(
                 `Checkpoint ${checkpoint} already belongs to ${existing.stepId} on ${existing.date}.`,
@@ -252,7 +308,7 @@ export async function addBenchmarkResult(input) {
 
         const safeCheckpoint = checkpoint.replace(/[^A-Za-z0-9._-]+/g, "-");
         const document = source?.document ?? {
-            schemaVersion: 1,
+            schemaVersion: currentSchemaVersion,
             checkpoints: [entry],
         };
         const destination = source?.file ?? `${safeCheckpoint}.json`;
