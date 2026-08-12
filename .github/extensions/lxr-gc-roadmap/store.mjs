@@ -25,6 +25,37 @@ function parseField(body, name) {
     return match?.[1]?.trim() ?? "";
 }
 
+const KNOWN_STEP_FIELDS = new Map([
+    ["status", "status"],
+    ["summary", "summary"],
+    ["correctness", "correctness"],
+    ["benchmarks", "benchmarks"],
+    ["runtime changes", "runtimeChanges"],
+    ["evidence", "evidence"],
+    ["dependencies", "dependencies"],
+    ["references", "references"],
+]);
+
+/// Collects every `- **Name:** value` field in a step body. Fields the schema does not know are
+/// returned in `extra` rather than discarded: a roadmap entry is agent-authored prose, and a
+/// field that vanishes with no error reads exactly like a field nobody wrote.
+function parseStepFields(stepBody) {
+    const known = {};
+    const extra = [];
+    for (const match of stepBody.matchAll(/^- \*\*(.+?):\*\*\s*(.*)$/gm)) {
+        const label = match[1].trim();
+        const value = match[2].trim();
+        const target = KNOWN_STEP_FIELDS.get(label.toLowerCase());
+        if (target) {
+            known[target] = value;
+        } else {
+            extra.push({ label, value });
+        }
+    }
+
+    return { known, extra };
+}
+
 function parseRoadmap(markdown) {
     const phases = [];
     const phasePattern = /^## (P\d+) — (.+)$/gm;
@@ -46,16 +77,19 @@ function parseRoadmap(markdown) {
             const stepStart = stepMatch.index + stepMatch[0].length;
             const stepEnd = stepMatches[stepIndex + 1]?.index ?? body.length;
             const stepBody = body.slice(stepStart, stepEnd);
+            const { known, extra } = parseStepFields(stepBody);
             steps.push({
                 id: stepMatch[1],
                 title: stepMatch[2].trim(),
-                status: parseField(stepBody, "Status") || "planned",
-                summary: parseField(stepBody, "Summary"),
-                correctness: parseField(stepBody, "Correctness"),
-                benchmarks: parseField(stepBody, "Benchmarks"),
-                runtimeChanges: parseField(stepBody, "Runtime changes"),
-                dependencies: parseField(stepBody, "Dependencies"),
-                references: parseField(stepBody, "References"),
+                status: known.status || "planned",
+                summary: known.summary ?? "",
+                correctness: known.correctness ?? "",
+                benchmarks: known.benchmarks ?? "",
+                runtimeChanges: known.runtimeChanges ?? "",
+                evidence: known.evidence ?? "",
+                dependencies: known.dependencies ?? "",
+                references: known.references ?? "",
+                extra,
             });
         }
 

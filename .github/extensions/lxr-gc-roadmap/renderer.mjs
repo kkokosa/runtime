@@ -206,6 +206,8 @@ export function renderHtml() {
                 <div class="detail-block"><strong>Benchmarks</strong><p id="modal-benchmarks"></p></div>
             </div>
             <div id="modal-runtime-block" class="detail-block"><strong>Runtime changes</strong><p id="modal-runtime"></p></div>
+            <div id="modal-evidence-block" class="detail-block"><strong>Evidence</strong><p id="modal-evidence"></p></div>
+            <div id="modal-extra-blocks"></div>
             <div class="detail-block"><strong>Dependencies</strong><p id="modal-dependencies"></p></div>
             <div class="detail-block"><strong>References</strong><p id="modal-references"></p></div>
         </div>
@@ -301,6 +303,22 @@ export function renderHtml() {
             var runtimeBlock = document.getElementById("modal-runtime-block");
             runtimeBlock.hidden = !step.runtimeChanges;
             document.getElementById("modal-runtime").textContent = step.runtimeChanges || "";
+            var evidenceBlock = document.getElementById("modal-evidence-block");
+            evidenceBlock.hidden = !step.evidence;
+            document.getElementById("modal-evidence").textContent = step.evidence || "";
+            var extraHost = document.getElementById("modal-extra-blocks");
+            extraHost.textContent = "";
+            (step.extra || []).forEach(function (field) {
+                var block = document.createElement("div");
+                block.className = "detail-block";
+                var label = document.createElement("strong");
+                label.textContent = field.label;
+                var value = document.createElement("p");
+                value.textContent = field.value;
+                block.appendChild(label);
+                block.appendChild(value);
+                extraHost.appendChild(block);
+            });
             document.getElementById("modal-dependencies").textContent = step.dependencies || "None.";
             document.getElementById("modal-references").textContent = step.references || "None.";
             var implement = document.getElementById("implement-step");
