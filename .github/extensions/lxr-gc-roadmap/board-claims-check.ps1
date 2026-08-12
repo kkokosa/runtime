@@ -165,6 +165,39 @@ $hi = $phHeaps[-1]
 $ovSrv = (@($phCsv | Where-Object { [double]$_.heapFactor -eq $hi -and $_.collector -eq 'srv' } | ForEach-Object { [double]$_.pauseP99Ms }) | Measure-Object -Minimum).Minimum
 $ovWks = (@($phCsv | Where-Object { [double]$_.heapFactor -eq $hi -and $_.collector -eq 'wks' } | ForEach-Object { [double]$_.pauseP99Ms }) | Measure-Object -Maximum).Maximum
 
+# aspnet-request-load is the matrix's only latency-primary scenario, and the column carrying
+# its statistics is not the column carrying its signal. Both p-values are EXACT: every one of
+# the 252 arrangements is enumerated, so there is no seed to share and any language reproduces
+# them. Two-sided here, because the direction is not predicted in advance.
+$aspJson = @($valid | Where-Object { $_.scenario -eq 'aspnet-request-load' -and $_.notes -like '*testhost.latency*' })
+$shares = @($aspJson | ForEach-Object { 100 * [double]$_.pauseP99Ms / [double]$_.latencyP99Ms })
+$aspShareLo = [Math]::Round(($shares | Measure-Object -Minimum).Minimum, 2)
+$aspShareHi = [Math]::Round(($shares | Measure-Object -Maximum).Maximum, 2)
+
+$aspCsv = @($csvRows | Where-Object { $_.scenario -eq 'aspnet-request-load' -and $_.runId -like '*.latency*' })
+if ($aspCsv.Count -eq 0) { Write-Output '  FAIL  no aspnet latency-phase rows in the CSV'; exit 2 }
+$aspHeaps = @($aspCsv | ForEach-Object { [double]$_.heapFactor } | Sort-Object -Unique)
+$aspLatP = @(); $aspPauP = @()
+foreach ($field in 'latencyP99Ms', 'pauseP99Ms') {
+    $out = @()
+    foreach ($h in $aspHeaps) {
+        $w = @($aspCsv | Where-Object { [double]$_.heapFactor -eq $h -and $_.collector -eq 'wks' -and (HasVal $_.$field) } | ForEach-Object { [double]$_.$field })
+        $s = @($aspCsv | Where-Object { [double]$_.heapFactor -eq $h -and $_.collector -eq 'srv' -and (HasVal $_.$field) } | ForEach-Object { [double]$_.$field })
+        $obs = [Math]::Abs((($s | Measure-Object -Average).Average) - (($w | Measure-Object -Average).Average))
+        $pool = @($w + $s); $n = $pool.Count; $k = $w.Count; $ge = 0; $tot = 0
+        for ($m = 0; $m -lt (1 -shl $n); $m++) {
+            $idx = @(0..($n - 1) | Where-Object { $m -band (1 -shl $_) })
+            if ($idx.Count -ne $k) { continue }
+            $a = @($idx | ForEach-Object { $pool[$_] })
+            $bb = @(0..($n - 1) | Where-Object { $idx -notcontains $_ } | ForEach-Object { $pool[$_] })
+            $tot++
+            if ([Math]::Abs((($bb | Measure-Object -Average).Average) - (($a | Measure-Object -Average).Average)) -ge $obs) { $ge++ }
+        }
+        $out += [Math]::Round($ge / $tot, 3)
+    }
+    if ($field -eq 'latencyP99Ms') { $aspLatP = $out } else { $aspPauP = $out }
+}
+Write-Output "  aspnet latency phase: pause is $aspShareLo-$aspShareHi% of latency p99; exact p latency $($aspLatP -join ' / '), pause $($aspPauP -join ' / ')"
 Write-Output "  pinning-heavy-io pause srv/wks: csv $($phRatio -join ' / '), aggregate $($phAgg -join ' / '), exact p $($phPnum -join ' / ') of $phPden"
 Write-Output "  json rows $($rows.Count), valid $($valid.Count), latency $($lat.Count), throughput $($thr.Count)"
 Write-Output "  csv rows $($csvRows.Count), columns $($csvCols.Count), shared with json $shared"
@@ -261,6 +294,21 @@ $claims = @(
        re   = "srv's minimum of (\d+\.\d+) falls below wks's maximum of (\d+\.\d+)"
        sites = 1
        want = @($ovSrv, $ovWks) }
+
+    @{ name = 'P0.6 correction: aspnet pause as a share of its latency p99'
+       re   = '`pauseP99Ms` is \*\*(\d+\.\d+)% to (\d+\.\d+)%\*\* of `latencyP99Ms`'
+       sites = 1
+       want = @($aspShareLo, $aspShareHi) }
+
+    @{ name = 'P0.6 correction: exact p for the column that HAS the statistics'
+       re   = 'gives p = \*\*(\d+\.\d+) / (\d+\.\d+) / (\d+\.\d+)\*\*, significant at no heap factor'
+       sites = 1
+       want = @($aspLatP[0], $aspLatP[1], $aspLatP[2]) }
+
+    @{ name = 'P0.6 correction: exact p for the column that has NONE of them'
+       re   = 'gives p = \*\*(\d+\.\d+) / (\d+\.\d+) / (\d+\.\d+)\*\*, significant at all of them'
+       sites = 1
+       want = @($aspPauP[0], $aspPauP[1], $aspPauP[2]) }
 )
 $WORDS = @{ 'nine' = 9; 'ten' = 10; 'one' = 1; 'two' = 2; 'three' = 3; 'four' = 4;
             'five' = 5; 'six' = 6; 'seven' = 7; 'eight' = 8 }
