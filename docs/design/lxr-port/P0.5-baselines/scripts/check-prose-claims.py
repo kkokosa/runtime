@@ -257,7 +257,7 @@ def derive_floor_claim(paths):
 def _heap_facts(paths):
     """Heap-limit arithmetic, with "binds" defined the way the harness defines it.
 
-    `HeapBaselines.SharedMinimumMb` is `Math.Max(wks, srv)`, so an arm binds when its minimum
+    `HeapBaseline.SharedMinimumMb` is `Math.Max(wks, srv)`, so an arm binds when its minimum
     ATTAINS that maximum. An earlier version of this function counted srv as binding only where it
     STRICTLY EXCEEDED wks. The two definitions agree on this data, and they agree only because no
     scenario ties.
