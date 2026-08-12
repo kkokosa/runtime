@@ -261,13 +261,58 @@ def _heap_facts(paths):
     shared_ok = sum(
         1 for r in data
         if int(r["sharedMinimumMb"]) == max(int(r["wksMinimumMb"]), int(r["srvMinimumMb"])))
-    srv_binds = sum(1 for r in data if int(r["srvMinimumMb"]) > int(r["wksMinimumMb"]))
-    return len(data), formula_ok, shared_ok, srv_binds
+    # SharedMinimumMb is a Math.Max, so the binding arm is whichever equals the shared minimum, and
+    # on a tie both arms bind. A strict `srv > wks` test reports a *true* document as false the first
+    # time the two arms agree; there are no ties in this matrix, so the two definitions currently
+    # coincide at 30 and the divergence is invisible. P0.6 adds a third collector and makes ties
+    # materially more likely, at which point the strict form would fail correct prose.
+    srv_binds = sum(1 for r in data if int(r["sharedMinimumMb"]) == int(r["srvMinimumMb"]))
+    wks_binds = sum(1 for r in data if int(r["sharedMinimumMb"]) == int(r["wksMinimumMb"]))
+    ties = sum(1 for r in data if int(r["srvMinimumMb"]) == int(r["wksMinimumMb"]))
+    return len(data), formula_ok, shared_ok, srv_binds, wks_binds, ties
+
+
+def _heap_arm_spread(paths):
+    """The distinct Workstation minima and the Server range, per scenario rather than per row.
+
+    The matrix carries three rows per scenario, one per nominal factor, and the minima are a
+    property of the scenario. Counting over rows would triple every population without changing
+    the value set, so the deduplication is deliberate and is stated here because a reader
+    recomputing over all 30 rows gets the same sets by luck rather than by construction.
+    """
+    per_scenario = {}
+    for r in rows(paths["achieved"]):
+        per_scenario[r["scenario"]] = (int(r["wksMinimumMb"]), int(r["srvMinimumMb"]))
+    wks = sorted({v[0] for v in per_scenario.values()})
+    srv = sorted({v[1] for v in per_scenario.values()})
+    return per_scenario, wks, srv
+
+
+def derive_heap_arm_spread(paths):
+    """Section 5.1 states what the two arms' minima actually are.
+
+    This claim exists because the sentence it checks shipped false: the bullet gave Workstation a
+    flat 4 MiB against a Server range of 35-43, which is true of exactly the four scenarios where
+    Workstation sits at 4 and false of the ten-scenario matrix. Both figures are derived here so the
+    document cannot drift from the CSV again.
+    """
+    per_scenario, wks, srv = _heap_arm_spread(paths)
+    wks_forms = [", ".join(str(v) for v in wks[:-1]) + " and %d" % wks[-1]]
+    srv_forms = ["%d to %d" % (srv[0], srv[-1]), "%d-%d" % (srv[0], srv[-1])]
+    return (
+        [("the distinct Workstation minima", wks_forms),
+         ("the Server range", srv_forms)],
+        ["scenarios=%d wks minima=%s srv minima=%s"
+         % (len(per_scenario), wks, srv),
+         "the false form this check exists to catch: wks flat 4 against srv 35-43, "
+         "which holds over the %d scenario(s) where wks == 4"
+         % sum(1 for v in per_scenario.values() if v[0] == 4)],
+    )
 
 
 def derive_heap_formula(paths):
     """Section 5.1's forward argument rests on arithmetic; it is derived here, not asserted there."""
-    total, formula_ok, _, _ = _heap_facts(paths)
+    total, formula_ok, _, _, _, _ = _heap_facts(paths)
     mismatches = total - formula_ok
     forms = ["%s rows, %d %s" % (f, mismatches, word)
              for f in n_of_m_forms(formula_ok, total)
@@ -286,14 +331,15 @@ def derive_heap_binding(paths):
     passes - which is what happened when the binding count was first perturbed to 29 of 30. Each
     count is therefore bound to the words that state it.
     """
-    total, _, shared_ok, srv_binds = _heap_facts(paths)
+    total, _, shared_ok, srv_binds, wks_binds, ties = _heap_facts(paths)
     return (
         [("rows where the shared minimum is max(wks, srv)",
           ["max(wks, srv)` in %s" % f for f in n_of_m_forms(shared_ok, total)]),
          ("rows where srv is the binding arm",
           ["binding arm in %s" % f for f in n_of_m_forms(srv_binds, total)])],
         ["rows=%d, shared == max(wks,srv)=%d" % (total, shared_ok),
-         "srv binds=%d, wks binds=%d" % (srv_binds, total - srv_binds)],
+         "srv binds=%d, wks binds=%d, ties=%d (binding == equals the shared minimum, so a tie "
+         "would count for both arms)" % (srv_binds, wks_binds, ties)],
     )
 
 
@@ -330,6 +376,8 @@ CLAIMS = [
           "section 5.1: every cell's limit is ceil(shared minimum x nominal factor)"),
     Claim("heap-binding", r"is the binding arm in", derive_heap_binding,
           "section 5.1: srv sets the shared minimum in every cell"),
+    Claim("heap-arm-spread", r"Its minima range over", derive_heap_arm_spread,
+          "section 5.1: the distinct Workstation minima and the Server range"),
 ]
 
 

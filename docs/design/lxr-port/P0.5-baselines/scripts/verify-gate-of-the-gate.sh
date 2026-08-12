@@ -93,6 +93,9 @@ fi
 
 PASSED=0
 FAILED=0
+CLEAN=0
+PERTURBED=0
+REFUSED=0
 
 # A fresh copy per case. Perturbations must not be able to leak into one another, or the last case
 # would be auditing the accumulated damage of the earlier ones.
@@ -112,6 +115,16 @@ run_case() {
     shift 4
     local base="$tree/docs/design/lxr-port/P0.5-baselines"
     local out status matched=""
+
+    # Classify by what the case requires, so the closing summary is derived from the cases that ran
+    # rather than restated as a literal. The previous literal said "five", then "six", while the
+    # script failed seven and then eight perturbations: it had been correct at the commit where it
+    # was written, and every later edit incremented it, carrying the original error forward intact.
+    case "$want_exit" in
+        0) CLEAN=$((CLEAN + 1)) ;;
+        1) PERTURBED=$((PERTURBED + 1)) ;;
+        *) REFUSED=$((REFUSED + 1)) ;;
+    esac
 
     out=$(cd "$base" && bash scripts/verify-baselines.sh "$@" 2>&1)
     status=$?
@@ -358,5 +371,6 @@ if [[ $FAILED -gt 0 ]]; then
 fi
 
 printf 'RESULT: PASS (%d of %d cases behaved as required)\n' "$PASSED" "$TOTAL"
-printf 'The gate passed a clean extract, refused an empty one, and failed six single perturbations.\n'
+printf 'The gate passed %d clean extract(s), refused %d, and failed %d single perturbation(s).\n' \
+    "$CLEAN" "$REFUSED" "$PERTURBED"
 exit 0
