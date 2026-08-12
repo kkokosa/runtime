@@ -292,7 +292,13 @@ print("     the other '30 of 30' on that line is deliberately left true")
 lines[index] = lines[index].replace(before, after, 1)
 path.write_text("".join(lines), encoding="utf-8")
 PYEOF
-run_case 'binding-arm count falsified' "$TREE" 1 'srv is the binding arm' --results .
+# The expected text is the DERIVED VALUE the gate must name, not the check's label. This case first
+# matched on 'srv is the binding arm', which was the label's wording -- so renaming the label to say
+# "attains the shared minimum" broke a control over a gate that was working correctly. Binding an
+# assertion to incidental wording rather than to the fact is the same mistake the prose claims were
+# corrected for, one level up: here the text under test is the tool's output rather than the
+# document's.
+run_case 'binding-arm count falsified' "$TREE" 1 'binding arm in 30 of 30' --results .
 
 # B7 -- nothing to audit. The gate must refuse rather than report a PASS over an empty tree, which
 # is the failure mode that produced a false PASS in an earlier step.

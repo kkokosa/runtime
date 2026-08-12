@@ -18,6 +18,7 @@ pass/verdict hides a check that ran against the wrong thing.
 """
 import argparse
 import csv
+import fractions
 import json
 import math
 import os
@@ -254,6 +255,24 @@ def derive_floor_claim(paths):
 
 
 def _heap_facts(paths):
+    """Heap-limit arithmetic, with "binds" defined the way the harness defines it.
+
+    `HeapBaselines.SharedMinimumMb` is `Math.Max(wks, srv)`, so an arm binds when its minimum
+    ATTAINS that maximum. An earlier version of this function counted srv as binding only where it
+    STRICTLY EXCEEDED wks. The two definitions agree on this data, and they agree only because no
+    scenario ties.
+
+    On a tie they diverge, and in the direction that rejects a correct document: the shared minimum
+    still equals the Server minimum, so "srv is the binding arm" stays true, while strict inequality
+    would report 29 of 30 and fail true text. That is the "All 8 throughput comparisons" failure
+    mode again - a checker refusing correct prose - present but invisible because the data hides it.
+
+    It will not stay hidden. P0.6 takes the maximum over three arms, where ties are materially more
+    likely than over two, and the first tie would have read as a prose defect rather than a
+    definitional one. Ties are therefore counted and published rather than assumed away, and both
+    arms' attainment counts are returned so the document can state which arm binds without the word
+    "binds" having to carry an unstated definition.
+    """
     data = rows(paths["achieved"])
     formula_ok = sum(
         1 for r in data
@@ -261,10 +280,6 @@ def _heap_facts(paths):
     shared_ok = sum(
         1 for r in data
         if int(r["sharedMinimumMb"]) == max(int(r["wksMinimumMb"]), int(r["srvMinimumMb"])))
-    # Binding means setting the shared minimum, and the shared minimum is a Math.Max, so on a tie
-    # both arms bind. A strict `srv > wks` test reports a *true* document as false the first time
-    # the two arms agree. There are no ties in this matrix, so the two definitions coincide at 30
-    # and the divergence is invisible; P0.6 adds a third collector and makes ties likely.
     srv_binds = sum(1 for r in data if int(r["sharedMinimumMb"]) == int(r["srvMinimumMb"]))
     wks_binds = sum(1 for r in data if int(r["sharedMinimumMb"]) == int(r["wksMinimumMb"]))
     ties = sum(1 for r in data if int(r["srvMinimumMb"]) == int(r["wksMinimumMb"]))
@@ -273,7 +288,7 @@ def _heap_facts(paths):
 
 def derive_heap_formula(paths):
     """Section 5.1's forward argument rests on arithmetic; it is derived here, not asserted there."""
-    total, formula_ok, _, _, _, _ = _heap_facts(paths)
+    total, formula_ok = _heap_facts(paths)[:2]
     mismatches = total - formula_ok
     forms = ["%s rows, %d %s" % (f, mismatches, word)
              for f in n_of_m_forms(formula_ok, total)
@@ -291,16 +306,26 @@ def derive_heap_binding(paths):
     30" is satisfied by whichever of them the prose still states truthfully, so falsifying the other
     passes - which is what happened when the binding count was first perturbed to 29 of 30. Each
     count is therefore bound to the words that state it.
+
+    The Workstation attainment count is bound too. Without it the document's "Workstation never
+    binds" is unchecked prose sitting beside two checked figures, and it is the half of the sentence
+    that a tie falsifies first.
     """
     total, _, shared_ok, srv_binds, wks_binds, ties = _heap_facts(paths)
     return (
         [("rows where the shared minimum is max(wks, srv)",
           ["max(wks, srv)` in %s" % f for f in n_of_m_forms(shared_ok, total)]),
-         ("rows where srv is the binding arm",
-          ["binding arm in %s" % f for f in n_of_m_forms(srv_binds, total)])],
+         ("rows where srv attains the shared minimum",
+          ["binding arm in %s" % f for f in n_of_m_forms(srv_binds, total)]),
+         ("rows where wks attains it",
+          ["attains it in %s" % f for f in n_of_m_forms(wks_binds, total)]),
+         ("rows where the two arms tie",
+          ["tie in %s" % f for f in n_of_m_forms(ties, total)])],
         ["rows=%d, shared == max(wks,srv)=%d" % (total, shared_ok),
-         "srv binds=%d, wks binds=%d, ties=%d (binding == equals the shared minimum, so a tie "
-         "would count for both arms)" % (srv_binds, wks_binds, ties)],
+         "attains the shared minimum: srv=%d wks=%d, ties=%d" % (srv_binds, wks_binds, ties),
+         "binding is attainment (Math.Max), not strict inequality; strict would give srv=%d"
+         % sum(1 for r in rows(paths["achieved"])
+               if int(r["srvMinimumMb"]) > int(r["wksMinimumMb"]))],
     )
 
 
@@ -339,12 +364,20 @@ def derive_heap_arm_spread(paths):
     only the scenarios where wks is at its smallest value; over the whole matrix wks takes five
     values and srv spans a far wider range. Every figure below is derived, so the corrected sentence
     cannot drift back.
+
+    Two of these expectations were weaker than they looked, and a tie probe exposed both. The count
+    of distinct values was a bare "5", which the "4" heading the value list satisfies on its own -
+    the expected-3-matching-3.3x defect once more. And the value list was a plain substring, so
+    "4, 11, 19, 35, 99" is satisfied by a document reading "3, 4, 11, 19, 35, 99": a SUPERSET passes
+    a check for the set. Both are now bound to the words that introduce them.
     """
     by_scenario, wks, srv, smallest, at_smallest = _arm_minima(paths)
     values = ", ".join(str(v) for v in wks)
     return (
-        [("distinct workstation minima", count_word_forms(len(wks))),
-         ("the workstation value set", [values]),
+        [("distinct workstation minima",
+          ["%s distinct values" % f for f in count_word_forms(len(wks))]),
+         ("the workstation value set, bound to the dash that introduces it so a superset cannot pass",
+          ["\u2014 %s MiB" % values, "- %s MiB" % values]),
          ("scenarios at the smallest workstation minimum",
           ["%s" % f for f in n_of_m_forms(len(at_smallest), len(by_scenario))]),
          ("the server range", ["%d\u2013%d" % (min(srv), max(srv)),
@@ -356,27 +389,62 @@ def derive_heap_arm_spread(paths):
     )
 
 
+def _ceiling_divisor(paths):
+    """The divisor integrality requires, derived from the factors rather than written as 10.
+
+    A factor p/q in lowest terms leaves a remainder unless q divides the minimum; x1.3 is x13/10, so
+    q is 10. Writing 10 here beside a derived count would be the same literal-next-to-derived defect
+    the document was corrected for - the checker would then hold its own copy of a fact the data
+    already states, and would agree with a stale document as happily as with a correct one.
+
+    Returns every non-integral denominator present. The prose's shape assumes exactly one; if the
+    matrix ever carries two, that is reported rather than silently reduced to the first.
+    """
+    denominators = {fractions.Fraction(r["nominalFactor"]).denominator for r in rows(paths["achieved"])}
+    return sorted(d for d in denominators if d != 1)
+
+
 def derive_heap_divisibility(paths):
     """Why exact multiplication fails at 1.3x, stated as the mechanism rather than a correlate.
 
     x1.3 is x13/10, so an integral product requires the minimum to be divisible by 10. An earlier
     version of the prose said the minima are "odd", which is true of all ten here but is not the
-    governing property - 36 is even and 36 x 1.3 = 46.8. Deriving the divisible-by-10 count keeps the
-    document on the mechanism.
+    governing property - 36 is even and 36 x 1.3 = 46.8. Deriving both the count and the divisor
+    keeps the document on the mechanism.
     """
+    non_integral = _ceiling_divisor(paths)
+    if len(non_integral) != 1:
+        # A refusal, deliberately unsatisfiable: the sentence names one divisor, so a matrix with
+        # none or several means the prose's shape is wrong and no edit to its numbers repairs it.
+        return (
+            [("exactly one non-integral heap factor", ["<no such divisor: %d found>" % len(non_integral)])],
+            ["non-integral factor denominators: %s"
+             % (", ".join(str(d) for d in non_integral) if non_integral else "none")],
+        )
+    divisor = non_integral[0]
     by_scenario = _arm_minima(paths)[0]
     minima = {s: max(v) for s, v in by_scenario.items()}
-    divisible = [s for s, m in minima.items() if m % 10 == 0]
+    divisible = [s for s, m in minima.items() if m % divisor == 0]
     return (
-        [("minima divisible by 10",
+        [("minima divisible by the required divisor",
           ["%s minima are divisible" % f for f in n_of_m_forms(len(divisible), len(minima))]
-          + ["`%s` minima are divisible" % f for f in n_of_m_forms(len(divisible), len(minima))])],
-        ["divisible by 10: %d of %d" % (len(divisible), len(minima)),
+          + ["`%s` minima are divisible" % f for f in n_of_m_forms(len(divisible), len(minima))]),
+         ("the divisor itself, and not a correlate of it",
+          ["divisible by %d" % divisor, "divisibility by %d" % divisor])],
+        ["divisible by %d: %d of %d" % (divisor, len(divisible), len(minima)),
+         "divisor derived from the non-integral factor: %s"
+         % ", ".join("%s = %s" % (f, fractions.Fraction(f))
+                     for f in sorted({r["nominalFactor"] for r in rows(paths["achieved"])})),
          "shared minima: %s" % ", ".join(str(m) for m in sorted(set(minima.values())))],
     )
 
 
 CLAIMS = [
+    # An anchor locates a sentence; it must not also assert a value. An anchor carrying a derived
+    # number - `All ten converged`, `take **five distinct values` - is a second copy of that number
+    # inside the checker built to stop the document holding one. It fails in the worse direction:
+    # correcting the document as the data moves makes the anchor stop matching, and the claim is
+    # then reported as deleted rather than as changed. Every anchor below is literal-free.
     Claim("repro-cells", r"cells disagree with s2 by more than both", derive_repro_cells,
           "section 6.5 headline: N of M cells disagree, with median and max"),
     Claim("offered-load", r"cells had a different offered load", derive_offered_load,
@@ -392,16 +460,16 @@ CLAIMS = [
     Claim("floor-claim", r"throughput ratios in the s2/s3 comparison drift by less than",
           derive_floor_claim,
           "section 6.5: how many throughput ratios clear the resolution floor"),
-    Claim("calibration", r"All ten converged and every entry is", derive_calibration,
+    Claim("calibration", r"converged and every entry is", derive_calibration,
           "section 5: every calibrated scenario converged"),
     Claim("heap-formula", r"`heapLimitMb == ceil", derive_heap_formula,
           "section 5.1: every cell's limit is ceil(shared minimum x nominal factor)"),
     Claim("heap-binding", r"is the binding arm in", derive_heap_binding,
-          "section 5.1: srv sets the shared minimum in every cell"),
-    Claim("heap-arm-spread", r"take \*\*five distinct values", derive_heap_arm_spread,
+          "section 5.1: which arm attains the shared minimum, and how often they tie"),
+    Claim("heap-arm-spread", r"minima take \*\*", derive_heap_arm_spread,
           "section 5.1 correction: the workstation value set and the server range"),
-    Claim("heap-divisibility", r"minima are divisible by 10", derive_heap_divisibility,
-          "section 5.1: divisibility by 10 is what exact multiplication at 1.3x requires"),
+    Claim("heap-divisibility", r"minima are divisible by", derive_heap_divisibility,
+          "section 5.1: divisibility by the factor's denominator is what integrality requires"),
 ]
 
 
