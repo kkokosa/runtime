@@ -20,7 +20,7 @@
 
 $ErrorActionPreference = 'Stop'
 
-$EXPECTED = @{ Phases = 11; Steps = 54; Fields = 360; Rules = 72 }
+$EXPECTED = @{ Phases = 11; Steps = 54; Fields = 360; Rules = 73 }
 
 $board = Join-Path $PSScriptRoot 'roadmap.md'
 $pass = 0
@@ -54,7 +54,7 @@ $gaps = @(1..$maxRule | Where-Object { $rules -notcontains $_ })
 if ($rules.Count -eq $maxRule -and $dups.Count -eq 0 -and $gaps.Count -eq 0) {
     ok "rules: $($rules.Count) numbered 1..$maxRule, no gaps, no duplicates"
 } else {
-    bad "rules: $($rules.Count) found, max $maxRule, $($dups.Count) duplicated, $($gaps.Count) missing"
+    bad "rules: $($rules.Count) found, max $maxRule, $($dups.Count) duplicated, $($gaps.Count) missing$(if ($gaps.Count) { ' [' + ($gaps -join ',') + ']' })$(if ($dups.Count) { ' dup [' + ($dups -join ',') + ']' })"
 }
 
 # Contiguity alone is derived from the artifact, so a truncated rule set stays
