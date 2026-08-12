@@ -261,53 +261,14 @@ def _heap_facts(paths):
     shared_ok = sum(
         1 for r in data
         if int(r["sharedMinimumMb"]) == max(int(r["wksMinimumMb"]), int(r["srvMinimumMb"])))
-    # SharedMinimumMb is a Math.Max, so the binding arm is whichever equals the shared minimum, and
-    # on a tie both arms bind. A strict `srv > wks` test reports a *true* document as false the first
-    # time the two arms agree; there are no ties in this matrix, so the two definitions currently
-    # coincide at 30 and the divergence is invisible. P0.6 adds a third collector and makes ties
-    # materially more likely, at which point the strict form would fail correct prose.
+    # Binding means setting the shared minimum, and the shared minimum is a Math.Max, so on a tie
+    # both arms bind. A strict `srv > wks` test reports a *true* document as false the first time
+    # the two arms agree. There are no ties in this matrix, so the two definitions coincide at 30
+    # and the divergence is invisible; P0.6 adds a third collector and makes ties likely.
     srv_binds = sum(1 for r in data if int(r["sharedMinimumMb"]) == int(r["srvMinimumMb"]))
     wks_binds = sum(1 for r in data if int(r["sharedMinimumMb"]) == int(r["wksMinimumMb"]))
     ties = sum(1 for r in data if int(r["srvMinimumMb"]) == int(r["wksMinimumMb"]))
     return len(data), formula_ok, shared_ok, srv_binds, wks_binds, ties
-
-
-def _heap_arm_spread(paths):
-    """The distinct Workstation minima and the Server range, per scenario rather than per row.
-
-    The matrix carries three rows per scenario, one per nominal factor, and the minima are a
-    property of the scenario. Counting over rows would triple every population without changing
-    the value set, so the deduplication is deliberate and is stated here because a reader
-    recomputing over all 30 rows gets the same sets by luck rather than by construction.
-    """
-    per_scenario = {}
-    for r in rows(paths["achieved"]):
-        per_scenario[r["scenario"]] = (int(r["wksMinimumMb"]), int(r["srvMinimumMb"]))
-    wks = sorted({v[0] for v in per_scenario.values()})
-    srv = sorted({v[1] for v in per_scenario.values()})
-    return per_scenario, wks, srv
-
-
-def derive_heap_arm_spread(paths):
-    """Section 5.1 states what the two arms' minima actually are.
-
-    This claim exists because the sentence it checks shipped false: the bullet gave Workstation a
-    flat 4 MiB against a Server range of 35-43, which is true of exactly the four scenarios where
-    Workstation sits at 4 and false of the ten-scenario matrix. Both figures are derived here so the
-    document cannot drift from the CSV again.
-    """
-    per_scenario, wks, srv = _heap_arm_spread(paths)
-    wks_forms = [", ".join(str(v) for v in wks[:-1]) + " and %d" % wks[-1]]
-    srv_forms = ["%d to %d" % (srv[0], srv[-1]), "%d-%d" % (srv[0], srv[-1])]
-    return (
-        [("the distinct Workstation minima", wks_forms),
-         ("the Server range", srv_forms)],
-        ["scenarios=%d wks minima=%s srv minima=%s"
-         % (len(per_scenario), wks, srv),
-         "the false form this check exists to catch: wks flat 4 against srv 35-43, "
-         "which holds over the %d scenario(s) where wks == 4"
-         % sum(1 for v in per_scenario.values() if v[0] == 4)],
-    )
 
 
 def derive_heap_formula(paths):
@@ -354,6 +315,67 @@ def derive_calibration(paths):
     )
 
 
+def _arm_minima(paths):
+    """Per-scenario workstation and server minima, deduplicated by scenario.
+
+    The achieved CSV carries one row per (scenario, factor), so the minima repeat three times each.
+    Deduplicating by scenario is what makes "5 distinct values" and "4 of 10 scenarios" mean what the
+    prose says; counting rows would give 15 and 12 and read as a defect in the document.
+    """
+    by_scenario = {}
+    for r in rows(paths["achieved"]):
+        by_scenario[r["scenario"]] = (int(r["wksMinimumMb"]), int(r["srvMinimumMb"]))
+    wks = sorted({v[0] for v in by_scenario.values()})
+    srv = [v[1] for v in by_scenario.values()]
+    smallest = min(wks)
+    at_smallest = [s for s, v in by_scenario.items() if v[0] == smallest]
+    return by_scenario, wks, srv, smallest, at_smallest
+
+
+def derive_heap_arm_spread(paths):
+    """The corrected replacement for a sentence that described a four-row subset as the matrix.
+
+    The false version read "Its minimum is 4 MiB where Server needs 35-43". Both numbers describe
+    only the scenarios where wks is at its smallest value; over the whole matrix wks takes five
+    values and srv spans a far wider range. Every figure below is derived, so the corrected sentence
+    cannot drift back.
+    """
+    by_scenario, wks, srv, smallest, at_smallest = _arm_minima(paths)
+    values = ", ".join(str(v) for v in wks)
+    return (
+        [("distinct workstation minima", count_word_forms(len(wks))),
+         ("the workstation value set", [values]),
+         ("scenarios at the smallest workstation minimum",
+          ["%s" % f for f in n_of_m_forms(len(at_smallest), len(by_scenario))]),
+         ("the server range", ["%d\u2013%d" % (min(srv), max(srv)),
+                               "%d-%d" % (min(srv), max(srv))])],
+        ["wks distinct=%s" % values,
+         "wks smallest=%d in %d of %d scenarios (%s)"
+         % (smallest, len(at_smallest), len(by_scenario), ", ".join(sorted(at_smallest))),
+         "srv range=%d-%d" % (min(srv), max(srv))],
+    )
+
+
+def derive_heap_divisibility(paths):
+    """Why exact multiplication fails at 1.3x, stated as the mechanism rather than a correlate.
+
+    x1.3 is x13/10, so an integral product requires the minimum to be divisible by 10. An earlier
+    version of the prose said the minima are "odd", which is true of all ten here but is not the
+    governing property - 36 is even and 36 x 1.3 = 46.8. Deriving the divisible-by-10 count keeps the
+    document on the mechanism.
+    """
+    by_scenario = _arm_minima(paths)[0]
+    minima = {s: max(v) for s, v in by_scenario.items()}
+    divisible = [s for s, m in minima.items() if m % 10 == 0]
+    return (
+        [("minima divisible by 10",
+          ["%s minima are divisible" % f for f in n_of_m_forms(len(divisible), len(minima))]
+          + ["`%s` minima are divisible" % f for f in n_of_m_forms(len(divisible), len(minima))])],
+        ["divisible by 10: %d of %d" % (len(divisible), len(minima)),
+         "shared minima: %s" % ", ".join(str(m) for m in sorted(set(minima.values())))],
+    )
+
+
 CLAIMS = [
     Claim("repro-cells", r"cells disagree with s2 by more than both", derive_repro_cells,
           "section 6.5 headline: N of M cells disagree, with median and max"),
@@ -376,8 +398,10 @@ CLAIMS = [
           "section 5.1: every cell's limit is ceil(shared minimum x nominal factor)"),
     Claim("heap-binding", r"is the binding arm in", derive_heap_binding,
           "section 5.1: srv sets the shared minimum in every cell"),
-    Claim("heap-arm-spread", r"Its minima range over", derive_heap_arm_spread,
-          "section 5.1: the distinct Workstation minima and the Server range"),
+    Claim("heap-arm-spread", r"take \*\*five distinct values", derive_heap_arm_spread,
+          "section 5.1 correction: the workstation value set and the server range"),
+    Claim("heap-divisibility", r"minima are divisible by 10", derive_heap_divisibility,
+          "section 5.1: divisibility by 10 is what exact multiplication at 1.3x requires"),
 ]
 
 
