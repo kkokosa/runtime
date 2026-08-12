@@ -90,8 +90,31 @@ SECTION_START=0
 SECTION_DECLARED=0
 ZERO_CHECK_SECTIONS=()
 
-ok()   { PASS=$((PASS + 1)); printf '  ok    %s\n' "$1"; }
-bad()  { FAIL=$((FAIL + 1)); printf '  FAIL  %s\n' "$1"; }
+# A verdict prefixed onto only the first line of a captured block misreports the rest of it. The
+# prose checker's output opens with its first claim, so `bad "$out"` rendered as
+# "FAIL  claim repro-cells ..." above that claim's own "ok" line - a passing claim reading as the
+# failure. Multi-line payloads get the verdict on its own line and the block indented beneath.
+indent_block() { printf '%s\n' "$1" | sed 's/^/          /'; }
+is_multiline() { [[ "$1" == *$'\n'* ]]; }
+
+ok() {
+    PASS=$((PASS + 1))
+    if is_multiline "$1"; then
+        printf '  ok    (report follows)\n'
+        indent_block "$1"
+    else
+        printf '  ok    %s\n' "$1"
+    fi
+}
+bad() {
+    FAIL=$((FAIL + 1))
+    if is_multiline "$1"; then
+        printf '  FAIL  (report follows)\n'
+        indent_block "$1"
+    else
+        printf '  FAIL  %s\n' "$1"
+    fi
+}
 note() { printf '        %s\n' "$1"; }
 
 close_section() {
