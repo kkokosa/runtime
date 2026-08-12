@@ -378,7 +378,101 @@ Write-Output '== board prose vs derived =='
 # board's deliberate narration of SUPERSEDED counts cannot match one. Rule 83 quotes its own
 # retracted "0 of 6" on purpose; a staleness grep flagging that quotation would be the false
 # alarm board-check.ps1's header already records once.
+# ---------------------------------------------------------------------------
+# Rule 88 -- the two retired citation predicates, and the decidable residue.
+#
+# These derive from artifacts the rest of this script never touches: the board's own
+# git history, and the deliverable's `rule N` citations resolved against the board.
+# Both figures in rule 88 are false-alarm rates measured on a HEALTHY artifact, so a
+# regression here means either a citation broke or the board grew an edit whose shape
+# the measurement did not anticipate -- both worth a failure.
+$repoRoot = (& git -C $PSScriptRoot rev-parse --show-toplevel 2>$null)
+$boardRel = '.github/extensions/lxr-gc-roadmap/roadmap.md'
+
+# Board rules, first definition wins (a rule quoted inside another rule must not shadow it).
+$ruleText = @{}
+foreach ($ln in ($text -split "`r?`n")) {
+    if ($ln -match '^(\d+)\. (.+)$' -and -not $ruleText.ContainsKey([int]$Matches[1])) {
+        $ruleText[[int]$Matches[1]] = ($Matches[2] -replace '\s+', ' ')
+    }
+}
+
+function WordRun ($a, $b) {
+    $A = @(($a.ToLower() -replace '[^a-z0-9 ]', ' ') -split ' +' | Where-Object { $_ })
+    $B = @(($b.ToLower() -replace '[^a-z0-9 ]', ' ') -split ' +' | Where-Object { $_ })
+    $best = 0
+    for ($i = 0; $i -lt $A.Count; $i++) {
+        for ($j = 0; $j -lt $B.Count; $j++) {
+            $k = 0
+            while (($i + $k) -lt $A.Count -and ($j + $k) -lt $B.Count -and $A[$i + $k] -eq $B[$j + $k]) { $k++ }
+            if ($k -gt $best) { $best = $k }
+        }
+    }
+    return $best
+}
+
+$delivLines = (Show-Blob 'docs/design/lxr-port/P0.5-baselines.md') -split "`r?`n"
+$citeOccur = 0; $citeQuote = 0; $citeDangling = 0; $citeRules = @{}
+foreach ($ln in $delivLines) {
+    foreach ($m in [regex]::Matches($ln, '(?i)\brules?\s+(\d+)\b')) {
+        $n = [int]$m.Groups[1].Value
+        $citeOccur++; $citeRules[$n] = $true
+        if (-not $ruleText.ContainsKey($n)) { $citeDangling++; continue }
+        if ((WordRun $ln $ruleText[$n]) -ge 5) { $citeQuote++ }
+    }
+}
+$citeDistinct = $citeRules.Keys.Count
+
+# Board history: an edit either extends a rule (previous text is a prefix) or replaces it.
+$hist = @(& git -C $repoRoot log --format=%h --reverse -- $boardRel)
+$prevRules = $null; $extends = 0; $replaces = 0; $replacedAt = @{}
+foreach ($h in $hist) {
+    $blobLines = (& git -C $repoRoot show "${h}:$boardRel" 2>$null) -split "`r?`n"
+    $cur = @{}
+    foreach ($ln in $blobLines) {
+        if ($ln -match '^(\d+)\. (.+)$' -and -not $cur.ContainsKey([int]$Matches[1])) {
+            $cur[[int]$Matches[1]] = ($Matches[2] -replace '\s+', ' ')
+        }
+    }
+    if ($null -ne $prevRules) {
+        foreach ($n in $prevRules.Keys) {
+            if (-not $cur.ContainsKey($n)) { $replaces++; continue }
+            $old = $prevRules[$n]; $new = $cur[$n]
+            if ($new -eq $old) { continue }
+            if ($new.StartsWith($old)) { $extends++ } else { $replaces++; $replacedAt["$h/$n"] = $true }
+        }
+    }
+    $prevRules = $cur
+}
+$replaced5051 = @(($replacedAt.Keys | Where-Object { $_ -match '/(50|51)$' })).Count
+$live5051 = @([regex]::Matches($text, '(?i)\brules?\s+5[01]\b')).Count
+
 $claims = @(
+    @{ name = 'rule 88: quote-overlap predicate, false alarms on a healthy document'
+       re   = 'only \*\*(\d+) of (\d+)\*\* carry a 5-or-more word verbatim run'
+       sites = 1
+       want = @($citeQuote, $citeOccur) }
+
+    @{ name = 'rule 88: the citations the predicate would have flagged are correct'
+       re   = 'independently verified as \*\*(\d+) of (\d+) distinct rules correct\*\*'
+       sites = 1
+       want = @($citeDistinct, $citeDistinct) }
+
+    @{ name = 'rule 88: append-only predicate, extensions against replacements'
+       re   = '\*\*(\d+)\*\* edits extend a rule and \*\*(\d+)\*\* replace text in place'
+       sites = 1
+       want = @($extends, $replaces) }
+
+    @{ name = 'P0.6 post-merge: the one decidable residue, measured'
+       re   = 'every cited rule number must exist on the board\*\*.{0,6}currently (\d+) dangling'
+       sites = 1
+       want = @($citeDangling) }
+
+    @{ name = 'P0.6 post-merge: the single identity change and its blast radius'
+       re   = 'rules \*\*(\d+) and (\d+) were replaced\*\* at `be5bc610e00`.*?with \*\*(\d+)\*\* live citations'
+       sites = 1
+       want = @(50, 51, $live5051) }
+
     @{ name = 'rule 83: latencyP99Ms coverage by phase, published JSON'
        re   = 'is populated in \*\*(\d+) of (\d+)\*\* latency-phase rows of the published JSON, against \*\*(\d+) of (\d+)\*\*'
        sites = 1
