@@ -38,7 +38,7 @@ $bc    = Join-Path $work 'board-check.ps1'
 # constructed path fails the identity comparison on every case -- including pristine,
 # which is how this was found. The banner is the battery's own answer, so no
 # normalization rule has to be guessed at or kept in sync.
-$selfPath = (@(& $bc -LogDir $logs 2>&1) |
+$selfPath = (@(& $bc -LogDir $logs -HistoryDir $src 2>&1) |
              ForEach-Object { $m = [regex]::Match($_, '^\s*self\s*:\s*(.+?)\s*$'); if ($m.Success) { $m.Groups[1].Value } } |
              Select-Object -First 1)
 if (-not $selfPath) { throw 'could not read the battery''s self path from its banner' }
@@ -152,6 +152,27 @@ function Apply($name, $lines) {
                 $out.Add($x)
             }
         }
+        '^ridentity-(\d)$' {
+            # Rule 73: the guard must fire on ANY replaced rule, not only the one that
+            # motivated it. ridentity-1 strips rule 50's markers ('withdraw', 'first
+            # recorded', 'was wrong'); ridentity-2 strips rule 98's, which are a different
+            # vocabulary ('first draft', 'are false'). A guard hardcoded to the word
+            # 'withdraw' -- the obvious way to write it -- passes ridentity-2 and fails
+            # only ridentity-1, so identical payloads here would hide a half-blind check.
+            $n = [int]$Matches[1]
+            $target = if ($n -eq 1) { 50 } else { 98 }
+            foreach ($x in $lines) {
+                if ($x -cmatch "^$target\. ") {
+                    $s = $x -replace '(?i)withdraw\w*', 'note' -replace '(?i)retract\w*', 'note'
+                    $s = $s -replace '(?i)first draft', 'earlier text' -replace '(?i)first recorded', 'earlier noted'
+                    $s = $s -replace '(?i)first version', 'earlier text' -replace '(?i)was wrong', 'was imprecise'
+                    $s = $s -replace '(?i)are false', 'are imprecise'
+                    $out.Add($s)
+                    continue
+                }
+                $out.Add($x)
+            }
+        }
         default { foreach ($x in $lines) { $out.Add($x) } }
     }
     return $out
@@ -190,6 +211,8 @@ $cases = @(
     @{ n = 'apos-2';          want = 'doubled apostrophes' },
     @{ n = 'selfcount-1';     want = "rule 93's self-count" },
     @{ n = 'selfcount-2';     want = "rule 93's self-count" },
+    @{ n = 'ridentity-1';     want = 'rule identity' },
+    @{ n = 'ridentity-2';     want = 'rule identity' },
     @{ n = 'pristine';        want = '<none>' }
 )
 
@@ -223,7 +246,13 @@ foreach ($c in $cases) {
         }
     }
 
-    $out  = & $bc -LogDir $logs 2>&1
+    # The board under audit is the copy in $work, but git history lives in the real
+    # extension directory, so the history root is passed explicitly rather than derived
+    # from $PSScriptRoot -- the same subject split the fabricated logs already use, and
+    # per rule 63 the battery prints it. Letting it fall back would make the check report
+    # "history unreadable" on every case, pristine included: a control that fails
+    # everywhere looks exactly like a check that works everywhere.
+    $out  = & $bc -LogDir $logs -HistoryDir $src 2>&1
     $code = $LASTEXITCODE
 
     # Rule 74: confirm the perturbation was CONSUMED, not merely that its directory was
@@ -260,7 +289,7 @@ if ($unreached.Count -gt 0) { Write-Output ("PERTURBATION NEVER REACHED THE CHEC
 # is what makes "every check" a claim about board-check.ps1 rather than about this list.
 $declared = @($cases | Where-Object { $_.want -ne '<none>' } | ForEach-Object { $_.want } | Select-Object -Unique).Count
 $reported = 0
-$pristineOut = & $bc -LogDir $logs 2>&1
+$pristineOut = & $bc -LogDir $logs -HistoryDir $src 2>&1
 foreach ($ln in $pristineOut) {
     $m = [regex]::Match([string]$ln, 'RESULT: \w+ \((\d+) checks\)')
     if ($m.Success) { $reported = [int]$m.Groups[1].Value }

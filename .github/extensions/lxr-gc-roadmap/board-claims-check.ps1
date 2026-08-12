@@ -486,6 +486,39 @@ foreach ($h in @(& git -C $repoRoot log --format=%h --reverse $DRIFT_COMMIT -- $
 $replaced5051 = @(($replacedAt.Keys | Where-Object { $_ -match '/(50|51)$' })).Count
 $live5051 = @([regex]::Matches($text, '(?i)\brules?\s+5[01]\b')).Count
 
+# Identity basis, and unpinned on purpose. The walk above is pinned to $HIST_PIN because
+# rule 90's extends/replaces figures are a measurement of a fixed state; this claim is
+# about the board as it stands, so it must see replacements made after the pin -- rule
+# 98's at 0f13853a89b is exactly one of those, and a pinned walk reports it as never
+# having happened.
+#
+# The basis is the bolded HEADLINE, matching board-check.ps1, because the identity of a
+# rule is the claim it asserts. The whole-text basis used above yields 22 numbers here
+# against 3: it counts every mid-line repair, rule 13's `:317` -> `:315-319` among them,
+# which is rot rather than a change of claim. Two instruments were using one word for two
+# predicates that differ by more than 7x; rule 95 applied to a predicate instead of a field.
+#
+# One `git log -p` rather than 107 `git show` calls, which is why this is affordable here.
+$replacedHead = @{}; $rmH = @{}; $adH = @{}
+foreach ($l in @(& git -C $repoRoot log -p --unified=0 --format='commit %H' -- $boardRel)) {
+    if ($l -cmatch '^commit ') {
+        foreach ($k in @($rmH.Keys)) { if ($adH.ContainsKey($k) -and $adH[$k] -ne $rmH[$k]) { $replacedHead[$k] = $true } }
+        $rmH = @{}; $adH = @{}
+        continue
+    }
+    if ($l -cmatch '^-(\d+)\. ') {
+        $nn = [int]$Matches[1]; $hm = [regex]::Match($l, '\*\*(.+?)\*\*')
+        if ($hm.Success) { $rmH[$nn] = $hm.Groups[1].Value }
+    } elseif ($l -cmatch '^\+(\d+)\. ') {
+        $nn = [int]$Matches[1]; $hm = [regex]::Match($l, '\*\*(.+?)\*\*')
+        if ($hm.Success) { $adH[$nn] = $hm.Groups[1].Value }
+    }
+}
+foreach ($k in @($rmH.Keys)) { if ($adH.ContainsKey($k) -and $adH[$k] -ne $rmH[$k]) { $replacedHead[$k] = $true } }
+$replacedNums = @($replacedHead.Keys | Sort-Object)
+$liveReplaced = 0
+foreach ($n in $replacedNums) { $liveReplaced += @([regex]::Matches($text, "(?i)\brules?\s+$n\b")).Count }
+
 # ---------------------------------------------------------------------------
 # The cost of "compute a ratio for every comparable numeric column", measured.
 #
@@ -807,10 +840,10 @@ $claims = @(
        sites = 1
        want = @($citeDangling) }
 
-    @{ name = 'P0.6 post-merge: the single identity change and its blast radius'
-       re   = 'rules \*\*(\d+(?:\.\d+)?) and (\d+(?:\.\d+)?) were replaced\*\* at `be5bc610e00`.*?with \*\*(\d+(?:\.\d+)?)\*\* live citations'
+    @{ name = 'P0.6 post-merge: the identity changes and their blast radius'
+       re   = 'rules \*\*(\d+(?:\.\d+)?), (\d+(?:\.\d+)?) and (\d+(?:\.\d+)?) were replaced\*\* across `be5bc610e00` and `0f13853a89b`.*?with \*\*(\d+(?:\.\d+)?)\*\* live citations'
        sites = 1
-       want = @(50, 51, $live5051) }
+       want = @($replacedNums[0], $replacedNums[1], $replacedNums[2], $liveReplaced) }
 
     @{ name = 'rule 83: latencyP99Ms coverage by phase, published JSON'
        re   = 'is populated in \*\*(\d+(?:\.\d+)?) of (\d+(?:\.\d+)?)\*\* latency-phase rows of the published JSON, against \*\*(\d+(?:\.\d+)?) of (\d+(?:\.\d+)?)\*\*'

@@ -3,7 +3,8 @@
 # Default LogDir is the app's extension log directory. Parameterised only so the
 # subject controls can point at a fabricated log; the banner prints it, per rule 63's
 # practice of disclosing every root the run reads.
-param([string]$LogDir = "$env:USERPROFILE\.copilot\logs\extensions")
+param([string]$LogDir = "$env:USERPROFILE\.copilot\logs\extensions",
+      [string]$HistoryDir = $PSScriptRoot)
 
 #
 # Exists because the battery was retyped from memory on each use and drifted three
@@ -26,7 +27,7 @@ param([string]$LogDir = "$env:USERPROFILE\.copilot\logs\extensions")
 
 $ErrorActionPreference = 'Stop'
 
-$EXPECTED = @{ Phases = 11; Steps = 54; Fields = 360; Rules = 102 }
+$EXPECTED = @{ Phases = 11; Steps = 54; Fields = 360; Rules = 105 }
 
 $board = Join-Path $PSScriptRoot 'roadmap.md'
 $pass = 0
@@ -42,6 +43,7 @@ Write-Output 'LXR board battery'
 Write-Output "  self : $PSScriptRoot"
 Write-Output "  board: $board"
 Write-Output "  logs : $LogDir"
+Write-Output "  hist : $HistoryDir"
 Write-Output ''
 
 if (-not (Test-Path $board)) { Write-Output "  FAIL  no board at $board"; exit 2 }
@@ -157,6 +159,58 @@ if ($logs.Count -eq 0) {
 # two loaded boards are not.
 want 'distinct board paths across all logs' $distinct.Count 1
 if ($distinct.Count -gt 1) { $distinct | ForEach-Object { Write-Output "          $_" } }
+
+Write-Output ''
+Write-Output '== rule identity =='
+# Rule 103. Rule 22 requires correcting a claim IN PLACE, which means this board's rule
+# numbers are mutable by design: a citation of 'rule 51' written before be5bc610e00 still
+# resolves afterwards and now points at a different claim. An existence check -- the
+# dangling-citation check the P0.5 session proposed -- returns clean on every one of these,
+# because the rules were OVERWRITTEN, not deleted. So the guard is not existence but
+# disclosure: any rule whose bolded headline was ever replaced must say so in its current
+# text. Derived from history, never from a list, per rule 33: a literal set of replaced
+# numbers would diverge from the file the moment another rule is corrected.
+$replaced = @{}
+try {
+    $log = & git -C $HistoryDir log -p --unified=0 --format='commit %H' -- roadmap.md 2>$null
+    if ($LASTEXITCODE -ne 0 -or -not $log) { throw 'no history' }
+    $rm = @{}; $ad = @{}
+    function Flush-Commit {
+        foreach ($n in $script:rm.Keys) {
+            if ($script:ad.ContainsKey($n) -and $script:ad[$n] -ne $script:rm[$n]) { $script:replaced[$n] = $true }
+        }
+        $script:rm = @{}; $script:ad = @{}
+    }
+    foreach ($l in $log) {
+        if ($l -cmatch '^commit ') { Flush-Commit; continue }
+        # Headline claim only: the bolded lead. Body edits are not identity changes.
+        if ($l -cmatch '^-(\d+)\. ') {
+            $n = [int]$Matches[1]; $h = [regex]::Match($l, '\*\*(.+?)\*\*')
+            if ($h.Success) { $rm[$n] = $h.Groups[1].Value }
+        } elseif ($l -cmatch '^\+(\d+)\. ') {
+            $n = [int]$Matches[1]; $h = [regex]::Match($l, '\*\*(.+?)\*\*')
+            if ($h.Success) { $ad[$n] = $h.Groups[1].Value }
+        }
+    }
+    Flush-Commit
+} catch { $replaced = $null }
+
+if ($null -eq $replaced) {
+    bad 'rule identity: git history unreadable, so replacement disclosure could not be checked'
+} else {
+    $undisclosed = @()
+    foreach ($n in ($replaced.Keys | Sort-Object)) {
+        $t = @($lines | Where-Object { $_ -cmatch "^$n\. " })
+        if ($t.Count -ne 1 -or $t[0] -notmatch '(?i)withdraw|retract|first draft|first recorded|first version|was wrong|are false') {
+            $undisclosed += $n
+        }
+    }
+    if ($undisclosed.Count -eq 0) {
+        ok "rule identity: $($replaced.Count) headline(s) replaced in history [$(($replaced.Keys | Sort-Object) -join ',')], all disclosed in place"
+    } else {
+        bad "rule identity: replaced headlines that do not disclose it: $($undisclosed -join ',')"
+    }
+}
 
 Write-Output ''
 Write-Output '== hygiene =='
