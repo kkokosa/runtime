@@ -122,6 +122,50 @@ $maxNine = ($worst.GetEnumerator() | Where-Object { $_.Key -ne 'aspnet-request-l
             ForEach-Object { $_.Value } | Measure-Object -Maximum).Maximum
 $aspnet  = $worst['aspnet-request-load']
 
+# The pause signal no ratio basis reaches. Derived from the per-invocation CSV, never from
+# the aggregate row: Aggregator.cs:301-305 states the published pauseP99Ms is copied out of
+# a SINGLE invocation, so the aggregate and the mean of five are different estimators and
+# disagree by design (6.98x against 4.05x at 1.3x). Both are checked here, separately.
+$phCsv = @($csvRows | Where-Object { $_.scenario -eq 'pinning-heavy-io' -and $_.runId -notlike '*.latency*' })
+if ($phCsv.Count -eq 0) { Write-Output '  FAIL  no pinning-heavy-io throughput rows in the CSV'; exit 2 }
+$phHeaps = @($phCsv | ForEach-Object { [double]$_.heapFactor } | Sort-Object -Unique)
+$phJson  = @($valid | Where-Object { $_.scenario -eq 'pinning-heavy-io' -and $_.notes -notlike '*testhost.latency*' })
+
+$phRatio = @(); $phPnum = @(); $phPden = 0; $phAgg = @(); $phPublished = @()
+foreach ($h in $phHeaps) {
+    $w = @($phCsv | Where-Object { [double]$_.heapFactor -eq $h -and $_.collector -eq 'wks' } | ForEach-Object { [double]$_.pauseP99Ms })
+    $s = @($phCsv | Where-Object { [double]$_.heapFactor -eq $h -and $_.collector -eq 'srv' } | ForEach-Object { [double]$_.pauseP99Ms })
+    if ($w.Count -eq 0 -or $s.Count -eq 0) { Write-Output "  FAIL  missing an arm at heap $h"; exit 2 }
+    $mw = ($w | Measure-Object -Average).Average
+    $ms = ($s | Measure-Object -Average).Average
+    $phRatio += [Math]::Round($ms / $mw, 2)
+
+    # Exact one-sided permutation test: every split of the pooled samples is enumerated, so
+    # there is no seed and no resampling. A bootstrap interval cannot be re-derived by a
+    # checker that does not share its RNG, which would make it a claim nothing is pointed at.
+    $pool = @($w + $s); $n = $pool.Count; $k = $w.Count; $obs = $ms - $mw; $ge = 0; $tot = 0
+    for ($m = 0; $m -lt (1 -shl $n); $m++) {
+        $idx = @(0..($n - 1) | Where-Object { $m -band (1 -shl $_) })
+        if ($idx.Count -ne $k) { continue }
+        $a = @($idx | ForEach-Object { $pool[$_] })
+        $b = @(0..($n - 1) | Where-Object { $idx -notcontains $_ } | ForEach-Object { $pool[$_] })
+        $tot++
+        if ((($b | Measure-Object -Average).Average - ($a | Measure-Object -Average).Average) -ge $obs) { $ge++ }
+    }
+    $phPnum += $ge
+    $phPden = $tot
+
+    $jw = @($phJson | Where-Object { [double]$_.heapFactor -eq $h -and $_.collector -eq 'wks' })
+    $js = @($phJson | Where-Object { [double]$_.heapFactor -eq $h -and $_.collector -eq 'srv' })
+    $phAgg += [Math]::Round([double]$js[0].pauseP99Ms / [double]$jw[0].pauseP99Ms, 2)
+    $phPublished += ([double]$js[0].ratioVsBaseline).ToString('0.000000')
+}
+# The one heap factor where the two samples overlap, so the board cannot claim separation.
+$hi = $phHeaps[-1]
+$ovSrv = (@($phCsv | Where-Object { [double]$_.heapFactor -eq $hi -and $_.collector -eq 'srv' } | ForEach-Object { [double]$_.pauseP99Ms }) | Measure-Object -Minimum).Minimum
+$ovWks = (@($phCsv | Where-Object { [double]$_.heapFactor -eq $hi -and $_.collector -eq 'wks' } | ForEach-Object { [double]$_.pauseP99Ms }) | Measure-Object -Maximum).Maximum
+
+Write-Output "  pinning-heavy-io pause srv/wks: csv $($phRatio -join ' / '), aggregate $($phAgg -join ' / '), exact p $($phPnum -join ' / ') of $phPden"
 Write-Output "  json rows $($rows.Count), valid $($valid.Count), latency $($lat.Count), throughput $($thr.Count)"
 Write-Output "  csv rows $($csvRows.Count), columns $($csvCols.Count), shared with json $shared"
 Write-Output "  scenarios within 0.16%: $within of $($worst.Count); largest of the nine $([Math]::Round($maxNine,3))%; aspnet $([Math]::Round($aspnet,2))%"
@@ -197,6 +241,26 @@ $claims = @(
        re   = '(\d+) of (\d+) rows are \*labelled\*'
        sites = 1
        want = @($fallback, $rows.Count) }
+
+    @{ name = 'P0.6 amendment: pinning-heavy-io aggregate pause ratios, published JSON'
+       re   = 'its `pauseP99Ms` differs srv/wks by \*\*(\d+\.\d+)x / (\d+\.\d+)x / (\d+\.\d+)x\*\*'
+       sites = 1
+       want = @($phAgg[0], $phAgg[1], $phAgg[2]) }
+
+    @{ name = 'P0.6 amendment: the ratios published beside that pause difference'
+       re   = 'publishes `ratioVsBaseline` of (\d+\.\d+) / (\d+\.\d+) / (\d+\.\d+) in the throughput phase'
+       sites = 1
+       want = @($phPublished[0], $phPublished[1], $phPublished[2]) }
+
+    @{ name = 'P0.6 amendment: exact permutation test over the per-invocation CSV'
+       re   = 'point ratios of \*\*(\d+\.\d+)x\*\*, \*\*(\d+\.\d+)x\*\* and \*\*(\d+\.\d+)x\*\* at p = \*\*(\d+)/(\d+)\*\*, \*\*(\d+)/(\d+)\*\* and \*\*(\d+)/(\d+)\*\*'
+       sites = 1
+       want = @($phRatio[0], $phRatio[1], $phRatio[2], $phPnum[0], $phPden, $phPnum[1], $phPden, $phPnum[2], $phPden) }
+
+    @{ name = 'P0.6 amendment: the overlap that forbids a separation claim'
+       re   = "srv's minimum of (\d+\.\d+) falls below wks's maximum of (\d+\.\d+)"
+       sites = 1
+       want = @($ovSrv, $ovWks) }
 )
 $WORDS = @{ 'nine' = 9; 'ten' = 10; 'one' = 1; 'two' = 2; 'three' = 3; 'four' = 4;
             'five' = 5; 'six' = 6; 'seven' = 7; 'eight' = 8 }
