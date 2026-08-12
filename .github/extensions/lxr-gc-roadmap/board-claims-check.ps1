@@ -204,6 +204,99 @@ Write-Output "  csv rows $($csvRows.Count), columns $($csvCols.Count), shared wi
 Write-Output "  scenarios within 0.16%: $within of $($worst.Count); largest of the nine $([Math]::Round($maxNine,3))%; aspnet $([Math]::Round($aspnet,2))%"
 Write-Output ''
 
+# ---- section 6.4 variance table: reproduce the published rows, then extend to pause ----
+# Rule 87. derive-variance-table.py takes ONE csv (load_cells(args.csv)). Unioning the three
+# session CSVs charges cross-session drift to within-cell variance: the cell COUNTS still come
+# out right because the partition is right, while every statistic inflates. So the control is
+# not optional decoration -- it is the only thing that distinguishes this derivation from a
+# plausible guess, and it is checked against the deliverable rather than against literals.
+$FLOOR = 8.35
+$s2Csv = @(Show-Blob "${BASE}raw/p0-5-baselines-s2-invocations.csv" | ConvertFrom-Csv)
+function PhaseOf ($runId) {
+    if ($runId -like '*.throughput') { return 'throughput' }
+    if ($runId -like '*.latency')    { return 'latency' }
+    return $null
+}
+function CvCells ($rowsIn, $metric, $phases) {
+    $g = @{}
+    foreach ($r in $rowsIn) {
+        $ph = PhaseOf $r.runId
+        if ($null -eq $ph -or $phases -notcontains $ph) { continue }
+        if ("$($r.valid)".Trim().ToLower() -ne 'true') { continue }
+        if (-not (HasVal $r.$metric)) { continue }
+        $k = "$($r.scenario)|$($r.collector)|$($r.heapFactor)|$ph"
+        if (-not $g.ContainsKey($k)) { $g[$k] = @() }
+        $g[$k] += [double]$r.$metric
+    }
+    $cvs = @()
+    foreach ($v in $g.Values) {
+        if ($v.Count -lt 2) { continue }
+        $mean = ($v | Measure-Object -Average).Average
+        if ($mean -le 0) { continue }
+        $ss = ($v | ForEach-Object { ($_ - $mean) * ($_ - $mean) } | Measure-Object -Sum).Sum
+        $cvs += 100 * [Math]::Sqrt($ss / ($v.Count - 1)) / $mean
+    }
+    $s = @($cvs | Sort-Object); $n = $s.Count
+    $med = if ($n % 2) { $s[[int](($n - 1) / 2)] } else { ($s[$n / 2 - 1] + $s[$n / 2]) / 2 }
+    return [pscustomobject]@{ Cells = $n
+                              Median = [Math]::Round($med, 2)
+                              Max = [Math]::Round($s[-1], 2)
+                              Above = @($cvs | Where-Object { $_ -gt $FLOOR }).Count }
+}
+$ctlThr = CvCells $s2Csv 'operationsPerSecond' @('throughput')
+$ctlLat = CvCells $s2Csv 'latencyP99Ms'        @('latency')
+$vPause = CvCells $s2Csv 'pauseP99Ms'          @('throughput', 'latency')
+$badPop = CvCells $csvRows 'operationsPerSecond' @('throughput')
+
+$delivText = (Show-Blob ($BASE.TrimEnd('/') + '.md')) -join "`n"
+$ctrl = 0
+$ctlOk = $true
+$controls = @(
+    [pscustomobject]@{ Name = 'operationsPerSecond'; Got = $ctlThr }
+    [pscustomobject]@{ Name = 'latencyP99Ms';        Got = $ctlLat }
+)
+foreach ($pair in $controls) {
+    $name = $pair.Name; $got = $pair.Got
+    $rx = '\| `' + $name + '` \| (\d+) \| \*\*(\d+\.\d+)%\*\* \| (\d+\.\d+)% \| \*\*(\d+) of (\d+)\*\* \|'
+    $mm = [regex]::Match($delivText, $rx)
+    if (-not $mm.Success) { bad "section 6.4 control: no published row for ``$name`` in the deliverable"; $ctlOk = $false; continue }
+    $exp = @([int]$mm.Groups[1].Value, [double]$mm.Groups[2].Value, [double]$mm.Groups[3].Value, [int]$mm.Groups[4].Value)
+    $gotA = @($got.Cells, $got.Median, $got.Max, $got.Above)
+    $diff = @()
+    for ($i = 0; $i -lt 4; $i++) { if ([Math]::Abs([double]$gotA[$i] - [double]$exp[$i]) -gt 0.001) { $diff += "$($gotA[$i]) vs published $($exp[$i])" } }
+    if ($diff.Count) { bad "section 6.4 control: ``$name`` does not reproduce -- $($diff -join '; ')"; $ctlOk = $false }
+    else {
+        # A control is not a board claim: it compares two artifacts to each other and no
+        # sentence anywhere states it. Counting it as a claim would break the coverage
+        # script's invariant that the checker reports exactly as many claims as it defines.
+        $ctrl++
+        Write-Output "  ok    section 6.4 control: ``$name`` reproduces the published row exactly ($($gotA -join ' / '))"
+    }
+}
+if (-not $ctlOk) { Write-Output '  the pause row below is therefore a guess and is not reported'; exit 1 }
+
+# ---- the published pause column is one invocation, not a mean (Aggregator.cs:262) ----
+$byCell = @{}
+foreach ($r in $csvRows) {
+    if (-not (HasVal $r.pauseP99Ms)) { continue }
+    $k = "$($r.scenario)|$($r.collector)|$([double]$r.heapFactor)|$($r.runId)"
+    if (-not $byCell.ContainsKey($k)) { $byCell[$k] = @() }
+    $byCell[$k] += [pscustomobject]@{ Inv = [int]$r.invocation; V = [double]$r.pauseP99Ms }
+}
+$eqLast = 0; $eqMean = 0; $totPause = 0
+foreach ($j in $rows) {
+    if ($null -eq $j.pauseP99Ms) { continue }
+    if ("$($j.notes)" -match 'runId=(\S+)') { $rid = $Matches[1] } else { continue }
+    $k = "$($j.scenario)|$($j.collector)|$([double]$j.heapFactor)|$rid"
+    if (-not $byCell.ContainsKey($k)) { continue }
+    $vec = @($byCell[$k] | Sort-Object Inv)
+    $totPause++
+    if ([Math]::Abs([double]$j.pauseP99Ms - $vec[-1].V) -lt 1e-9) { $eqLast++ }
+    if ([Math]::Abs([double]$j.pauseP99Ms - (($vec | Measure-Object -Property V -Average).Average)) -lt 1e-9) { $eqMean++ }
+}
+Write-Output "  pauseP99Ms variance (s2, published convention): $($vPause.Cells) cells, median $($vPause.Median)%, max $($vPause.Max)%, $($vPause.Above) above $FLOOR%"
+Write-Output "  published pauseP99Ms == last invocation: $eqLast of $totPause; == column mean: $eqMean of $totPause"
+
 # ---- compare every occurrence against the derived value ------------------------------
 
 Write-Output '== board prose vs derived =='
@@ -309,6 +402,27 @@ $claims = @(
        re   = 'gives p = \*\*(\d+\.\d+) / (\d+\.\d+) / (\d+\.\d+)\*\*, significant at all of them'
        sites = 1
        want = @($aspPauP[0], $aspPauP[1], $aspPauP[2]) }
+
+    @{ name = 'rule 87: the control rows the extension had to reproduce, s2 CSV'
+       re   = '`operationsPerSecond` (\d+) / (\d+\.\d+)% / (\d+\.\d+)% / (\d+) of (\d+) and `latencyP99Ms` (\d+) / (\d+\.\d+)% / (\d+\.\d+)% / (\d+) of (\d+)'
+       sites = 1
+       want = @($ctlThr.Cells, $ctlThr.Median, $ctlThr.Max, $ctlThr.Above, $ctlThr.Cells,
+                $ctlLat.Cells, $ctlLat.Median, $ctlLat.Max, $ctlLat.Above, $ctlLat.Cells) }
+
+    @{ name = 'rule 87: what the WRONG population produced, three sessions unioned'
+       re   = '\(median (\d+\.\d+)%, max (\d+\.\d+)%, (\d+) above the floor instead of 0\)'
+       sites = 1
+       want = @($badPop.Median, $badPop.Max, $badPop.Above) }
+
+    @{ name = 'P0.6 gap: the section 6.4 row that does not exist, derived under its convention'
+       re   = '`pauseP99Ms` is \*\*(\d+) cells, median within-cell CV (\d+\.\d+)%, max (\d+\.\d+)%, (\d+) of (\d+)'
+       sites = 1
+       want = @($vPause.Cells, $vPause.Median, $vPause.Max, $vPause.Above, $vPause.Cells) }
+
+    @{ name = 'P0.6 gap: the published pause column is one invocation, not a mean'
+       re   = 'equals the last valid invocation in \*\*(\d+) of (\d+)\*\* cells and the column mean in \*\*(\d+) of (\d+)\*\*'
+       sites = 1
+       want = @($eqLast, $totPause, $eqMean, $totPause) }
 )
 $WORDS = @{ 'nine' = 9; 'ten' = 10; 'one' = 1; 'two' = 2; 'three' = 3; 'four' = 4;
             'five' = 5; 'six' = 6; 'seven' = 7; 'eight' = 8 }
@@ -365,7 +479,7 @@ foreach ($c in $claims) {
 
 Write-Output ''
 if ($fail -eq 0) {
-    Write-Output "RESULT: PASS ($pass claims verified against $Ref)"
+    Write-Output "RESULT: PASS ($pass claims verified against $Ref; $ctrl section 6.4 controls reproduced)"
     exit 0
 } else {
     Write-Output "RESULT: FAIL ($pass verified, $fail failed)"
