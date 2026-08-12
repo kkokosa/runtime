@@ -333,13 +333,23 @@ $aspLatLo = [Math]::Round($latLo, 1); $aspLatHi = [Math]::Round($latHi, 1)
 $aspThrLo = [Math]::Round($thrLo, 2); $aspThrHi = [Math]::Round($thrHi, 2)
 $kesLo = [Math]::Round($latLo / $thrHi, 0); $kesHi = [Math]::Round($latHi / $thrLo, 0)
 
-# The rank the superlative was never checked against.
-$scn = @{}
+# The rank the superlative was never checked against. Section 6.3 declares its basis as the
+# arithmetic mean over invocations within a cell, so a scenario figure is the mean of its cell
+# means. Pooling raw invocations instead double-weights whichever cells a later session re-ran,
+# which is the estimator half of rule 102 and is what this block did until it was measured.
+$cellAcc = @{}
 foreach ($r in $csvRows) {
     if ("$($r.valid)".Trim().ToLower() -ne 'true' -or (PhaseOf $r.runId) -ne 'latency') { continue }
     if (-not (HasVal $r.latencyP99Ms)) { continue }
-    if (-not $scn.ContainsKey($r.scenario)) { $scn[$r.scenario] = @() }
-    $scn[$r.scenario] += [double]$r.latencyP99Ms
+    $ck = "$($r.scenario)|$($r.collector)|$($r.heapFactor)"
+    if (-not $cellAcc.ContainsKey($ck)) { $cellAcc[$ck] = @() }
+    $cellAcc[$ck] += [double]$r.latencyP99Ms
+}
+$scn = @{}
+foreach ($ck in $cellAcc.Keys) {
+    $sc = $ck.Split('|')[0]
+    if (-not $scn.ContainsKey($sc)) { $scn[$sc] = @() }
+    $scn[$sc] += ($cellAcc[$ck] | Measure-Object -Average).Average
 }
 $scnAvg = @{}
 foreach ($k in $scn.Keys) { $scnAvg[$k] = ($scn[$k] | Measure-Object -Average).Average }
@@ -350,7 +360,7 @@ $nearestR = [Math]::Round($nearest, 2)
 $gapNear  = [Math]::Round($aspAvg / $nearest, 1)
 $othLo    = [Math]::Round(($others | Measure-Object -Minimum).Minimum, 3)
 $othHi    = [Math]::Round($nearest, 1)
-$twoOrd   = @($others | Where-Object { ($aspAvg / $_) -ge 100 }).Count
+$twoOrd   = @($others | Where-Object { ($aspAvg / $_) -ge 100 -and ($aspAvg / $_) -le 1000 }).Count
 $notTwo   = $others.Count - $twoOrd
 $aboveAsp = @($others | Where-Object { $_ -gt $thrHi }).Count
 $belowAsp = @($others | Where-Object { $_ -lt $thrLo }).Count
