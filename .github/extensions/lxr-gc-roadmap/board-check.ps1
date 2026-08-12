@@ -20,7 +20,7 @@
 
 $ErrorActionPreference = 'Stop'
 
-$EXPECTED = @{ Phases = 11; Steps = 54; Fields = 360; Rules = 73 }
+$EXPECTED = @{ Phases = 11; Steps = 54; Fields = 360; Rules = 74 }
 
 $board = Join-Path $PSScriptRoot 'roadmap.md'
 $pass = 0
@@ -93,7 +93,16 @@ Write-Output '== subject =='
 # The board resolves relative to this script, which is structurally the $SELF_DIR
 # hazard of rule 63. It is safe only while exactly one copy exists; merging the
 # branch creates the second, and this check is what notices.
-$copies = @(Get-ChildItem 'C:\' -Recurse -Filter 'roadmap.md' -File -ErrorAction SilentlyContinue |
+#
+# -Force is load-bearing: without it Get-ChildItem -Recurse will not descend into
+# hidden directories, and %TEMP% lives under the hidden AppData. This check had never
+# been observed to fire in 12 runs, and the first control written for it planted its
+# decoys in exactly that blind spot -- so the control returned exit 0 and read as the
+# check passing rather than as the perturbation being invisible. Measured: 1 copy
+# found without -Force, 2 with, same tree, same instant. A control that lands in the
+# blind spot of the check it is controlling is worse than no control, because it
+# converts an untested assertion into an apparently tested one.
+$copies = @(Get-ChildItem 'C:\' -Recurse -Force -Filter 'roadmap.md' -File -ErrorAction SilentlyContinue |
             Where-Object { $_.FullName -match 'lxr-gc-roadmap' })
 if ($copies.Count -eq 1) {
     ok 'exactly one board on this machine, so self-relative resolution is unambiguous'
