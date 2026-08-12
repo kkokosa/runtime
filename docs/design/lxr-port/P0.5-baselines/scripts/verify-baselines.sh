@@ -416,6 +416,42 @@ else
         bad "document names $named_count script(s), $present_count present, missing:$missing"
         note "a document that names a script it does not ship is F1's shape in a different place"
     fi
+
+    # Line citations rot silently: the file stays present, the line moves, and the citation now points
+    # at something that does not say what it is cited for. Derived by scanning the document, so a new
+    # citation is covered the moment it is written. Resolved by basename under the port tree, and a
+    # blank target counts as a failure - a citation into padding is the same defect as one past EOF.
+    citations=$(grep -oE '`[A-Za-z0-9._/-]+\.(cs|csproj|sh|py|ps1|md)`?:[0-9]+(-[0-9]+)?`' "$DOC" \
+        | tr -d '`' | sort -u)
+    cite_count=$(printf '%s\n' "$citations" | grep -c . || true)
+    if [[ "$cite_count" -lt 1 ]]; then
+        bad "the citation extractor found $cite_count file:line citations; a pass here would be meaningless"
+    else
+        cite_ok=0
+        cite_bad=""
+        while IFS= read -r cite; do
+            [[ -z "$cite" ]] && continue
+            cite_file=${cite%%:*}
+            cite_line=${cite##*:}
+            cite_line=${cite_line%%-*}
+            target=$(find "$ROOT/docs/design/lxr-port" -name "$(basename "$cite_file")" -type f 2>/dev/null | head -n 1)
+            if [[ -z "$target" ]]; then
+                cite_bad="$cite_bad $cite(no such file)"
+            elif [[ "$(wc -l < "$target")" -lt "$cite_line" ]]; then
+                cite_bad="$cite_bad $cite(only $(wc -l < "$target") lines)"
+            elif [[ -z "$(sed -n "${cite_line}p" "$target" | tr -d '[:space:]')" ]]; then
+                cite_bad="$cite_bad $cite(blank line)"
+            else
+                cite_ok=$((cite_ok + 1))
+            fi
+        done <<< "$citations"
+        if [[ -z "$cite_bad" ]]; then
+            ok "document makes $cite_count file:line citation(s), $cite_ok resolve to a non-blank line, difference $((cite_count - cite_ok))"
+        else
+            bad "document makes $cite_count file:line citation(s), $cite_ok resolve, bad:$cite_bad"
+            note "a citation that no longer points at what it claims is a document lying about the tree (rule 25)"
+        fi
+    fi
 fi
 
 # ---------------------------------------------------------------------------

@@ -318,6 +318,32 @@ printf '     elected --no-results declarations: %s before, %s after, difference 
 run_case 'zero-check guard' "$TREE" 1 'ran no checks and did not declare a skip' --no-results
 printf '\n'
 
+# B9 -- a file:line citation moved past the end of the file it cites. Citations rot silently: the file
+# stays present and the gate's other checks stay green, because every one of them compares data to data
+# or a name to a file. Nothing before this case read a line number. The perturbation leaves every CSV,
+# every checkpoint and every script untouched.
+printf 'B9 a file:line citation pushed past end of file, tree otherwise untouched -> expect the citation check to name it\n'
+TREE=$(fresh_copy b9)
+"$PY" - "$TREE/docs/design/lxr-port/P0.5-baselines.md" <<'PYEOF'
+import pathlib, re, sys
+path = pathlib.Path(sys.argv[1])
+lines = path.read_text(encoding="utf-8").splitlines(keepends=True)
+# Located by pattern rather than by a literal, so that documenting this case cannot break it the way
+# documenting B6 broke B6. Any single citation of the run script will do; the case is about the shape.
+pattern = re.compile(r"(run-p05-baselines\.ps1):(\d+)")
+hits = [i for i, line in enumerate(lines) if pattern.search(line)]
+if len(hits) != 1:
+    sys.exit(f"     expected exactly one line:number citation of the run script, found {len(hits)}")
+index = hits[0]
+old = pattern.search(lines[index]).group(0)
+new = pattern.sub(lambda m: f"{m.group(1)}:99{m.group(2)}", lines[index])
+print(f"     perturbed line {index + 1}: {old!r} pushed past end of file")
+lines[index] = new
+path.write_text("".join(lines), encoding="utf-8")
+PYEOF
+run_case 'citation past end of file' "$TREE" 1 'resolve, bad:' --no-results
+printf '\n'
+
 # --------------------------------------------------------------------------- C
 printf 'C  untouched extract again, expect PASS exit 0\n'
 run_case 'clean extract, second time' "$EXTRACT" 0 '^RESULT: PASS' --results .
@@ -332,5 +358,5 @@ if [[ $FAILED -gt 0 ]]; then
 fi
 
 printf 'RESULT: PASS (%d of %d cases behaved as required)\n' "$PASSED" "$TOTAL"
-printf 'The gate passed a clean extract, refused an empty one, and failed five single perturbations.\n'
+printf 'The gate passed a clean extract, refused an empty one, and failed six single perturbations.\n'
 exit 0
