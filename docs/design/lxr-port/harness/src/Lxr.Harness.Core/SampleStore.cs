@@ -24,7 +24,7 @@ namespace Lxr.Harness.Core;
 public static class SampleStore
 {
     private const uint Magic = 0x4C58_5253; // "LXRS"
-    private const int FormatVersion = 1;
+    private const int FormatVersion = 2;
 
     public static void WriteOpenLoop(string path, MeasuredRun run, long runStartTimestamp)
     {
@@ -41,11 +41,12 @@ public static class SampleStore
         writer.Write(runStartTimestamp);
         writer.Write(run.RecordCount);
 
-        OperationRecord[] records = run.Records;
+        NativeBuffer<OperationRecord> records = run.Records;
         for (int i = 0; i < run.RecordCount; i++)
         {
             writer.Write(records[i].IntendedTimestamp - runStartTimestamp);
             writer.Write(records[i].ServiceStartTimestamp - runStartTimestamp);
+            writer.Write(records[i].DispatchTimestamp - runStartTimestamp);
             writer.Write(records[i].EndTimestamp - runStartTimestamp);
             writer.Write(records[i].Value);
             writer.Write(records[i].Phase);
@@ -100,6 +101,7 @@ public static class SampleStore
         {
             records[i].IntendedTimestamp = reader.ReadInt64();
             records[i].ServiceStartTimestamp = reader.ReadInt64();
+            records[i].DispatchTimestamp = reader.ReadInt64();
             records[i].EndTimestamp = reader.ReadInt64();
             records[i].Value = reader.ReadInt64();
             records[i].Phase = reader.ReadInt32();

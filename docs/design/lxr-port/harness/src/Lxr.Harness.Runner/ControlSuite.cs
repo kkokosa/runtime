@@ -488,19 +488,39 @@ public sealed class ControlSuite
         bool reachesTarget = requiredInvocations > 0;
         bool ladderBuilt = ladder.Count > 0;
 
+        // The blind-band assertion. P0.4 designed it, declined to ship it, and said why: an assertion
+        // nobody has watched fail is indistinguishable from an absent one. P0.5 reopens these controls,
+        // so it can be watched failing, and it is asserted here.
+        //
+        // What it asserts is the estimator's own precision on the fine arm, not whether the fine effect
+        // is resolved. That distinction is the whole reason this can be asserted at all: the effect sits
+        // inside this host's noise and its resolution flaps run to run, but the half-width is a property
+        // of the sample this run actually collected. It degrades when the machine degrades, and it does
+        // not depend on whether a 2% signal happened to poke above the floor today.
+        //
+        // The bound is generous against an observed ~1% - the same reasoning that put the coarse
+        // injection at 16.7% rather than 2%. It leaves a real blind band between roughly 2% and the
+        // bound where a resolution regression still fails nothing. That band is published in
+        // P0.5-baselines.md rather than closed, because closing it needs a quieter machine.
+        double fineHalfWidth = effect.HalfWidthFraction;
+        bool fineWithinBound = !double.IsNaN(fineHalfWidth) && fineHalfWidth <= _options.FineHalfWidthBound;
+
         return new ControlEvidence
         {
             Id = "7",
             Name = "measurement resolution",
             Expectation = $"a ~{(1 - coarseNominal) * 100:F1}% injected slowdown gives an interval excluding 1.0 on the low side, " +
                 "and an uninjected replicate of the same arm gives an interval including 1.0. " +
-                $"What this host can resolve at the paper's ~{(1 - fineNominal) * 100:F1}% barrier scale is measured and reported, not asserted",
-            Fired = resolvesCoarse && refusesNull && ladderBuilt,
+                $"The half-width of the ~{(1 - fineNominal) * 100:F1}% barrier-scale arm stays within " +
+                $"{_options.FineHalfWidthBound * 100:F0}%, so a catastrophic loss of resolution fails rather than being published. " +
+                "Whether that arm's effect is itself resolved is measured and reported, not asserted",
+            Fired = resolvesCoarse && refusesNull && ladderBuilt && fineWithinBound,
             Observed = $"coarse ~{(1 - coarseNominal) * 100:F1}% injection {coarseEffect.Ratio:F4} " +
                 $"[{coarseEffect.Low:F4}, {coarseEffect.High:F4}] excludes 1.0: {coarseEffect.ExcludesUnity}; " +
                 $"null replicate {nullRatio.Ratio:F4} [{nullRatio.Low:F4}, {nullRatio.High:F4}] includes 1.0: {refusesNull}; " +
                 $"fine ~{(1 - fineNominal) * 100:F1}% injection {effect.Ratio:F4} [{effect.Low:F4}, {effect.High:F4}] " +
-                $"excludes 1.0: {resolvesFine} (measured, not asserted)",
+                $"half-width {fineHalfWidth * 100:F2}% <= {_options.FineHalfWidthBound * 100:F0}%: {fineWithinBound}; " +
+                $"that arm's effect excludes 1.0: {resolvesFine} (measured, not asserted)",
             Detail =
             [
                 $"ASSERTED - coarse injection: every {CoarseEveryNth}th operation is performed twice, a nominal " +
@@ -510,7 +530,11 @@ public sealed class ControlSuite
                     "trusted would look like a success on the injected arm; this is the direction that catches over-confidence.",
                 $"MEASURED - fine injection: every {FineEveryNth}th operation is performed twice, a nominal " +
                     $"1/{FineEveryNth + 1} = {(1 - fineNominal) * 100:F2}%, chosen to sit at the paper's 1.6% barrier-cost scale. " +
-                    "Reported, never asserted - see the P0.5 input below for why.",
+                    "Whether the effect is resolved is reported, never asserted - see the P0.5 input below for why.",
+                $"ASSERTED - blind-band bound: the fine arm's half-width must stay within {_options.FineHalfWidthBound * 100:F0}%. " +
+                    $"Observed {fineHalfWidth * 100:F2}%. This asserts the estimator's precision, not the effect's significance, which is why " +
+                    "it can be asserted at all where 'the fine effect is resolved' could not. A resolution regression between roughly 2% and " +
+                    $"{_options.FineHalfWidthBound * 100:F0}% still fails nothing: that blind band is a published limitation of this control, not a closed gap.",
                 $"{baseline.Count} baseline, {coarse.Count} coarse, {slowed.Count} fine and {replicate.Count} null-replicate invocations, " +
                     $"interleaved A/B/C/D, {steadyState:F0} s steady state each, {dropped} invocation(s) dropped as invalid",
                 $"{Aggregator.CiMethodDescription}",

@@ -20,6 +20,13 @@ public struct OperationRecord
     /// <summary>When a worker actually picked the operation up.</summary>
     public long ServiceStartTimestamp;
 
+    /// <summary>
+    /// When the dispatcher actually enqueued the operation. The gap to <see cref="IntendedTimestamp"/>
+    /// is the harness's own scheduling error, and it is recorded so it can be told apart from queueing
+    /// caused by the system under test. Both delay an operation; only the second is a measurement.
+    /// </summary>
+    public long DispatchTimestamp;
+
     public long EndTimestamp;
 
     /// <summary>Value returned by the scenario, folded into the run checksum.</summary>
@@ -73,9 +80,15 @@ public sealed class OpenLoopOptions
     public double OverloadTolerance { get; init; } = 0.02;
 }
 
-public sealed class MeasuredRun
+public sealed class MeasuredRun : IDisposable
 {
-    public required OperationRecord[] Records { get; init; }
+    public required NativeBuffer<OperationRecord> Records { get; init; }
+
+    /// <summary>
+    /// Bytes the harness holds off the GC heap for this run. Published so that a working-set figure
+    /// which includes the apparatus can still be read as a statement about the workload.
+    /// </summary>
+    public required long ApparatusBytes { get; init; }
 
     public required int RecordCount { get; init; }
 
@@ -94,6 +107,8 @@ public sealed class MeasuredRun
     public required double WallSeconds { get; init; }
 
     public required int SteadyStateCount { get; init; }
+
+    public void Dispose() => Records.Dispose();
 }
 
 /// <summary>
@@ -129,8 +144,9 @@ public static class OpenLoopDriver
             throw new ArgumentException("Arrival rate and duration produce no operations.", nameof(options));
         }
 
-        OperationRecord[] records = new OperationRecord[totalOperations];
-        long[] offsets = BuildSchedule(totalOperations, options);
+        var records = new NativeBuffer<OperationRecord>(totalOperations);
+        using var offsets = new NativeBuffer<long>(totalOperations);
+        BuildSchedule(offsets, totalOperations, options);
         long warmupOffset = (long)(options.WarmupSeconds * Stopwatch.Frequency);
 
         for (int i = 0; i < totalOperations; i++)
@@ -179,6 +195,7 @@ public static class OpenLoopDriver
                 lateCount++;
             }
 
+            records[i].DispatchTimestamp = Stopwatch.GetTimestamp();
             queue.Enqueue(i);
         }
 
@@ -209,6 +226,7 @@ public static class OpenLoopDriver
         return new MeasuredRun
         {
             Records = records,
+            ApparatusBytes = records.ByteCount + offsets.ByteCount,
             RecordCount = totalOperations,
             RequestedRatePerSecond = options.ArrivalRatePerSecond,
             AchievedRatePerSecond = achievedRate,
@@ -221,7 +239,7 @@ public static class OpenLoopDriver
         };
     }
 
-    private static void WorkerLoop(IScenario scenario, OperationRecord[] records, IndexQueue queue, StallController stall, int workerIndex)
+    private static void WorkerLoop(IScenario scenario, NativeBuffer<OperationRecord> records, IndexQueue queue, StallController stall, int workerIndex)
     {
         while (queue.TryDequeue(out int index))
         {
@@ -232,9 +250,8 @@ public static class OpenLoopDriver
         }
     }
 
-    private static long[] BuildSchedule(int count, OpenLoopOptions options)
+    private static void BuildSchedule(NativeBuffer<long> offsets, int count, OpenLoopOptions options)
     {
-        long[] offsets = new long[count];
         double ticksPerSecond = Stopwatch.Frequency;
         double meanInterarrival = 1.0 / options.ArrivalRatePerSecond;
 
@@ -245,7 +262,7 @@ public static class OpenLoopDriver
                 offsets[i] = (long)(i * meanInterarrival * ticksPerSecond);
             }
 
-            return offsets;
+            return;
         }
 
         var random = new Random(options.Seed);
@@ -257,13 +274,29 @@ public static class OpenLoopDriver
             // so 1 - u is in (0,1] and the logarithm is always defined.
             cumulative += -Math.Log(1.0 - random.NextDouble()) * meanInterarrival;
         }
-
-        return offsets;
     }
+
+    /// <summary>
+    /// The margin, in milliseconds, left unslept before a scheduled dispatch. It must exceed the
+    /// coarsest timer tick the host can round a sleep up to, so that a sleep can overshoot by a full
+    /// tick and still land before the deadline with the remainder spun out.
+    /// </summary>
+    /// <remarks>
+    /// Windows' default timer resolution is 15.625 ms, and <see cref="Thread.Sleep(int)"/> rounds up to
+    /// it: <c>Sleep(1)</c> routinely returns after 15 ms. P0.5's first latency matrix asked for 1000
+    /// op/s - a 1 ms mean gap - and measured a p99 dispatch lag of 11 ms with a 13.2 ms maximum, which
+    /// is that tick and not the collector. The margin is not lowered towards the tick: sleeping
+    /// <c>remaining - 20 ms</c> can overshoot by 15.625 ms and still leave 4 ms to spin.
+    /// <para>
+    /// Raising the system timer resolution with <c>timeBeginPeriod</c> was rejected. It would change
+    /// thread scheduling and timer-driven behaviour inside the runtime being measured, which for a
+    /// collector benchmark means perturbing the subject to instrument it.
+    /// </para>
+    /// </remarks>
+    internal const double CoarseSleepMarginMs = 20.0;
 
     internal static void WaitUntil(long targetTimestamp)
     {
-        const double CoarseSleepThresholdMs = 2.0;
         while (true)
         {
             long remaining = targetTimestamp - Stopwatch.GetTimestamp();
@@ -273,12 +306,14 @@ public static class OpenLoopDriver
             }
 
             double remainingMs = remaining * 1000.0 / Stopwatch.Frequency;
-            if (remainingMs > CoarseSleepThresholdMs)
+            if (remainingMs > CoarseSleepMarginMs)
             {
-                Thread.Sleep((int)(remainingMs - CoarseSleepThresholdMs));
+                Thread.Sleep((int)(remainingMs - CoarseSleepMarginMs));
             }
             else
             {
+                // Spinning burns the dispatcher thread for up to the margin. That cost is accepted and
+                // symmetric across arms; delivering the schedule late is not.
                 Thread.SpinWait(40);
             }
         }
