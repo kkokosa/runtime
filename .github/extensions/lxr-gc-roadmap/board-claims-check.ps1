@@ -170,7 +170,19 @@ $ovWks = (@($phCsv | Where-Object { [double]$_.heapFactor -eq $hi -and $_.collec
 # the 252 arrangements is enumerated, so there is no seed to share and any language reproduces
 # them. Two-sided here, because the direction is not predicted in advance.
 $aspJson = @($valid | Where-Object { $_.scenario -eq 'aspnet-request-load' -and $_.notes -like '*testhost.latency*' })
-$shares = @($aspJson | ForEach-Object { 100 * [double]$_.pauseP99Ms / [double]$_.latencyP99Ms })
+# The share must come from the per-invocation CSV, not the published JSON row. Nine columns
+# including pauseP99Ms are copied from ONE invocation (Aggregator.cs:262), so a JSON-derived
+# share is a ratio of two single draws. Same quantity, two estimators, and the sentence has to
+# say which -- rule 84 applied to estimators rather than to artifacts or file paths.
+$aspCsv = @($csvRows | Where-Object { $_.scenario -eq 'aspnet-request-load' -and
+                                      $_.runId -like '*.latency' -and
+                                      "$($_.valid)".Trim().ToLower() -eq 'true' })
+$shares = @()
+foreach ($grp in ($aspCsv | Group-Object { "$($_.collector)|$([double]$_.heapFactor)" })) {
+    $mp = (@($grp.Group | ForEach-Object { [double]$_.pauseP99Ms })  | Measure-Object -Average).Average
+    $ml = (@($grp.Group | ForEach-Object { [double]$_.latencyP99Ms }) | Measure-Object -Average).Average
+    $shares += 100 * $mp / $ml
+}
 $aspShareLo = [Math]::Round(($shares | Measure-Object -Minimum).Minimum, 2)
 $aspShareHi = [Math]::Round(($shares | Measure-Object -Maximum).Maximum, 2)
 
@@ -296,6 +308,54 @@ foreach ($j in $rows) {
 }
 Write-Output "  pauseP99Ms variance (s2, published convention): $($vPause.Cells) cells, median $($vPause.Median)%, max $($vPause.Max)%, $($vPause.Above) above $FLOOR%"
 Write-Output "  published pauseP99Ms == last invocation: $eqLast of $totPause; == column mean: $eqMean of $totPause"
+
+# ---- the Kestrel attribution: presence is not causation, and no file can settle a rank ----
+# Kestrel is constant across every row below, so anything that moves across them is not
+# explained by the socket path. AspNetRequestLoadScenario.cs:87 establishes presence only.
+$aspCell = @{}
+foreach ($r in $csvRows) {
+    if ($r.scenario -ne 'aspnet-request-load') { continue }
+    if ("$($r.valid)".Trim().ToLower() -ne 'true' -or -not (HasVal $r.latencyP99Ms)) { continue }
+    $k = "$(PhaseOf $r.runId)|$($r.collector)|$([double]$r.heapFactor)"
+    if (-not $aspCell.ContainsKey($k)) { $aspCell[$k] = @() }
+    $aspCell[$k] += [double]$r.latencyP99Ms
+}
+$aspLatM = @(); $aspThrM = @()
+foreach ($k in $aspCell.Keys) {
+    $m = ($aspCell[$k] | Measure-Object -Average).Average
+    if ($k.StartsWith('latency|')) { $aspLatM += $m } else { $aspThrM += $m }
+}
+$latLo = ($aspLatM | Measure-Object -Minimum).Minimum
+$latHi = ($aspLatM | Measure-Object -Maximum).Maximum
+$thrLo = ($aspThrM | Measure-Object -Minimum).Minimum
+$thrHi = ($aspThrM | Measure-Object -Maximum).Maximum
+$aspLatLo = [Math]::Round($latLo, 1); $aspLatHi = [Math]::Round($latHi, 1)
+$aspThrLo = [Math]::Round($thrLo, 2); $aspThrHi = [Math]::Round($thrHi, 2)
+$kesLo = [Math]::Round($latLo / $thrHi, 0); $kesHi = [Math]::Round($latHi / $thrLo, 0)
+
+# The rank the superlative was never checked against.
+$scn = @{}
+foreach ($r in $csvRows) {
+    if ("$($r.valid)".Trim().ToLower() -ne 'true' -or (PhaseOf $r.runId) -ne 'latency') { continue }
+    if (-not (HasVal $r.latencyP99Ms)) { continue }
+    if (-not $scn.ContainsKey($r.scenario)) { $scn[$r.scenario] = @() }
+    $scn[$r.scenario] += [double]$r.latencyP99Ms
+}
+$scnAvg = @{}
+foreach ($k in $scn.Keys) { $scnAvg[$k] = ($scn[$k] | Measure-Object -Average).Average }
+$aspAvg  = $scnAvg['aspnet-request-load']
+$others  = @($scnAvg.Keys | Where-Object { $_ -ne 'aspnet-request-load' } | ForEach-Object { $scnAvg[$_] })
+$nearest = ($others | Measure-Object -Maximum).Maximum
+$nearestR = [Math]::Round($nearest, 2)
+$gapNear  = [Math]::Round($aspAvg / $nearest, 1)
+$othLo    = [Math]::Round(($others | Measure-Object -Minimum).Minimum, 3)
+$othHi    = [Math]::Round($nearest, 1)
+$twoOrd   = @($others | Where-Object { ($aspAvg / $_) -ge 100 }).Count
+$notTwo   = $others.Count - $twoOrd
+$aboveAsp = @($others | Where-Object { $_ -gt $thrHi }).Count
+$belowAsp = @($others | Where-Object { $_ -lt $thrLo }).Count
+Write-Output "  aspnet p99 with Kestrel held constant: latency $aspLatLo-$aspLatHi ms vs throughput $aspThrLo-$aspThrHi ms = ${kesLo}x-${kesHi}x"
+Write-Output "  superlative rank: nearest other scenario $nearestR ms (${gapNear}x); two orders holds against $twoOrd of $($others.Count), fails against $notTwo"
 
 # ---- compare every occurrence against the derived value ------------------------------
 
@@ -423,6 +483,31 @@ $claims = @(
        re   = 'equals the last valid invocation in \*\*(\d+) of (\d+)\*\* cells and the column mean in \*\*(\d+) of (\d+)\*\*'
        sites = 1
        want = @($eqLast, $totPause, $eqMean, $totPause) }
+
+    @{ name = 'P0.6 post-merge: aspnet p99 with the Kestrel socket path held constant'
+       re   = 'mean `latencyP99Ms` of \*\*(\d+\.\d+)-(\d+\.\d+) ms\*\* in the latency phase at 7,996 op/s and \*\*(\d+\.\d+)-(\d+\.\d+) ms\*\* in the throughput phase'
+       sites = 1
+       want = @($aspLatLo, $aspLatHi, $aspThrLo, $aspThrHi) }
+
+    @{ name = 'P0.6 post-merge: the factor Kestrel cannot explain because it is constant'
+       re   = 'a factor of \*\*(\d+)x to (\d+)x\*\* with Kestrel unchanged'
+       sites = 1
+       want = @($kesLo, $kesHi) }
+
+    @{ name = 'P0.6 post-merge: where the low-rate p99 sits among the non-Kestrel scenarios'
+       re   = 'the (\d+\.\d+)-(\d+\.\d+) ms range of the nine non-Kestrel scenarios, below (\w+) of them and above (\w+)'
+       sites = 1
+       want = @($othLo, $othHi, $aboveAsp, $belowAsp) }
+
+    @{ name = 'P0.6 post-merge: the superlative ranked against its nearest member'
+       re   = '`lifecycle-semantics` at (\d+\.\d+) ms, the gap is \*\*(\d+\.\d+)x\*\*'
+       sites = 1
+       want = @($nearestR, $gapNear) }
+
+    @{ name = 'P0.6 post-merge: how far the superlative actually reaches'
+       re   = 'holds against (\d+) of the (\d+) other scenarios and fails against (\d+)'
+       sites = 1
+       want = @($twoOrd, $others.Count, $notTwo) }
 )
 $WORDS = @{ 'nine' = 9; 'ten' = 10; 'one' = 1; 'two' = 2; 'three' = 3; 'four' = 4;
             'five' = 5; 'six' = 6; 'seven' = 7; 'eight' = 8 }
