@@ -26,7 +26,7 @@ param([string]$LogDir = "$env:USERPROFILE\.copilot\logs\extensions")
 
 $ErrorActionPreference = 'Stop'
 
-$EXPECTED = @{ Phases = 11; Steps = 54; Fields = 360; Rules = 94 }
+$EXPECTED = @{ Phases = 11; Steps = 54; Fields = 360; Rules = 97 }
 
 $board = Join-Path $PSScriptRoot 'roadmap.md'
 $pass = 0
