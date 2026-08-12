@@ -252,6 +252,49 @@ else
 fi
 
 # ---------------------------------------------------------------------------
+# Rule 28: a gate that verifies data against data does not verify prose against data. Thirty checks
+# passed over a sentence claiming "all four throughput ratios ... drift by less than the 8.35%
+# floor" while the CSV beside it published one at 8.744%. Every check compared data to data.
+section 'the quantified prose claims re-derive from the shipped CSVs'
+
+if [[ -z "$PY" ]]; then
+    skip_section inherent "no python on PATH; the prose claims cannot be re-derived"
+elif [[ "$RESULTS_MODE" == "none" ]]; then
+    skip_section elected "--no-results: the prose claims were deliberately not re-derived"
+else
+    if out=$("$PY" "$SELF_DIR/check-prose-claims.py" --doc "$DOC" --results "$BASE" 2>&1); then
+        ok "$(printf '%s' "$out" | tail -n 1)"
+    else
+        # Print the whole comparison, not the verdict: which claim, what the data said, what the
+        # prose said. A one-line failure here is not actionable.
+        bad "$out"
+        note "a sentence disagrees with the CSV shipped beside it"
+    fi
+fi
+
+# ---------------------------------------------------------------------------
+# The section 6.4 variance table shipped without a generator, so it was reproducible only by
+# reverse-engineering its partition -- and an independent recomputation partitioned by the `mode`
+# column got 53 cells at 1.792% instead of 59 at 1.597% and nearly reported it unreproducible.
+section 'the section 6.4 variance table re-derives from the raw invocations'
+
+if [[ -z "$PY" ]]; then
+    skip_section inherent "no python on PATH; the variance table cannot be re-derived"
+elif [[ "$RESULTS_MODE" == "none" ]]; then
+    skip_section elected "--no-results: the variance table was deliberately not re-derived"
+elif [[ ! -f "$BASE/raw/p0-5-baselines-s2-invocations.csv" ]]; then
+    bad "raw/p0-5-baselines-s2-invocations.csv is absent; section 6.4 cannot be re-derived"
+else
+    if out=$("$PY" "$SELF_DIR/derive-variance-table.py" \
+             --csv "$BASE/raw/p0-5-baselines-s2-invocations.csv" --doc "$DOC" --check 2>&1); then
+        ok "$(printf '%s' "$out" | tail -n 1)"
+    else
+        bad "$out"
+        note "the published variance table does not match the invocations it was derived from"
+    fi
+fi
+
+# ---------------------------------------------------------------------------
 section 'the document records what the brief requires it to record'
 
 # Derived, not literal: the scenarios named in the document's matrix table must be exactly the

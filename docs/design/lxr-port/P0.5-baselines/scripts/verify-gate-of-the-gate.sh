@@ -212,19 +212,61 @@ PYEOF
 run_case 'shared heap off max' "$TREE" 1 'not max\(wks, srv\)' --results .
 printf '\n'
 
-# B4 -- nothing to audit. The gate must refuse rather than report a PASS over an empty tree, which
-# is the failure mode that produced a false PASS in an earlier step.
-printf 'B4 checkpoints removed, bare invocation -> expect refusal exit 2\n'
+# B4 -- the defect that reopened this step. A sentence is edited to disagree with the CSV shipped
+# beside it, while the CSV is left alone. Thirty gate checks passed over exactly this, because every
+# check compared data to data and none compared a sentence to data.
+printf 'B4 prose count edited to contradict the CSV -> expect the prose check to name it\n'
 TREE=$(fresh_copy b4)
+"$PY" - "$TREE/docs/design/lxr-port/P0.5-baselines.md" <<'PYEOF'
+import pathlib, sys
+path = pathlib.Path(sys.argv[1])
+text = path.read_text(encoding="utf-8")
+before = "Three of the four throughput ratios"
+after = "All four of the four throughput ratios"
+if before not in text:
+    sys.exit("     the corrected sentence is not present to perturb")
+print(f"     perturbed section 6.5: {before!r} -> {after!r}")
+path.write_text(text.replace(before, after, 1), encoding="utf-8")
+PYEOF
+run_case 'prose contradicts data' "$TREE" 1 'throughput ratios below the floor' --results .
+printf '\n'
+
+# B5 -- the section 6.4 variance table edited away from the invocations it summarises. This table is
+# the roadmap-critical one: it is what says LXR's acceptance metric is the one this host resolves
+# worst, and it shipped with no generator at all.
+printf 'B5 section 6.4 median CV altered, invocations untouched -> expect the re-derivation to name it\n'
+TREE=$(fresh_copy b5)
+"$PY" - "$TREE/docs/design/lxr-port/P0.5-baselines.md" <<'PYEOF'
+import pathlib, sys
+path = pathlib.Path(sys.argv[1])
+lines = path.read_text(encoding="utf-8").splitlines(keepends=True)
+for index, line in enumerate(lines):
+    if line.startswith("| `operationsPerSecond` |"):
+        before = line.strip()
+        lines[index] = line.replace("**1.60%**", "**1.42%**")
+        print(f"     perturbed section 6.4 row: {before}")
+        print(f"                            to: {lines[index].strip()}")
+        break
+else:
+    sys.exit("     no section 6.4 operationsPerSecond row to perturb")
+path.write_text("".join(lines), encoding="utf-8")
+PYEOF
+run_case 'variance table drifted' "$TREE" 1 'document row lacks' --results .
+printf '\n'
+
+# B6 -- nothing to audit. The gate must refuse rather than report a PASS over an empty tree, which
+# is the failure mode that produced a false PASS in an earlier step.
+printf 'B6 checkpoints removed, bare invocation -> expect refusal exit 2\n'
+TREE=$(fresh_copy b6)
 removed=$(find "$TREE/docs/design/lxr-port/P0.5-baselines" -maxdepth 1 -name 'p0-5-baselines-*.json' -delete -print | wc -l)
 printf '     removed %s checkpoint file(s), leaving 0\n' "$removed"
 run_case 'refuses with nothing present' "$TREE" 2 'no checkpoint json'
 printf '\n'
 
-# B5 -- a section that contributes no checks and declares no skip. The zero-check guard exists
+# B7 -- a section that contributes no checks and declares no skip. The zero-check guard exists
 # because silence in a section is what makes an unaudited tree look audited.
-printf 'B5 a skip declaration deleted so a section runs no checks silently -> expect zero-check guard\n'
-TREE=$(fresh_copy b5)
+printf 'B7 a skip declaration deleted so a section runs no checks silently -> expect zero-check guard\n'
+TREE=$(fresh_copy b7)
 GATE="$TREE/$GATE_REL"
 before_skips=$(grep -c 'skip_section elected "--no-results' "$GATE" || true)
 "$PY" - "$GATE" <<'PYEOF'
