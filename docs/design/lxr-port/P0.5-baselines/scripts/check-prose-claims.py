@@ -19,6 +19,7 @@ pass/verdict hides a check that ran against the wrong thing.
 import argparse
 import csv
 import json
+import math
 import os
 import re
 import statistics
@@ -52,6 +53,26 @@ def n_of_m_forms(n, m):
     return forms
 
 
+def all_n_forms(n):
+    """Renderings of an 'all N' claim.
+
+    "All 8 throughput comparisons agree" conveys both the total and the count with one phrase, so
+    demanding two occurrences of "8" would fail a document that is correct. Binding the count to the
+    universal quantifier is the honest expectation here: stricter than a bare count, satisfiable
+    once.
+    """
+    return ["all %s" % form for form in count_word_forms(n)]
+
+
+def pattern_for(form):
+    pattern = re.escape(form)
+    if form[:1].isalnum() or form[:1] == "_":
+        pattern = r"\b" + pattern
+    if form[-1:].isalnum() or form[-1:] == "_":
+        pattern = pattern + r"\b"
+    return pattern
+
+
 def matches(form, sentence):
     """Word-boundary match, but only where a boundary is meaningful.
 
@@ -60,12 +81,24 @@ def matches(form, sentence):
     only where the form's own edge is a word character. A bare `\\b3\\b` still finds the 3 in "3.3x",
     which is why counts with a total go through n_of_m_forms rather than through here alone.
     """
-    pattern = re.escape(form)
-    if form[:1].isalnum() or form[:1] == "_":
-        pattern = r"\b" + pattern
-    if form[-1:].isalnum() or form[-1:] == "_":
-        pattern = pattern + r"\b"
-    return re.search(pattern, sentence, re.IGNORECASE) is not None
+    return re.search(pattern_for(form), sentence, re.IGNORECASE) is not None
+
+
+def occurrence_count(forms, text):
+    """How many distinct places in the text satisfy any of these forms.
+
+    Presence is not enough when one claim asserts two facts that happen to share a value. The
+    section 5.1 claim asserts both that the heap-limit formula holds in 30 of 30 rows and that srv
+    is the binding arm in 30 of 30 rows. A checker asking only whether "30 of 30" appears is
+    satisfied by either sentence alone, so falsifying one of them passes — which is exactly what the
+    first version of this check did when the binding-arm count was perturbed to 29 of 30.
+
+    This is the same defect as expecting "3" and matching the "3" in "3.3x": asking whether a string
+    is present where the real question is how many times. Counting non-overlapping occurrences and
+    requiring one per expectation is the general form of the fix.
+    """
+    pattern = "|".join(pattern_for(f) for f in forms)
+    return len(list(re.finditer(pattern, text, re.IGNORECASE)))
 
 
 def rows(path):
@@ -160,9 +193,11 @@ def derive_comparable(paths):
 def derive_direction(paths):
     data = [r for r in rows(paths["repro"]) if r["metric"] == "operationsPerSecond"]
     faster = [r for r in data if float(r["otherMean"]) > float(r["baselineMean"])]
+    # The prose only gets to say "all" while the counts agree; if they ever diverge the expected
+    # form changes with them rather than the checker quietly accepting the weaker phrasing.
+    forms = all_n_forms(len(data)) if len(faster) == len(data) else n_of_m_forms(len(faster), len(data))
     return (
-        [("throughput comparisons", count_word_forms(len(data))),
-         ("all moving the same way", count_word_forms(len(faster)))],
+        [("throughput comparisons all moving the same way", forms)],
         ["throughput comparisons=%d s3-faster=%d s3-slower=%d"
          % (len(data), len(faster), len(data) - len(faster))],
     )
@@ -218,6 +253,50 @@ def derive_floor_claim(paths):
     return checks, evidence
 
 
+def _heap_facts(paths):
+    data = rows(paths["achieved"])
+    formula_ok = sum(
+        1 for r in data
+        if int(r["heapLimitMb"]) == math.ceil(int(r["sharedMinimumMb"]) * float(r["nominalFactor"])))
+    shared_ok = sum(
+        1 for r in data
+        if int(r["sharedMinimumMb"]) == max(int(r["wksMinimumMb"]), int(r["srvMinimumMb"])))
+    srv_binds = sum(1 for r in data if int(r["srvMinimumMb"]) > int(r["wksMinimumMb"]))
+    return len(data), formula_ok, shared_ok, srv_binds
+
+
+def derive_heap_formula(paths):
+    """Section 5.1's forward argument rests on arithmetic; it is derived here, not asserted there."""
+    total, formula_ok, _, _ = _heap_facts(paths)
+    mismatches = total - formula_ok
+    forms = ["%s rows, %d %s" % (f, mismatches, word)
+             for f in n_of_m_forms(formula_ok, total)
+             for word in ("mismatch", "mismatches")]
+    return (
+        [("rows for which the limit is ceil(shared x factor)", forms)],
+        ["rows=%d, formula holds=%d, mismatches=%d" % (total, formula_ok, mismatches)],
+    )
+
+
+def derive_heap_binding(paths):
+    """Which arm sets the shared minimum. The whole forward claim turns on this being srv.
+
+    Both facts here are '30 of 30', and they sit in one sentence. An expectation of a bare "30 of
+    30" is satisfied by whichever of them the prose still states truthfully, so falsifying the other
+    passes - which is what happened when the binding count was first perturbed to 29 of 30. Each
+    count is therefore bound to the words that state it.
+    """
+    total, _, shared_ok, srv_binds = _heap_facts(paths)
+    return (
+        [("rows where the shared minimum is max(wks, srv)",
+          ["max(wks, srv)` in %s" % f for f in n_of_m_forms(shared_ok, total)]),
+         ("rows where srv is the binding arm",
+          ["binding arm in %s" % f for f in n_of_m_forms(srv_binds, total)])],
+        ["rows=%d, shared == max(wks,srv)=%d" % (total, shared_ok),
+         "srv binds=%d, wks binds=%d" % (srv_binds, total - srv_binds)],
+    )
+
+
 def derive_calibration(paths):
     with open(paths["calibration"], encoding="utf-8") as handle:
         baselines = json.load(handle)["baselines"]
@@ -247,10 +326,23 @@ CLAIMS = [
           "section 6.5: how many throughput ratios clear the resolution floor"),
     Claim("calibration", r"All ten converged and every entry is", derive_calibration,
           "section 5: every calibrated scenario converged"),
+    Claim("heap-formula", r"`heapLimitMb == ceil", derive_heap_formula,
+          "section 5.1: every cell's limit is ceil(shared minimum x nominal factor)"),
+    Claim("heap-binding", r"is the binding arm in", derive_heap_binding,
+          "section 5.1: srv sets the shared minimum in every cell"),
 ]
 
 
 def main():
+    # The document is UTF-8 and this script prints its sentences back. On a cp1252 console that
+    # raises UnicodeEncodeError on the first arrow or dash, which would abort the gate mid-run and
+    # report nothing rather than reporting a result - a checker that dies on the characters of the
+    # thing it checks. Degrade the rendering, never the run.
+    for stream in (sys.stdout, sys.stderr):
+        try:
+            stream.reconfigure(encoding="utf-8", errors="replace")
+        except (AttributeError, ValueError):
+            pass
     parser = argparse.ArgumentParser()
     here = os.path.dirname(os.path.abspath(__file__))
     root = os.path.dirname(here)
@@ -263,6 +355,7 @@ def main():
         "ratio_s3": os.path.join(args.results, "raw", "arm-ratio-stability-s2-vs-s3.csv"),
         "ratio_s4": os.path.join(args.results, "raw", "arm-ratio-stability-s2-vs-s4sdk.csv"),
         "calibration": os.path.join(args.results, "calibration.json"),
+        "achieved": os.path.join(args.results, "raw", "achieved-heap-factors.csv"),
     }
     missing = [p for p in paths.values() if not os.path.isfile(p)]
     if missing:
@@ -291,9 +384,20 @@ def main():
             print("  data   %s" % line)
         print("  doc    :%d %s" % (line_number, sentence[:150]))
         bad = []
+        groups = []
         for label, forms in checks:
-            if not any(matches(f, sentence) for f in forms):
-                bad.append("%s (expected one of %s)" % (label, " / ".join(forms)))
+            key = tuple(forms)
+            for existing in groups:
+                if existing[0] == key:
+                    existing[1].append(label)
+                    break
+            else:
+                groups.append((key, [label]))
+        for forms, labels in groups:
+            found = occurrence_count(forms, sentence)
+            if found < len(labels):
+                bad.append("%s (expected %d occurrence(s) of %s, found %d)"
+                           % (" and ".join(labels), len(labels), " / ".join(forms), found))
         if bad:
             for b in bad:
                 print("  FAIL  prose does not carry %s" % b)

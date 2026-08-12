@@ -254,19 +254,47 @@ PYEOF
 run_case 'variance table drifted' "$TREE" 1 'document row lacks' --results .
 printf '\n'
 
-# B6 -- nothing to audit. The gate must refuse rather than report a PASS over an empty tree, which
-# is the failure mode that produced a false PASS in an earlier step.
-printf 'B6 checkpoints removed, bare invocation -> expect refusal exit 2\n'
+# B6 -- the section 5.1 binding-arm count, which is the claim that silently passed the first version
+# of the prose checker. Two facts in that section share the value "30 of 30", and a presence test was
+# satisfied by whichever one was left truthful, so falsifying the other went undetected. This case
+# exists because that defect was found by perturbation and would not have been found by reading.
+printf 'B6 section 5.1 binding-arm count falsified, CSV untouched -> expect the prose check to name it\n'
 TREE=$(fresh_copy b6)
+"$PY" - "$TREE/docs/design/lxr-port/P0.5-baselines.md" <<'PYEOF'
+import pathlib, sys
+path = pathlib.Path(sys.argv[1])
+lines = path.read_text(encoding="utf-8").splitlines(keepends=True)
+before = "binding arm in 30 of 30"
+after = "binding arm in 29 of 30"
+# The section 9.1 write-up of this very check quotes the string this case perturbs, so a
+# whole-document replace hits two places and a uniqueness guard refuses outright -- which is what
+# happened the first time this case ran. Target the section 5.1 bullet by the claim it states, not
+# by a substring that documentation is free to mention.
+hits = [i for i, line in enumerate(lines)
+        if before in line and "sharedMinimumMb == max(wks, srv)" in line]
+if len(hits) != 1:
+    sys.exit(f"     expected exactly one section 5.1 binding-arm bullet, found {len(hits)}")
+index = hits[0]
+print(f"     perturbed section 5.1 line {index + 1}: {before!r} -> {after!r}")
+print("     the other '30 of 30' on that line is deliberately left true")
+lines[index] = lines[index].replace(before, after, 1)
+path.write_text("".join(lines), encoding="utf-8")
+PYEOF
+run_case 'binding-arm count falsified' "$TREE" 1 'srv is the binding arm' --results .
+
+# B7 -- nothing to audit. The gate must refuse rather than report a PASS over an empty tree, which
+# is the failure mode that produced a false PASS in an earlier step.
+printf 'B7 checkpoints removed, bare invocation -> expect refusal exit 2\n'
+TREE=$(fresh_copy b7)
 removed=$(find "$TREE/docs/design/lxr-port/P0.5-baselines" -maxdepth 1 -name 'p0-5-baselines-*.json' -delete -print | wc -l)
 printf '     removed %s checkpoint file(s), leaving 0\n' "$removed"
 run_case 'refuses with nothing present' "$TREE" 2 'no checkpoint json'
 printf '\n'
 
-# B7 -- a section that contributes no checks and declares no skip. The zero-check guard exists
+# B8 -- a section that contributes no checks and declares no skip. The zero-check guard exists
 # because silence in a section is what makes an unaudited tree look audited.
-printf 'B7 a skip declaration deleted so a section runs no checks silently -> expect zero-check guard\n'
-TREE=$(fresh_copy b7)
+printf 'B8 a skip declaration deleted so a section runs no checks silently -> expect zero-check guard\n'
+TREE=$(fresh_copy b8)
 GATE="$TREE/$GATE_REL"
 before_skips=$(grep -c 'skip_section elected "--no-results' "$GATE" || true)
 "$PY" - "$GATE" <<'PYEOF'
