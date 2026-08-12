@@ -328,6 +328,28 @@ else
         bad "$out"
         note "a documented verb or flag is absent from source; that is F1's shape"
     fi
+
+    # Same rule applied to scripts: a document naming scripts/<x> is claiming <x> ships. Derived by
+    # scanning the document rather than from a list here, so a newly named script is covered the
+    # moment it is mentioned. Both counts are printed rather than only a verdict.
+    named_scripts=$(grep -oE 'scripts/[A-Za-z0-9._-]+\.(sh|py|ps1)' "$DOC" | sed 's|scripts/||' | sort -u)
+    named_count=$(printf '%s\n' "$named_scripts" | grep -c . || true)
+    present_count=0
+    missing=""
+    while IFS= read -r script; do
+        [[ -z "$script" ]] && continue
+        if [[ -f "$SELF_DIR/$script" ]]; then
+            present_count=$((present_count + 1))
+        else
+            missing="$missing $script"
+        fi
+    done <<< "$named_scripts"
+    if [[ -z "$missing" ]]; then
+        ok "document names $named_count script(s), $present_count present, difference $((named_count - present_count))"
+    else
+        bad "document names $named_count script(s), $present_count present, missing:$missing"
+        note "a document that names a script it does not ship is F1's shape in a different place"
+    fi
 fi
 
 # ---------------------------------------------------------------------------
