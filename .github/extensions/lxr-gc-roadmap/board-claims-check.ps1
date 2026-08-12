@@ -447,7 +447,111 @@ foreach ($h in $hist) {
 $replaced5051 = @(($replacedAt.Keys | Where-Object { $_ -match '/(50|51)$' })).Count
 $live5051 = @([regex]::Matches($text, '(?i)\brules?\s+5[01]\b')).Count
 
+# ---------------------------------------------------------------------------
+# The cost of "compute a ratio for every comparable numeric column", measured.
+#
+# A comparison cell here is (scenario, heapFactor, phase) -- collector is the axis being
+# compared, so it cannot also be part of the key. Both arms must carry >=3 valid
+# invocations, and a (cell, column) pair exists only where the column itself has >=3
+# parseable values on BOTH arms; a column present on one arm compares against nothing.
+#
+# Population matters and is asserted in both directions: the pair and undefined counts are
+# invariant, the degenerate count is not, and the union of subset re-runs understates it.
+$METRIC = @(
+    'operationsPerSecond','latencyP50Ms','latencyP99Ms','latencyP999Ms','latencyP9999Ms',
+    'latencyMaxMs','serviceTimeP99Ms','arrivalRatePerSecond','achievedRatePerSecond',
+    'lateFraction','dispatchLagP99Ms','pauseAverageMs','pauseP99Ms','pauseMaxMs',
+    'gen0Collections','gen1Collections','gen2Collections','inducedCollections',
+    'workingSetMb','committedMb')
+
+function RatioDomain ($sessions) {
+    $rows = @()
+    foreach ($s in $sessions) {
+        $csvText = Show-Blob "docs/design/lxr-port/P0.5-baselines/raw/p0-5-baselines-$s-invocations.csv"
+        $rows += @($csvText | ConvertFrom-Csv | Where-Object { $_.valid -eq 'true' })
+    }
+    $arm = @{}
+    foreach ($r in $rows) {
+        $ph = if ($r.runId -like '*latency*') { 'latency' } else { 'throughput' }
+        $k  = '{0}|{1:N1}|{2}|{3}' -f $r.scenario, [double]$r.heapFactor, $ph, $r.collector
+        if (-not $arm.ContainsKey($k)) { $arm[$k] = New-Object System.Collections.ArrayList }
+        [void]$arm[$k].Add($r)
+    }
+    $cells = @{}
+    foreach ($k in $arm.Keys) { $cells[($k -replace '\|(wks|srv)$', '')] = $true }
+    $pairs = 0; $undef = 0; $degen = 0; $well = 0; $byCol = @{}
+    foreach ($c in $cells.Keys) {
+        $wRows = $arm["$c|wks"]; $sRows = $arm["$c|srv"]
+        if (-not $wRows -or -not $sRows -or $wRows.Count -lt 3 -or $sRows.Count -lt 3) { continue }
+        foreach ($m in $METRIC) {
+            $w = @(); $sv = @()
+            foreach ($r in $wRows) { $x = $r.$m; if ($x -and $x.Trim() -and $x -ne 'NA') { $w  += [double]$x } }
+            foreach ($r in $sRows) { $x = $r.$m; if ($x -and $x.Trim() -and $x -ne 'NA') { $sv += [double]$x } }
+            if ($w.Count -lt 3 -or $sv.Count -lt 3) { continue }
+            $pairs++
+            $mw = ($w | Measure-Object -Average).Average
+            if ($mw -eq 0) { $undef++; if ($m -eq 'inducedCollections') { $byCol['induced']++ }; continue }
+            if ((($w | Sort-Object -Unique).Count -eq 1) -and (($sv | Sort-Object -Unique).Count -eq 1)) {
+                $degen++
+                if ($m -eq 'arrivalRatePerSecond') { $byCol['arrival']++ }
+                continue
+            }
+            $well++
+        }
+    }
+    return @{ pairs = $pairs; undef = $undef; degen = $degen; well = $well
+              induced = [int]$byCol['induced']; arrival = [int]$byCol['arrival'] }
+}
+$domS2  = RatioDomain @('s2')
+$domAll = RatioDomain @('s2', 's3', 's4sdk')
+
+# inducedCollections is an assertion, not a measurement: one distinct value over every
+# valid invocation in every session. Counted as rows, which is NOT the same 699 as the
+# well-formed pair count -- the collision rule 84 now carries as its fourth axis.
+$allInvRows = @()
+foreach ($s in @('s2', 's3', 's4sdk')) {
+    $allInvRows += @((Show-Blob "docs/design/lxr-port/P0.5-baselines/raw/p0-5-baselines-$s-invocations.csv") |
+                     ConvertFrom-Csv | Where-Object { $_.valid -eq 'true' })
+}
+$inducedDistinct = @($allInvRows | ForEach-Object { $_.inducedCollections } | Sort-Object -Unique)
+$validInvocations = $allInvRows.Count
+
 $claims = @(
+    @{ name = 'P0.6 amendment: the directive applied literally, s2 population'
+       re   = 'yields \*\*(\d+) \(cell, column\) pairs, of which (\d+) are undefined and (\d+) are well-formed\*\*'
+       sites = 1
+       want = @($domS2.pairs, $domS2.undef, $domS2.well) }
+
+    @{ name = 'P0.6 amendment: inducedCollections is an assertion, not a measurement'
+       re   = 'undefined in (\d+) of (\d+) cells\*\* because the column is the string `0` in \*\*all (\d+) valid invocations'
+       sites = 1
+       want = @($domS2.induced, $domS2.induced, $validInvocations) }
+
+    @{ name = 'P0.6 amendment: the pinned field the directive re-admits'
+       re   = 'contributes (\d+) zero-width intervals\*\*.*?re-admits it (\d+) times'
+       sites = 1
+       want = @($domS2.arrival, $domS2.arrival) }
+
+    @{ name = 'P0.6 amendment: family size against the well-formed count'
+       re   = 'at (\d+) well-formed pairs, roughly (\d+) exclude 1\.000 by chance'
+       sites = 1
+       want = @($domS2.well, [int][Math]::Round($domS2.well * 0.05)) }
+
+    @{ name = 'P0.6 amendment: population invariance, and where it fails'
+       re   = 'invariant to which sessions are included — (\d+) and (\d+) either way'
+       sites = 1
+       want = @($domS2.pairs, $domS2.undef) }
+
+    @{ name = 'P0.6 amendment: the union understates the degeneracy it demonstrates'
+       re   = 'the zero-width count is (\d+) and `arrivalRatePerSecond` contributes (\d+); derived over s2 alone.*?they are \*\*(\d+) and (\d+)\*\*'
+       sites = 1
+       want = @($domAll.degen, $domAll.arrival, $domS2.degen, $domS2.arrival) }
+
+    @{ name = 'rule 84 fourth axis: the two quantities that collided on one integer'
+       re   = 'constant across \*\*(\d+) valid invocations\*\* and, in the same message.*?\*\*(\d+) well-formed pairs\*\*'
+       sites = 1
+       want = @($validInvocations, $domAll.well) }
+
     @{ name = 'rule 88: quote-overlap predicate, false alarms on a healthy document'
        re   = 'only \*\*(\d+) of (\d+)\*\* carry a 5-or-more word verbatim run'
        sites = 1
