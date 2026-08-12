@@ -26,7 +26,7 @@ param([string]$LogDir = "$env:USERPROFILE\.copilot\logs\extensions")
 
 $ErrorActionPreference = 'Stop'
 
-$EXPECTED = @{ Phases = 11; Steps = 54; Fields = 360; Rules = 90 }
+$EXPECTED = @{ Phases = 11; Steps = 54; Fields = 360; Rules = 94 }
 
 $board = Join-Path $PSScriptRoot 'roadmap.md'
 $pass = 0
@@ -73,6 +73,24 @@ if ($rules.Count -ge $EXPECTED.Rules) {
     ok "rule count $($rules.Count) meets the floor of $($EXPECTED.Rules)"
 } else {
     bad "rule count $($rules.Count) is below the floor of $($EXPECTED.Rules); rules have been lost"
+}
+
+Write-Output ''
+Write-Output '== numeral boundaries =='
+# Rule 93. This board states a count of its own occurrences of a literal, and that count
+# is exactly the kind rule 90 warns about: writing the sentence that records it changed it
+# from four/three to six/four. A self-referential figure nothing checks is a figure that
+# silently goes stale on the next edit that happens to contain the literal -- and the
+# literal here, '0 of 69', is a PREFIX of '0 of 693', which is how it went stale the first
+# time. Both boundaries are asserted, because the whole point of the rule is that checking
+# only one of them is what failed.
+$joined = $lines -join "`n"
+$whole = @([regex]::Matches($joined, '0 of 69')).Count
+$term  = @([regex]::Matches($joined, '0 of 69\b')).Count
+if ($whole -eq 6 -and $term -eq 4) {
+    ok "rule 93's self-count holds: '0 of 69' matches $whole whole-text and $term terminated"
+} else {
+    bad "rule 93's self-count is stale: '0 of 69' matches $whole whole-text and $term terminated, where the rule states 6 and 4"
 }
 
 Write-Output ''

@@ -83,6 +83,21 @@ function Apply($name, $lines) {
             $r = $Matches[1]; $d = $false
             foreach ($x in $lines) { if ($x -cmatch ('^' + $r + '\. ') -and -not $d) { $d = $true; continue }; $out.Add($x) }
         }
+        '^selfcount-(\d)$' {
+            # Two payloads that move the counts in DIFFERENT directions, because the whole
+            # content of rule 93 is that the two boundaries fail independently: payload 1
+            # shortens the longer figure so only the whole-text count drops, payload 2
+            # rewrites the literal itself so both drop. A pair that moved them together
+            # would not distinguish the terminated count from the unterminated one, and
+            # this check exists precisely to hold both.
+            $n = [int]$Matches[1]
+            foreach ($x in $lines) {
+                # The extra parentheses are load-bearing: `$out.Add($x -replace 'a', 'b')`
+                # parses as Add() with TWO arguments, not as one replaced string.
+                if ($n -eq 1) { $out.Add(($x -replace '0 of 693', '0 of 700')) }
+                else          { $out.Add(($x -replace '0 of 69',  '0 of 42')) }
+            }
+        }
         '^floor-(\d)$' {
             $n = [int]$Matches[1]
             $drop = @(); for ($i = 0; $i -lt $n; $i++) { $drop += ($hi - $i) }
@@ -173,6 +188,8 @@ $cases = @(
     @{ n = 'ticks-2';         want = 'unbalanced backticks' },
     @{ n = 'apos-1';          want = 'doubled apostrophes' },
     @{ n = 'apos-2';          want = 'doubled apostrophes' },
+    @{ n = 'selfcount-1';     want = "rule 93's self-count" },
+    @{ n = 'selfcount-2';     want = "rule 93's self-count" },
     @{ n = 'pristine';        want = '<none>' }
 )
 
@@ -231,9 +248,31 @@ foreach ($c in $cases) {
 
 Write-Output ''
 if ($unreached.Count -gt 0) { Write-Output ("PERTURBATION NEVER REACHED THE CHECK: " + ($unreached -join ', ')) }
-if ($blind.Count -eq 0) { Write-Output ("COVERAGE: every check fired on both of its distinct payloads (" + $cases.Count + " cases)") }
-else { Write-Output ("COVERAGE GAP: " + ($blind -join ', ')) }
+
+# The case list above is HAND-MAINTAINED, so until now this battery could only report on
+# checks it already knew about: adding a fifteenth check to board-check.ps1 left it
+# uncovered and this script still printed "every check fired", which is the overclaim its
+# sibling board-claims-coverage.ps1 avoids by extracting its patterns from the checker
+# instead of restating them. Restating cannot be removed here -- a perturbation has to be
+# written by hand for each check -- so the count is asserted against the subject instead:
+# board-check reports how many checks it ran, and every one of them must own a distinct
+# label in $cases. This is rule 85 aimed at the battery rather than at the board, and it
+# is what makes "every check" a claim about board-check.ps1 rather than about this list.
+$declared = @($cases | Where-Object { $_.want -ne '<none>' } | ForEach-Object { $_.want } | Select-Object -Unique).Count
+$reported = 0
+$pristineOut = & $bc -LogDir $logs 2>&1
+foreach ($ln in $pristineOut) {
+    $m = [regex]::Match([string]$ln, 'RESULT: \w+ \((\d+) checks\)')
+    if ($m.Success) { $reported = [int]$m.Groups[1].Value }
+}
+$countOk = ($reported -gt 0 -and $declared -eq $reported)
+if (-not $countOk) {
+    Write-Output ("COVERAGE INCOMPLETE: board-check runs $reported check(s) but this battery declares payloads for $declared; a check was added without a case")
+}
+
+if ($blind.Count -eq 0 -and $countOk) { Write-Output ("COVERAGE: every check fired on both of its distinct payloads (" + $cases.Count + " cases, " + $declared + " checks)") }
+elseif ($blind.Count -gt 0) { Write-Output ("COVERAGE GAP: " + ($blind -join ', ')) }
 
 Remove-Item $work -Recurse -Force
-if ($blind.Count -gt 0 -or $unreached.Count -gt 0) { exit 1 }
+if ($blind.Count -gt 0 -or $unreached.Count -gt 0 -or -not $countOk) { exit 1 }
 exit 0

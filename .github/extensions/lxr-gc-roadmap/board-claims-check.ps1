@@ -501,11 +501,16 @@ function RatioDomain ($sessions) {
     }
     $arm = @{}
     foreach ($r in $rows) {
-        $ph = if ($r.runId -like '*latency*') { 'latency' } else { 'throughput' }
-        $k  = '{0}|{1:N1}|{2}|{3}' -f $r.scenario, [double]$r.heapFactor, $ph, $r.collector
+        # Rule 91. The phase is (runId, mode), not either alone. A run executes both
+        # passes, so 30 of the 699 valid rows carry mode=latency under a .throughput
+        # runId; keying on mode pools those two phases, and keying on runId alone pools
+        # every session into one arm. Both wrong keys are detected below rather than
+        # argued about: they produce arms of 10 and 13 where the design produces 5.
+        $k  = '{0}|{1:N1}|{2}|{3}|{4}' -f $r.scenario, [double]$r.heapFactor, $r.runId, $r.mode, $r.collector
         if (-not $arm.ContainsKey($k)) { $arm[$k] = New-Object System.Collections.ArrayList }
         [void]$arm[$k].Add($r)
     }
+    $armSizes = @($arm.Keys | ForEach-Object { $arm[$_].Count } | Sort-Object -Unique)
     $cells = @{}
     foreach ($k in $arm.Keys) { $cells[($k -replace '\|(wks|srv)$', '')] = $true }
     $pairs = 0; $undef = 0; $degen = 0; $well = 0; $byCol = @{}
@@ -529,10 +534,38 @@ function RatioDomain ($sessions) {
         }
     }
     return @{ pairs = $pairs; undef = $undef; degen = $degen; well = $well
-              induced = [int]$byCol['induced']; arrival = [int]$byCol['arrival'] }
+              induced = [int]$byCol['induced']; arrival = [int]$byCol['arrival']
+              armSizes = $armSizes }
 }
 $domS2  = RatioDomain @('s2')
 $domAll = RatioDomain @('s2', 's3', 's4sdk')
+
+# Rule 91, as an instrument rather than an assertion. The design produces arms of five
+# invocations, and eight of three -- which are not scattered damage but a single truncated
+# run, p05.s4sdk.sdk.throughput, covering four scenarios at 2.0x, and BALANCED across the
+# two collectors, which is why the short arms never produce an unequal comparison. Every
+# unequal-arm cell in the artifacts comes from invalidated invocations instead. Any size
+# other than five or three means
+# the key is pooling something -- two phases, or two sessions -- and every figure derived
+# from it is a figure about a population that was never run. This is not hypothetical: the
+# keying this function used until now produced 8 arms of 10 and 8 of 13 on the union, and
+# with them a well-formed count of 699 that collided with the 699 valid invocations and was
+# recorded on this board as a finding. The collision was manufactured by the key.
+$DESIGN_ARM_SIZES = @(3, 5)
+$guard = 0
+foreach ($pop in @(@{ n = 's2'; d = $domS2 }, @{ n = 'union'; d = $domAll })) {
+    $badArms = @($pop.d.armSizes | Where-Object { $DESIGN_ARM_SIZES -notcontains $_ })
+    $seen = ($pop.d.armSizes | Sort-Object) -join ','
+    if ($badArms.Count -eq 0) {
+        # Same reason the section 6.4 controls do not call ok: this is a property of the
+        # artifacts, not a sentence on the board, and counting it as a claim would break the
+        # coverage script's invariant that the checker reports as many claims as it defines.
+        $guard++
+        Write-Output "  ok    rule 91 guard: $($pop.n) arm sizes [$seen] are all ones the design can produce"
+    } else {
+        bad "rule 91 guard: $($pop.n) arm sizes [$seen] include $($badArms -join ',') which the design cannot produce; the key is pooling"
+    }
+}
 
 # inducedCollections is an assertion, not a measurement: one distinct value over every
 # valid invocation in every session. Counted as rows, which is NOT the same 699 as the
@@ -570,26 +603,124 @@ for ($m = 1; $m -le 5000; $m++) { if ($FLOOR_6 -le (0.05 / $m)) { $FAMILY_6 = $m
 # How far the literal directive sits below the floor, in multiples.
 $SHORTFALL_693 = [int][Math]::Round($EXACT_FLOOR / (0.05 / $domS2.well))
 
+# ---------------------------------------------------------------------------
+# Rule 91 -- the keying defect, and what it would have cost.
+#
+# The tell is an arm size the design cannot produce. The consequence is that rule 89's
+# floor is a function of n, so a pooled arm size makes the floor look reachable when it
+# is not: at 10-versus-10 a 693-wide family clears, at the design 5-versus-5 it is short
+# by a factor of 55. Both floors are derived, not quoted.
+$CROSSING_ROWS = @($allInvRows | Where-Object {
+    $_.runId -like '*throughput*' -and $_.mode -eq 'latency' }).Count
+$armHist = @{}
+foreach ($r in $allInvRows) {
+    $k = '{0}|{1:N1}|{2}|{3}|{4}' -f $r.scenario, [double]$r.heapFactor, $r.runId, $r.mode, $r.collector
+    $armHist[$k] = [int]$armHist[$k] + 1
+}
+$ARMS_OF_5 = @($armHist.Values | Where-Object { $_ -eq 5 }).Count
+$ARMS_OF_3 = @($armHist.Values | Where-Object { $_ -eq 3 }).Count
+$FLOOR_10v10   = 1.0 / (Choose 20 10)
+$NEED_693      = 0.05 / $domS2.well
+
+# Rule 92 -- the rank is basis-invariant, the values ranked are not.
+function ArmSeries ([string]$col, [string]$basis, [bool]$designKey) {
+    $ser = @{}
+    foreach ($r in $allInvRows) {
+        if ($r.mode -ne 'latency') { continue }
+        if ($designKey -and ($r.runId -notlike '*.latency')) { continue }
+        $v = $r.$col
+        if (-not $v -or -not $v.Trim() -or $v -eq 'NA') { continue }
+        $k = '{0}|{1}|{2:N1}' -f $r.scenario, $r.collector, [double]$r.heapFactor
+        if (-not $ser.ContainsKey($k)) { $ser[$k] = New-Object System.Collections.ArrayList }
+        [void]$ser[$k].Add(@{ i = [int]$r.invocation; v = [double]$v })
+    }
+    $out = @()
+    foreach ($k in @($ser.Keys)) {
+        if ($k -notlike '*|1.3') { continue }
+        $hi = $k -replace '\|1\.3$', '|6.0'
+        if (-not $ser.ContainsKey($hi)) { continue }
+        $pair = @()
+        foreach ($kk in @($k, $hi)) {
+            $s = @($ser[$kk] | Sort-Object { $_.i })
+            $pair += if ($basis -eq 'last') { $s[-1].v } else { ($s | ForEach-Object { $_.v } | Measure-Object -Average).Average }
+        }
+        if ($pair[0] -eq 0) { continue }
+        $pct = ($pair[1] / $pair[0] - 1) * 100
+        $out += @{ key = ($k -replace '\|1\.3$', ''); pct = $pct; mag = [Math]::Abs($pct) }
+    }
+    return @($out | Sort-Object { -$_.mag })
+}
+$rankAspnet = @()
+foreach ($basis in @('last', 'mean')) {
+    foreach ($dk in @($true, $false)) {
+        $s = ArmSeries 'latencyP99Ms' $basis $dk
+        $rankAspnet += 1 + [array]::IndexOf(@($s | ForEach-Object { $_.key }), 'aspnet-request-load|wks')
+    }
+}
+$RANK_ASPNET   = @($rankAspnet | Sort-Object -Unique)
+$RANK_SERIES_N = (ArmSeries 'latencyP99Ms' 'last' $true).Count
+$lopLast = ArmSeries 'latencyP99Ms' 'last' $true
+$lopMean = ArmSeries 'latencyP99Ms' 'mean' $true
+$LOP_LAST_PCT  = @($lopLast | Where-Object { $_.key -eq 'large-object-pressure|wks' })[0].pct
+$LOP_MEAN_PCT  = @($lopMean | Where-Object { $_.key -eq 'large-object-pressure|wks' })[0].pct
+$LOP_LAST_RANK = 1 + [array]::IndexOf(@($lopLast | ForEach-Object { $_.key }), 'large-object-pressure|wks')
+$LOP_MEAN_RANK = 1 + [array]::IndexOf(@($lopMean | ForEach-Object { $_.key }), 'large-object-pressure|wks')
+
 $claims = @(
     @{ name = 'rule 89: the floor of the exact test at five against five'
-       re   = 'enumerates `C\(10,5\) = (\d+)` arrangements, so the smallest attainable p is \*\*1/(\d+) = ([\d.]+)\*\* and the largest usable one is (\d+)/'
+       re   = 'enumerates `C\(10,5\) = (\d+(?:\.\d+)?)` arrangements, so the smallest attainable p is \*\*1/(\d+(?:\.\d+)?) = ([\d.]+)\*\* and the largest usable one is (\d+(?:\.\d+)?)/'
        sites = 1
        want = @($ARRANGEMENTS_5v5, $ARRANGEMENTS_5v5, [Math]::Round($EXACT_FLOOR,6), $LARGEST_USABLE_K) }
 
     @{ name = 'rule 89: the largest interpreted family the design admits'
-       re   = 'at \*\*m = (\d+)\*\* that is ([\d.e-]+) and the floor clears it; at \*\*m = (\d+)\*\* it is ([\d.e-]+) and the floor does not'
+       re   = 'at \*\*m = (\d+(?:\.\d+)?)\*\* that is ([\d.e-]+) and the floor clears it; at \*\*m = (\d+(?:\.\d+)?)\*\* it is ([\d.e-]+) and the floor does not'
        sites = 1
        want = @($FAMILY_5, (0.05 / $FAMILY_5), ($FAMILY_5 + 1), (0.05 / ($FAMILY_5 + 1))) }
 
     @{ name = 'rule 89: how far the literal directive sits below the floor'
-       re   = 'over (\d+) well-formed pairs would need ([\d.e-]+), which is \*\*(\d+)\*\* times below the floor'
+       re   = 'over (\d+(?:\.\d+)?) well-formed pairs would need ([\d.e-]+), which is \*\*(\d+(?:\.\d+)?)\*\* times below the floor'
        sites = 1
        want = @($domS2.well, (0.05 / $domS2.well), $SHORTFALL_693) }
 
     @{ name = 'rule 89: the escape at six invocations per arm'
-       re   = '`C\(12,6\) = (\d+)` moves the floor to ([\d.e-]+) and the budget to \*\*(\d+)\*\*'
+       re   = '`C\(12,6\) = (\d+(?:\.\d+)?)` moves the floor to ([\d.e-]+) and the budget to \*\*(\d+(?:\.\d+)?)\*\*'
        sites = 1
        want = @($ARRANGEMENTS_6v6, $FLOOR_6, $FAMILY_6) }
+
+    @{ name = 'rule 91: the rows on which mode and runId disagree'
+       re   = '\*\*(\d+(?:\.\d+)?) of the (\d+(?:\.\d+)?) valid rows carry `mode=latency` under a `\.throughput` runId\*\*'
+       sites = 1
+       want = @($CROSSING_ROWS, $validInvocations) }
+
+    @{ name = 'rule 91: the design arm sizes, and the pooled sizes that betray the key'
+       re   = 'arms of \*\*10 and 13\*\* where the design produces \*\*(\d+(?:\.\d+)?)\*\*.*?the population is \*\*(\d+(?:\.\d+)?) arms of 5 and (\d+(?:\.\d+)?) of 3'
+       sites = 1
+       want = @(5, $ARMS_OF_5, $ARMS_OF_3) }
+
+    # The whole point of rule 91: the pooled key does not perturb the conclusion, it
+    # REVERSES it. Both floors are computed from Choose, so this claim fails if either the
+    # arithmetic or the board drifts.
+    @{ name = 'rule 91: the pooled arm size would have made rule 86 look achievable'
+       re   = 'the floor reads \*\*([\d.e+-]+)\*\* against the \*\*([\d.e+-]+)\*\* a (\d+(?:\.\d+)?)-wide family needs.*?it is \*\*([\d.e+-]+)\*\*, \*\*([\d.]+)x\*\* short'
+       sites = 1
+       want = @($FLOOR_10v10, $NEED_693, $domS2.well, $EXACT_FLOOR, $SHORTFALL_693) }
+
+    @{ name = 'rule 92: the rank that survives every basis'
+       re   = 'ranking `aspnet-request-load`/wks \*\*(\d+(?:\.\d+)?)th of (\d+(?:\.\d+)?)\*\* arm-series.*?that rank is \*\*(\d+(?:\.\d+)?) of (\d+(?:\.\d+)?) under all four\*\*'
+       sites = 1
+       want = @($RANK_ASPNET[0], $RANK_SERIES_N, $RANK_ASPNET[0], $RANK_SERIES_N) }
+
+    @{ name = 'rule 92: the illustration that inverts under the published basis'
+       re   = 'quoted at \*\*(-[\d.]+)%\*\*, its value over means, where it ranks \*\*(\d+(?:\.\d+)?)rd of (\d+(?:\.\d+)?)\*\*.*?it is \*\*\+([\d.]+)%\*\*, ranking \*\*(\d+(?:\.\d+)?)th of (\d+(?:\.\d+)?)\*\*'
+       sites = 1
+       want = @($LOP_MEAN_PCT, $LOP_MEAN_RANK, $RANK_SERIES_N,
+                $LOP_LAST_PCT, $LOP_LAST_RANK, $RANK_SERIES_N) }
+
+    @{ name = 'P0.6 amendment: the union under the design key is a different instrument'
+       re   = 'it is \*\*([\d,]+(?:\.\d+)?) pairs, (\d+(?:\.\d+)?) undefined and (\d+(?:\.\d+)?) well-formed\*\* against s2\u2019s \*\*(\d+(?:\.\d+)?), (\d+(?:\.\d+)?) and (\d+(?:\.\d+)?)\*\*'
+       sites = 1
+       want = @($domAll.pairs, $domAll.undef, $domAll.well,
+                $domS2.pairs, $domS2.undef, $domS2.well) }
 
     # "Three orders of magnitude past the budget" was written, not computed; it is 1.76.
     # Gating the multiple rather than a vague magnitude is the only version of this
@@ -600,109 +731,104 @@ $claims = @(
        want = @(($domS2.well / $FAMILY_5), ($domAll.well / $FAMILY_5)) }
 
     @{ name = 'P0.6 amendment: the budget the design must fit, restated in the entry'
-       re   = 'can hold at most \*\*(\d+) comparisons\*\* before no cell can be significant'
+       re   = 'can hold at most \*\*(\d+(?:\.\d+)?) comparisons\*\* before no cell can be significant'
        sites = 1
        want = @($FAMILY_5) }
 
     @{ name = 'P0.6 amendment: the arrangement-level hazard is real and currently vacuous'
-       re   = 'exactly (\d+) of (\d+) arrangements goes undefined in that case.*?coincide on the committed data at \*\*(\d+) of (\d+)\*\*'
+       re   = 'exactly (\d+(?:\.\d+)?) of (\d+(?:\.\d+)?) arrangements goes undefined in that case.*?coincide on the committed data at \*\*(\d+(?:\.\d+)?) of (\d+(?:\.\d+)?)\*\*'
        sites = 1
        want = @(1, $ARRANGEMENTS_5v5, 0, $domS2.well) }
 
     @{ name = 'P0.6 amendment: the directive applied literally, s2 population'
-       re   = 'yields \*\*(\d+) \(cell, column\) pairs, of which (\d+) are undefined and (\d+) are well-formed\*\*'
+       re   = 'yields \*\*(\d+(?:\.\d+)?) \(cell, column\) pairs, of which (\d+(?:\.\d+)?) are undefined and (\d+(?:\.\d+)?) are well-formed\*\*'
        sites = 1
        want = @($domS2.pairs, $domS2.undef, $domS2.well) }
 
     @{ name = 'P0.6 amendment: inducedCollections is an assertion, not a measurement'
-       re   = 'undefined in (\d+) of (\d+) cells\*\* because the column is the string `0` in \*\*all (\d+) valid invocations'
+       re   = 'undefined in (\d+(?:\.\d+)?) of (\d+(?:\.\d+)?) cells\*\* because the column is the string `0` in \*\*all (\d+(?:\.\d+)?) valid invocations'
        sites = 1
        want = @($domS2.induced, $domS2.induced, $validInvocations) }
 
     @{ name = 'P0.6 amendment: the pinned field the directive re-admits'
-       re   = 'contributes (\d+) zero-width intervals\*\*.*?re-admits it (\d+) times'
+       re   = 'contributes (\d+(?:\.\d+)?) zero-width intervals\*\*.*?re-admits it (\d+(?:\.\d+)?) times'
        sites = 1
        want = @($domS2.arrival, $domS2.arrival) }
 
     @{ name = 'P0.6 amendment: family size against the well-formed count'
-       re   = 'at (\d+) well-formed pairs, roughly (\d+) exclude 1\.000 by chance'
+       re   = 'at (\d+(?:\.\d+)?) well-formed pairs, roughly (\d+(?:\.\d+)?) exclude 1\.000 by chance'
        sites = 1
        want = @($domS2.well, [int][Math]::Round($domS2.well * 0.05)) }
 
-    @{ name = 'P0.6 amendment: population invariance, and where it fails'
-       re   = 'invariant to which sessions are included — (\d+) and (\d+) either way'
-       sites = 1
-       want = @($domS2.pairs, $domS2.undef) }
-
     @{ name = 'P0.6 amendment: the union understates the degeneracy it demonstrates'
-       re   = 'the zero-width count is (\d+) and `arrivalRatePerSecond` contributes (\d+); derived over s2 alone.*?they are \*\*(\d+) and (\d+)\*\*'
+       re   = 'the zero-width count is (\d+(?:\.\d+)?) and `arrivalRatePerSecond` contributes (\d+(?:\.\d+)?); derived over s2 alone.*?they are \*\*(\d+(?:\.\d+)?) and (\d+(?:\.\d+)?)\*\*'
        sites = 1
        want = @($domAll.degen, $domAll.arrival, $domS2.degen, $domS2.arrival) }
 
     @{ name = 'rule 84 fourth axis: the two quantities that collided on one integer'
-       re   = 'constant across \*\*(\d+) valid invocations\*\* and, in the same message.*?\*\*(\d+) well-formed pairs\*\*'
+       re   = 'constant across \*\*(\d+(?:\.\d+)?) valid invocations\*\* and, in the same message.*?\*\*(\d+(?:\.\d+)?) well-formed pairs\*\*'
        sites = 1
        want = @($validInvocations, $domAll.well) }
 
     @{ name = 'rule 88: quote-overlap predicate, false alarms on a healthy document'
-       re   = 'only \*\*(\d+) of (\d+)\*\* carry a 5-or-more word verbatim run'
+       re   = 'only \*\*(\d+(?:\.\d+)?) of (\d+(?:\.\d+)?)\*\* carry a 5-or-more word verbatim run'
        sites = 1
        want = @($citeQuote, $citeOccur) }
 
     @{ name = 'rule 88: the citations the predicate would have flagged are correct'
-       re   = 'independently verified as \*\*(\d+) of (\d+) distinct rules correct\*\*'
+       re   = 'independently verified as \*\*(\d+(?:\.\d+)?) of (\d+(?:\.\d+)?) distinct rules correct\*\*'
        sites = 1
        want = @($citeDistinct, $citeDistinct) }
 
     @{ name = 'rule 88: append-only predicate, extensions against replacements'
-       re   = 'across the \*\*(\d+)\*\* commits touching this board up to `([0-9a-f]+)`, \*\*(\d+)\*\* edits extend a rule and \*\*(\d+)\*\* replace text in place'
+       re   = 'across the \*\*(\d+(?:\.\d+)?)\*\* commits touching this board up to `([0-9a-f]+)`, \*\*(\d+(?:\.\d+)?)\*\* edits extend a rule and \*\*(\d+(?:\.\d+)?)\*\* replace text in place'
        sites = 1
        want = @($hist.Count, $HIST_PIN, $extends, $replaces) }
 
     # Rule 90 states the drift that made the pin necessary, so the drift itself is derived
     # rather than remembered: walk the SAME history one commit further and show the count move.
     @{ name = 'rule 90: the unrelated commit that falsified a correct figure'
-       re   = 'the one after it, `([0-9a-f]+)`, appended rule 84.s fourth axis in place, which is an extension, and the count became (\d+)'
+       re   = 'the one after it, `([0-9a-f]+)`, appended rule 84.s fourth axis in place, which is an extension, and the count became (\d+(?:\.\d+)?)'
        sites = 1
        want = @($DRIFT_COMMIT, $extendsAfter) }
 
     @{ name = 'P0.6 post-merge: the one decidable residue, measured'
-       re   = 'every cited rule number must exist on the board\*\*.{0,6}currently (\d+) dangling'
+       re   = 'every cited rule number must exist on the board\*\*.{0,6}currently (\d+(?:\.\d+)?) dangling'
        sites = 1
        want = @($citeDangling) }
 
     @{ name = 'P0.6 post-merge: the single identity change and its blast radius'
-       re   = 'rules \*\*(\d+) and (\d+) were replaced\*\* at `be5bc610e00`.*?with \*\*(\d+)\*\* live citations'
+       re   = 'rules \*\*(\d+(?:\.\d+)?) and (\d+(?:\.\d+)?) were replaced\*\* at `be5bc610e00`.*?with \*\*(\d+(?:\.\d+)?)\*\* live citations'
        sites = 1
        want = @(50, 51, $live5051) }
 
     @{ name = 'rule 83: latencyP99Ms coverage by phase, published JSON'
-       re   = 'is populated in \*\*(\d+) of (\d+)\*\* latency-phase rows of the published JSON, against \*\*(\d+) of (\d+)\*\*'
+       re   = 'is populated in \*\*(\d+(?:\.\d+)?) of (\d+(?:\.\d+)?)\*\* latency-phase rows of the published JSON, against \*\*(\d+(?:\.\d+)?) of (\d+(?:\.\d+)?)\*\*'
        sites = 1
        want = @($latP99, $lat.Count, $thrP99, $thrEx.Count) }
 
     @{ name = 'rule 84: the figure the weak claim rested on, published JSON'
-       re   = 'being \*\*(\d+) of (\d+)\*\* in the published JSON'
+       re   = 'being \*\*(\d+(?:\.\d+)?) of (\d+(?:\.\d+)?)\*\* in the published JSON'
        sites = 1
        want = @($latP99, $lat.Count) }
 
     @{ name = 'rule 84: the figure that settles it, per-invocation CSV'
-       re   = 'CSV settles it properly at \*\*(\d+) of (\d+)\*\* latency-phase against \*\*(\d+) of (\d+)\*\* throughput-phase'
+       re   = 'CSV settles it properly at \*\*(\d+(?:\.\d+)?) of (\d+(?:\.\d+)?)\*\* latency-phase against \*\*(\d+(?:\.\d+)?) of (\d+(?:\.\d+)?)\*\* throughput-phase'
        sites = 1
        want = @($csvLatP99, $csvLat.Count, $csvThrP99, $csvThr.Count) }
 
     @{ name = 'P0.6 directive: published JSON coverage'
-       re   = 'present in \*\*(\d+) of (\d+)\*\* latency-phase, \*\*(\d+) of (\d+)\*\* throughput-phase excluding'
+       re   = 'present in \*\*(\d+(?:\.\d+)?) of (\d+(?:\.\d+)?)\*\* latency-phase, \*\*(\d+(?:\.\d+)?) of (\d+(?:\.\d+)?)\*\* throughput-phase excluding'
        sites = 1
        want = @($latP99, $lat.Count, $thrP99, $thrEx.Count) }
 
     @{ name = 'P0.6 directive: per-invocation CSV coverage'
-       re   = 'settles it:\*\* \*\*(\d+) of (\d+)\*\* latency-phase rows, \*\*(\d+) of (\d+)\*\* throughput-phase'
+       re   = 'settles it:\*\* \*\*(\d+(?:\.\d+)?) of (\d+(?:\.\d+)?)\*\* latency-phase rows, \*\*(\d+(?:\.\d+)?) of (\d+(?:\.\d+)?)\*\* throughput-phase'
        sites = 1
        want = @($csvLatP99, $csvLat.Count, $csvThrP99, $csvThr.Count) }
 
     @{ name = 'rule 84: the ambiguity surface between the two artifacts'
-       re   = "of the CSV's (\d+) columns, \*\*(\d+) appear in the JSON"
+       re   = "of the CSV's (\d+(?:\.\d+)?) columns, \*\*(\d+(?:\.\d+)?) appear in the JSON"
        sites = 1
        want = @($csvCols.Count, $shared) }
 
@@ -721,7 +847,7 @@ $claims = @(
        sites = 1
        want = @([Math]::Round($maxNine, 3)) }
     @{ name = 'rule 80: rows carrying the fallback pauseSource label'
-       re   = '(\d+) of (\d+) rows are \*labelled\*'
+       re   = '(\d+(?:\.\d+)?) of (\d+(?:\.\d+)?) rows are \*labelled\*'
        sites = 1
        want = @($fallback, $rows.Count) }
 
@@ -736,7 +862,7 @@ $claims = @(
        want = @($phPublished[0], $phPublished[1], $phPublished[2]) }
 
     @{ name = 'P0.6 amendment: exact permutation test over the per-invocation CSV'
-       re   = 'point ratios of \*\*(\d+\.\d+)x\*\*, \*\*(\d+\.\d+)x\*\* and \*\*(\d+\.\d+)x\*\* at p = \*\*(\d+)/(\d+)\*\*, \*\*(\d+)/(\d+)\*\* and \*\*(\d+)/(\d+)\*\*'
+       re   = 'point ratios of \*\*(\d+\.\d+)x\*\*, \*\*(\d+\.\d+)x\*\* and \*\*(\d+\.\d+)x\*\* at p = \*\*(\d+(?:\.\d+)?)/(\d+(?:\.\d+)?)\*\*, \*\*(\d+(?:\.\d+)?)/(\d+(?:\.\d+)?)\*\* and \*\*(\d+(?:\.\d+)?)/(\d+(?:\.\d+)?)\*\*'
        sites = 1
        want = @($phRatio[0], $phRatio[1], $phRatio[2], $phPnum[0], $phPden, $phPnum[1], $phPden, $phPnum[2], $phPden) }
 
@@ -761,23 +887,23 @@ $claims = @(
        want = @($aspPauP[0], $aspPauP[1], $aspPauP[2]) }
 
     @{ name = 'rule 87: the control rows the extension had to reproduce, s2 CSV'
-       re   = '`operationsPerSecond` (\d+) / (\d+\.\d+)% / (\d+\.\d+)% / (\d+) of (\d+) and `latencyP99Ms` (\d+) / (\d+\.\d+)% / (\d+\.\d+)% / (\d+) of (\d+)'
+       re   = '`operationsPerSecond` (\d+(?:\.\d+)?) / (\d+\.\d+)% / (\d+\.\d+)% / (\d+(?:\.\d+)?) of (\d+(?:\.\d+)?) and `latencyP99Ms` (\d+(?:\.\d+)?) / (\d+\.\d+)% / (\d+\.\d+)% / (\d+(?:\.\d+)?) of (\d+(?:\.\d+)?)'
        sites = 1
        want = @($ctlThr.Cells, $ctlThr.Median, $ctlThr.Max, $ctlThr.Above, $ctlThr.Cells,
                 $ctlLat.Cells, $ctlLat.Median, $ctlLat.Max, $ctlLat.Above, $ctlLat.Cells) }
 
     @{ name = 'rule 87: what the WRONG population produced, three sessions unioned'
-       re   = '\(median (\d+\.\d+)%, max (\d+\.\d+)%, (\d+) above the floor instead of 0\)'
+       re   = '\(median (\d+\.\d+)%, max (\d+\.\d+)%, (\d+(?:\.\d+)?) above the floor instead of 0\)'
        sites = 1
        want = @($badPop.Median, $badPop.Max, $badPop.Above) }
 
     @{ name = 'P0.6 gap: the section 6.4 row that does not exist, derived under its convention'
-       re   = '`pauseP99Ms` is \*\*(\d+) cells, median within-cell CV (\d+\.\d+)%, max (\d+\.\d+)%, (\d+) of (\d+)'
+       re   = '`pauseP99Ms` is \*\*(\d+(?:\.\d+)?) cells, median within-cell CV (\d+\.\d+)%, max (\d+\.\d+)%, (\d+(?:\.\d+)?) of (\d+(?:\.\d+)?)'
        sites = 1
        want = @($vPause.Cells, $vPause.Median, $vPause.Max, $vPause.Above, $vPause.Cells) }
 
     @{ name = 'P0.6 gap: the published pause column is one invocation, not a mean'
-       re   = 'equals the last valid invocation in \*\*(\d+) of (\d+)\*\* cells and the column mean in \*\*(\d+) of (\d+)\*\*'
+       re   = 'equals the last valid invocation in \*\*(\d+(?:\.\d+)?) of (\d+(?:\.\d+)?)\*\* cells and the column mean in \*\*(\d+(?:\.\d+)?) of (\d+(?:\.\d+)?)\*\*'
        sites = 1
        want = @($eqLast, $totPause, $eqMean, $totPause) }
 
@@ -787,7 +913,7 @@ $claims = @(
        want = @($aspLatLo, $aspLatHi, $aspThrLo, $aspThrHi) }
 
     @{ name = 'P0.6 post-merge: the factor Kestrel cannot explain because it is constant'
-       re   = 'a factor of \*\*(\d+)x to (\d+)x\*\* with Kestrel unchanged'
+       re   = 'a factor of \*\*(\d+(?:\.\d+)?)x to (\d+(?:\.\d+)?)x\*\* with Kestrel unchanged'
        sites = 1
        want = @($kesLo, $kesHi) }
 
@@ -802,7 +928,7 @@ $claims = @(
        want = @($nearestR, $gapNear) }
 
     @{ name = 'P0.6 post-merge: how far the superlative actually reaches'
-       re   = 'holds against (\d+) of the (\d+) other scenarios and fails against (\d+)'
+       re   = 'holds against (\d+(?:\.\d+)?) of the (\d+(?:\.\d+)?) other scenarios and fails against (\d+(?:\.\d+)?)'
        sites = 1
        want = @($twoOrd, $others.Count, $notTwo) }
 )
@@ -834,14 +960,41 @@ foreach ($c in $claims) {
     $badOnes = @()
     foreach ($x in $m) {
         for ($g = 1; $g -lt $x.Groups.Count; $g++) {
-            $litRaw = $x.Groups[$g].Value
+            $gr = $x.Groups[$g]
+            $litRaw = $gr.Value
+            # A capture group is a WINDOW, and a corrupted board can carry a value wider
+            # than the window the pattern opened for it. `([\d,]+)` reading a board that
+            # says "1019.11" captures "1019", and the checker then reports the truncation
+            # as though it were the board's figure -- so a corruption that changed the
+            # meaning would be quoted back as something else, and "1,018.5 pairs" would
+            # have passed outright. This is the third instance of one class: a capture
+            # narrower than the space of values the text could hold (negatives excluded by
+            # a `^\d+` shape test; thousands separators; now decimals). Widening 51
+            # patterns would fix the instances and leave the class, so instead every
+            # numeric capture is expanded here to the full numeral it sits inside, and the
+            # comparator is handed what the board actually says. Expansion is asymmetric on
+            # purpose: leftward over digits and separators, but rightward only over digits
+            # and a following decimal fraction -- never over a comma, because "870, 92" is
+            # two figures and must not merge into one.
+            if ($litRaw -match '^-?[\d,]*\d$') {
+                $s = $gr.Index
+                $e = $gr.Index + $gr.Length
+                while ($s -gt 0 -and $text[$s - 1] -match '[\d,]') { $s-- }
+                if ($s -gt 0 -and $text[$s - 1] -eq '-') { $s-- }
+                while ($e -lt $text.Length -and $text[$e] -match '\d') { $e++ }
+                if (($e + 1) -lt $text.Length -and $text[$e] -eq '.' -and $text[$e + 1] -match '\d') {
+                    $e++
+                    while ($e -lt $text.Length -and $text[$e] -match '\d') { $e++ }
+                }
+                $litRaw = $text.Substring($s, $e - $s)
+            }
             $exp = $c.want[$g - 1]
             # Not every gated literal is a quantity. Rule 90's whole content is that a
             # self-referential count is only meaningful beside the revision it was taken
             # over, so the pin itself has to be gated -- otherwise the hash in the prose
             # and the hash the walk actually used could drift apart and every number below
             # would still agree. A non-numeric expectation is compared verbatim.
-            if (([string]$exp) -notmatch '^\d+(\.\d+)?([eE][+-]?\d+)?$') {
+            if (([string]$exp) -notmatch '^-?\d+(\.\d+)?([eE][+-]?\d+)?$') {
                 # Same SHAPE as the numeric message below, deliberately: the coverage
                 # battery proves a perturbation arrived by looking for "says <payload> "
                 # in this output, so a message that quotes the literal differently would
@@ -854,8 +1007,15 @@ foreach ($c in $claims) {
             }
             if ($WORDS.ContainsKey($litRaw)) {
                 $lit = $WORDS[$litRaw]
-            } elseif ($litRaw -match '^\d+(\.\d+)?([eE][+-]?\d+)?$') {
+            } elseif ($litRaw -match '^-?\d+(\.\d+)?([eE][+-]?\d+)?$') {
                 $lit = [double]$litRaw
+            } elseif ($litRaw -match '^\d{1,3}(,\d{3})+$') {
+                # The board writes four-digit counts with a thousands separator, and until a
+                # gated figure crossed 1,000 nothing here had to read one. It would not have
+                # failed loudly: "1,018" is neither a number nor a count word, so it lands in
+                # the branch below and reports corruption. Only the grouped shape is
+                # normalised, so "1,2,3" still fails rather than silently becoming 123.
+                $lit = [double]($litRaw -replace ',', '')
             } else {
                 # An unrecognised count word must fail rather than throw or coerce. Widening
                 # the alternation to catch corruption is only useful if what it catches is
@@ -866,12 +1026,23 @@ foreach ($c in $claims) {
             # An ABSOLUTE tolerance alone cannot discriminate small-magnitude figures: at
             # 0.001 absolute, a board claiming 9.9e-5 would agree with an artifact giving
             # 7.2e-5, a 37% error passing as a match. Rule 89's alpha values live exactly
-            # there. So both bounds must hold, making the effective tolerance
-            # min(0.001, 0.5% of expected) -- strictly tighter everywhere, never looser, so
-            # no figure that passed under the old rule is loosened by this one.
-            $diff = [Math]::Abs([double]$lit - [double]$exp)
-            $agrees = if ([double]$exp -eq 0) { [double]$lit -eq 0 }
-                      else { ($diff -le 0.001) -and (($diff / [Math]::Abs([double]$exp)) -le 0.005) }
+            # there. But a fixed absolute bound is also wrong in the other direction: a
+            # percentage the board states to one decimal can never be within 0.001 of a
+            # derived -82.2738, so a correctly-rounded figure failed. The test that is right
+            # at both ends is a ROUND TRIP -- the stated figure must be what the derived
+            # value rounds to at the precision the board chose to state it -- kept honest by
+            # the relative bound, which is what rejects the 9.9e-5 case (37% > 0.5%) since
+            # scientific notation carries no decimal count to round to.
+            $rel = if ([double]$exp -eq 0) { if ([double]$lit -eq 0) { 0 } else { [double]::PositiveInfinity } }
+                   else { [Math]::Abs([double]$lit - [double]$exp) / [Math]::Abs([double]$exp) }
+            $plain = ($litRaw -replace ',', '')
+            if ($plain -match '^-?\d+(\.(\d+))?$') {
+                $dp = if ($Matches[2]) { $Matches[2].Length } else { 0 }
+                $agrees = ([Math]::Round([double]$exp, $dp) -eq [double]$lit) -and ($rel -le 0.005)
+            } else {
+                $diff = [Math]::Abs([double]$lit - [double]$exp)
+                $agrees = ($diff -le 0.001) -and ($rel -le 0.005)
+            }
             if (-not $agrees) {
                 $badOnes += "'$($x.Value.Trim())' says $litRaw where the artifacts give $exp"
             }
@@ -887,7 +1058,7 @@ foreach ($c in $claims) {
 
 Write-Output ''
 if ($fail -eq 0) {
-    Write-Output "RESULT: PASS ($pass claims verified against $Ref; $ctrl section 6.4 controls reproduced)"
+    Write-Output "RESULT: PASS ($pass claims verified against $Ref; $ctrl section 6.4 controls reproduced; $guard rule 91 arm-size guards)"
     exit 0
 } else {
     Write-Output "RESULT: FAIL ($pass verified, $fail failed)"
