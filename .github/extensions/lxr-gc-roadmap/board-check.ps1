@@ -20,7 +20,7 @@
 
 $ErrorActionPreference = 'Stop'
 
-$EXPECTED = @{ Phases = 11; Steps = 54; Fields = 360; Rules = 70 }
+$EXPECTED = @{ Phases = 11; Steps = 54; Fields = 360; Rules = 71 }
 
 $board = Join-Path $PSScriptRoot 'roadmap.md'
 $pass = 0
