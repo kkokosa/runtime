@@ -1,5 +1,11 @@
 # Standing battery for roadmap.md, the LXR coordination board.
 #
+# Default LogDir is the app's extension log directory. Parameterised only so the
+# subject controls can point at a fabricated log; the banner prints it, per rule 63's
+# practice of disclosing every root the run reads.
+param([string]$LogDir = "$env:USERPROFILE\.copilot\logs\extensions")
+
+#
 # Exists because the battery was retyped from memory on each use and drifted three
 # times in one sitting: '^\d+\. \*\*' counted 19 of 66 rules (early rules are not
 # bold-prefixed); '^- \*\*[A-Za-z ]+\*\*:' counted 0 of 360 fields (the colon sits
@@ -20,7 +26,7 @@
 
 $ErrorActionPreference = 'Stop'
 
-$EXPECTED = @{ Phases = 11; Steps = 54; Fields = 360; Rules = 74 }
+$EXPECTED = @{ Phases = 11; Steps = 54; Fields = 360; Rules = 75 }
 
 $board = Join-Path $PSScriptRoot 'roadmap.md'
 $pass = 0
@@ -35,6 +41,7 @@ function want ($label, $actual, $expected) {
 Write-Output 'LXR board battery'
 Write-Output "  self : $PSScriptRoot"
 Write-Output "  board: $board"
+Write-Output "  logs : $LogDir"
 Write-Output ''
 
 if (-not (Test-Path $board)) { Write-Output "  FAIL  no board at $board"; exit 2 }
@@ -91,25 +98,47 @@ want 'one Status per step and per phase' $statusCount ($steps.Count + $phases.Co
 Write-Output ''
 Write-Output '== subject =='
 # The board resolves relative to this script, which is structurally the $SELF_DIR
-# hazard of rule 63. It is safe only while exactly one copy exists; merging the
-# branch creates the second, and this check is what notices.
+# hazard of rule 63. What matters is not how many copies exist but whether the copy
+# the host loads is the copy this script audits -- uniqueness was only ever a proxy
+# for that, and it is a proxy that goes permanently red the moment the branch merges
+# and a second, entirely legitimate copy appears. EXTENSION_PATH in the extension log
+# answers the question directly, so the assertion moved to the evidence.
 #
-# -Force is load-bearing: without it Get-ChildItem -Recurse will not descend into
-# hidden directories, and %TEMP% lives under the hidden AppData. This check had never
-# been observed to fire in 12 runs, and the first control written for it planted its
-# decoys in exactly that blind spot -- so the control returned exit 0 and read as the
-# check passing rather than as the perturbation being invisible. Measured: 1 copy
-# found without -Force, 2 with, same tree, same instant. A control that lands in the
-# blind spot of the check it is controlling is worse than no control, because it
-# converts an untested assertion into an apparently tested one.
-$copies = @(Get-ChildItem 'C:\' -Recurse -Force -Filter 'roadmap.md' -File -ErrorAction SilentlyContinue |
-            Where-Object { $_.FullName -match 'lxr-gc-roadmap' })
-if ($copies.Count -eq 1) {
-    ok 'exactly one board on this machine, so self-relative resolution is unambiguous'
+# The old form scanned all of C:\ recursively: 36 seconds, and -- until rule 74 --
+# blind to hidden directories. A battery slow enough to skip is a battery that gets
+# skipped.
+$logs = @(Get-ChildItem $LogDir -Filter '*lxr-gc-roadmap*.log' -File -ErrorAction SilentlyContinue |
+          Sort-Object LastWriteTime -Descending)
+$paths = @($logs | ForEach-Object {
+    # The newest log is the live one and the extension host holds it open. A default
+    # read (File.ReadLines / Get-Content) throws on it, so the check would fail on
+    # exactly the log that carries the current answer. Share ReadWrite.
+    $fs = [IO.FileStream]::new($_.FullName, [IO.FileMode]::Open, [IO.FileAccess]::Read, [IO.FileShare]::ReadWrite)
+    try {
+        $sr = [IO.StreamReader]::new($fs)
+        while ($null -ne ($ln = $sr.ReadLine())) {
+            $m = [regex]::Match($ln, 'EXTENSION_PATH=(.+?\\extension\.mjs)')
+            if ($m.Success) { Split-Path -Parent $m.Groups[1].Value; break }
+        }
+    } finally { $fs.Dispose() }
+})
+$distinct = @($paths | Sort-Object -Unique)
+
+if ($logs.Count -eq 0) {
+    bad "no extension log under '$LogDir'; the host's board cannot be identified"
+} elseif ($paths.Count -eq 0) {
+    bad "$($logs.Count) log(s) but none records an EXTENSION_PATH"
+} elseif ($paths[0] -eq $PSScriptRoot) {
+    ok "the host loads the board this script audits (newest of $($logs.Count) logs)"
 } else {
-    bad "$($copies.Count) boards found; self-relative resolution may audit the wrong one"
-    $copies | ForEach-Object { Write-Output "          $($_.FullName)" }
+    bad "the host loads '$($paths[0])', not '$PSScriptRoot'"
 }
+
+# One distinct path across every log means no host has ever loaded another copy.
+# This is the check that keeps working after the merge: two files on disk are fine,
+# two loaded boards are not.
+want 'distinct board paths across all logs' $distinct.Count 1
+if ($distinct.Count -gt 1) { $distinct | ForEach-Object { Write-Output "          $_" } }
 
 Write-Output ''
 Write-Output '== hygiene =='
