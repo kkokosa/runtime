@@ -26,7 +26,7 @@ param([string]$LogDir = "$env:USERPROFILE\.copilot\logs\extensions")
 
 $ErrorActionPreference = 'Stop'
 
-$EXPECTED = @{ Phases = 11; Steps = 54; Fields = 360; Rules = 88 }
+$EXPECTED = @{ Phases = 11; Steps = 54; Fields = 360; Rules = 90 }
 
 $board = Join-Path $PSScriptRoot 'roadmap.md'
 $pass = 0
@@ -146,6 +146,17 @@ want 'trailing whitespace'  @($lines | Where-Object { $_ -cmatch '[ \t]+$' }).Co
 want 'control characters'   @($lines | Where-Object { $_ -cmatch '[\x00-\x08\x0B\x0C\x0E-\x1F]' }).Count 0
 $oddTicks = @($lines | Where-Object { $_ -cmatch '^\d+\. ' -and ([regex]::Matches($_, '`').Count % 2) -ne 0 })
 want 'rules with unbalanced backticks' $oddTicks.Count 0
+
+# Doubled apostrophes are a PowerShell artifact, not prose. Inside a regular
+# single-quoted string '' escapes an apostrophe, but inside a @'..'@ HERE-STRING it does
+# not -- it stays as two characters -- so every board edit written as a here-string
+# leaked `rule''s` into rendered markdown. Twenty sites had accumulated before anything
+# noticed, because all four instruments read the board for FIGURES and none read it as
+# text. Rule 88's precondition is met with room to spare: the predicate fires 0 times on
+# a clean board, there is no construction in English prose that wants two apostrophes in
+# a row, and it fired on 4 of the 102 commits in this file's history -- so it is a real
+# defect with a zero false-alarm rate rather than a style preference.
+want 'doubled apostrophes' @($lines | Where-Object { $_ -cmatch "''" }).Count 0
 
 Write-Output ''
 if ($fail -eq 0) {

@@ -424,7 +424,15 @@ foreach ($ln in $delivLines) {
 $citeDistinct = $citeRules.Keys.Count
 
 # Board history: an edit either extends a rule (previous text is a prefix) or replaces it.
-$hist = @(& git -C $repoRoot log --format=%h --reverse -- $boardRel)
+#
+# PINNED, and the pin is the whole point. This walk measures the board's own history, so
+# every commit that states the result also joins the population it is a result about --
+# and the commit after this measurement (5d3246b1163, which appended rule 84's fourth
+# axis) pushed $extends from 22 to 23 and falsified a figure that was true when written.
+# Rule 90. The pin is the state the measurement was actually taken over; leaving it
+# unpinned makes the claim decay on a schedule set by unrelated future edits.
+$HIST_PIN = 'a4eb4dbaedb'
+$hist = @(& git -C $repoRoot log --format=%h --reverse $HIST_PIN -- $boardRel)
 $prevRules = $null; $extends = 0; $replaces = 0; $replacedAt = @{}
 foreach ($h in $hist) {
     $blobLines = (& git -C $repoRoot show "${h}:$boardRel" 2>$null) -split "`r?`n"
@@ -444,6 +452,27 @@ foreach ($h in $hist) {
     }
     $prevRules = $cur
 }
+# Rule 90's own evidence, derived: the same walk carried one commit past the pin.
+$DRIFT_COMMIT = '5d3246b1163'
+$prevRules = $null; $extendsAfter = 0
+foreach ($h in @(& git -C $repoRoot log --format=%h --reverse $DRIFT_COMMIT -- $boardRel)) {
+    $blobLines = (& git -C $repoRoot show "${h}:$boardRel" 2>$null) -split "`r?`n"
+    $cur = @{}
+    foreach ($ln in $blobLines) {
+        if ($ln -match '^(\d+)\. (.+)$' -and -not $cur.ContainsKey([int]$Matches[1])) {
+            $cur[[int]$Matches[1]] = ($Matches[2] -replace '\s+', ' ')
+        }
+    }
+    if ($null -ne $prevRules) {
+        foreach ($n in $prevRules.Keys) {
+            if (-not $cur.ContainsKey($n)) { continue }
+            $old = $prevRules[$n]; $new = $cur[$n]
+            if ($new -ne $old -and $new.StartsWith($old)) { $extendsAfter++ }
+        }
+    }
+    $prevRules = $cur
+}
+
 $replaced5051 = @(($replacedAt.Keys | Where-Object { $_ -match '/(50|51)$' })).Count
 $live5051 = @([regex]::Matches($text, '(?i)\brules?\s+5[01]\b')).Count
 
@@ -516,7 +545,70 @@ foreach ($s in @('s2', 's3', 's4sdk')) {
 $inducedDistinct = @($allInvRows | ForEach-Object { $_.inducedCollections } | Sort-Object -Unique)
 $validInvocations = $allInvRows.Count
 
+# ---------------------------------------------------------------------------
+# Rule 89 -- the attainable range of the instrument, computed rather than asserted.
+#
+# Everything here is a property of the DESIGN (n per arm, alpha, the correction), not of
+# the measurements, so it is derived from first principles with no artifact read. That is
+# the point of the rule: the floor is knowable before any data exists.
+function Choose ([int]$n, [int]$k) {
+    $r = [double]1
+    for ($i = 1; $i -le $k; $i++) { $r = $r * ($n - $k + $i) / $i }
+    return [int][Math]::Round($r)
+}
+$ARRANGEMENTS_5v5 = Choose 10 5                       # 252
+$EXACT_FLOOR      = 1.0 / $ARRANGEMENTS_5v5           # smallest attainable one-sided p
+$LARGEST_USABLE_K = 0
+for ($k = 1; $k -le $ARRANGEMENTS_5v5; $k++) { if (($k / $ARRANGEMENTS_5v5) -le 0.05) { $LARGEST_USABLE_K = $k } }
+# Largest Bonferroni family in which the floor is still reachable.
+$FAMILY_5 = 0
+for ($m = 1; $m -le 5000; $m++) { if ($EXACT_FLOOR -le (0.05 / $m)) { $FAMILY_5 = $m } }
+$ARRANGEMENTS_6v6 = Choose 12 6                       # 924
+$FLOOR_6          = 1.0 / $ARRANGEMENTS_6v6
+$FAMILY_6 = 0
+for ($m = 1; $m -le 5000; $m++) { if ($FLOOR_6 -le (0.05 / $m)) { $FAMILY_6 = $m } }
+# How far the literal directive sits below the floor, in multiples.
+$SHORTFALL_693 = [int][Math]::Round($EXACT_FLOOR / (0.05 / $domS2.well))
+
 $claims = @(
+    @{ name = 'rule 89: the floor of the exact test at five against five'
+       re   = 'enumerates `C\(10,5\) = (\d+)` arrangements, so the smallest attainable p is \*\*1/(\d+) = ([\d.]+)\*\* and the largest usable one is (\d+)/'
+       sites = 1
+       want = @($ARRANGEMENTS_5v5, $ARRANGEMENTS_5v5, [Math]::Round($EXACT_FLOOR,6), $LARGEST_USABLE_K) }
+
+    @{ name = 'rule 89: the largest interpreted family the design admits'
+       re   = 'at \*\*m = (\d+)\*\* that is ([\d.e-]+) and the floor clears it; at \*\*m = (\d+)\*\* it is ([\d.e-]+) and the floor does not'
+       sites = 1
+       want = @($FAMILY_5, (0.05 / $FAMILY_5), ($FAMILY_5 + 1), (0.05 / ($FAMILY_5 + 1))) }
+
+    @{ name = 'rule 89: how far the literal directive sits below the floor'
+       re   = 'over (\d+) well-formed pairs would need ([\d.e-]+), which is \*\*(\d+)\*\* times below the floor'
+       sites = 1
+       want = @($domS2.well, (0.05 / $domS2.well), $SHORTFALL_693) }
+
+    @{ name = 'rule 89: the escape at six invocations per arm'
+       re   = '`C\(12,6\) = (\d+)` moves the floor to ([\d.e-]+) and the budget to \*\*(\d+)\*\*'
+       sites = 1
+       want = @($ARRANGEMENTS_6v6, $FLOOR_6, $FAMILY_6) }
+
+    # "Three orders of magnitude past the budget" was written, not computed; it is 1.76.
+    # Gating the multiple rather than a vague magnitude is the only version of this
+    # sentence a checker can hold, and it is the one the argument actually needs.
+    @{ name = 'P0.6 amendment: how far each candidate population sits past the budget'
+       re   = 'sit at \*\*([\d.]+)x\*\* and \*\*([\d.]+)x\*\* the budget of twelve'
+       sites = 1
+       want = @(($domS2.well / $FAMILY_5), ($domAll.well / $FAMILY_5)) }
+
+    @{ name = 'P0.6 amendment: the budget the design must fit, restated in the entry'
+       re   = 'can hold at most \*\*(\d+) comparisons\*\* before no cell can be significant'
+       sites = 1
+       want = @($FAMILY_5) }
+
+    @{ name = 'P0.6 amendment: the arrangement-level hazard is real and currently vacuous'
+       re   = 'exactly (\d+) of (\d+) arrangements goes undefined in that case.*?coincide on the committed data at \*\*(\d+) of (\d+)\*\*'
+       sites = 1
+       want = @(1, $ARRANGEMENTS_5v5, 0, $domS2.well) }
+
     @{ name = 'P0.6 amendment: the directive applied literally, s2 population'
        re   = 'yields \*\*(\d+) \(cell, column\) pairs, of which (\d+) are undefined and (\d+) are well-formed\*\*'
        sites = 1
@@ -563,9 +655,16 @@ $claims = @(
        want = @($citeDistinct, $citeDistinct) }
 
     @{ name = 'rule 88: append-only predicate, extensions against replacements'
-       re   = '\*\*(\d+)\*\* edits extend a rule and \*\*(\d+)\*\* replace text in place'
+       re   = 'across the \*\*(\d+)\*\* commits touching this board up to `([0-9a-f]+)`, \*\*(\d+)\*\* edits extend a rule and \*\*(\d+)\*\* replace text in place'
        sites = 1
-       want = @($extends, $replaces) }
+       want = @($hist.Count, $HIST_PIN, $extends, $replaces) }
+
+    # Rule 90 states the drift that made the pin necessary, so the drift itself is derived
+    # rather than remembered: walk the SAME history one commit further and show the count move.
+    @{ name = 'rule 90: the unrelated commit that falsified a correct figure'
+       re   = 'the one after it, `([0-9a-f]+)`, appended rule 84.s fourth axis in place, which is an extension, and the count became (\d+)'
+       sites = 1
+       want = @($DRIFT_COMMIT, $extendsAfter) }
 
     @{ name = 'P0.6 post-merge: the one decidable residue, measured'
        re   = 'every cited rule number must exist on the board\*\*.{0,6}currently (\d+) dangling'
@@ -708,7 +807,8 @@ $claims = @(
        want = @($twoOrd, $others.Count, $notTwo) }
 )
 $WORDS = @{ 'nine' = 9; 'ten' = 10; 'one' = 1; 'two' = 2; 'three' = 3; 'four' = 4;
-            'five' = 5; 'six' = 6; 'seven' = 7; 'eight' = 8 }
+            'five' = 5; 'six' = 6; 'seven' = 7; 'eight' = 8; 'eleven' = 11; 'twelve' = 12;
+            'thirteen' = 13; 'twenty' = 20 }
 
 foreach ($c in $claims) {
     $m = [regex]::Matches($text, $c.re)
@@ -735,9 +835,26 @@ foreach ($c in $claims) {
     foreach ($x in $m) {
         for ($g = 1; $g -lt $x.Groups.Count; $g++) {
             $litRaw = $x.Groups[$g].Value
+            $exp = $c.want[$g - 1]
+            # Not every gated literal is a quantity. Rule 90's whole content is that a
+            # self-referential count is only meaningful beside the revision it was taken
+            # over, so the pin itself has to be gated -- otherwise the hash in the prose
+            # and the hash the walk actually used could drift apart and every number below
+            # would still agree. A non-numeric expectation is compared verbatim.
+            if (([string]$exp) -notmatch '^\d+(\.\d+)?([eE][+-]?\d+)?$') {
+                # Same SHAPE as the numeric message below, deliberately: the coverage
+                # battery proves a perturbation arrived by looking for "says <payload> "
+                # in this output, so a message that quotes the literal differently would
+                # make every non-numeric claim un-coverable while still reading correctly
+                # to a human.
+                if ($litRaw -cne ([string]$exp)) {
+                    $badOnes += "'$($x.Value.Trim())' says $litRaw where the artifacts give $exp"
+                }
+                continue
+            }
             if ($WORDS.ContainsKey($litRaw)) {
                 $lit = $WORDS[$litRaw]
-            } elseif ($litRaw -match '^\d+(\.\d+)?$') {
+            } elseif ($litRaw -match '^\d+(\.\d+)?([eE][+-]?\d+)?$') {
                 $lit = [double]$litRaw
             } else {
                 # An unrecognised count word must fail rather than throw or coerce. Widening
@@ -746,8 +863,16 @@ foreach ($c in $claims) {
                 $badOnes += "'$($x.Value.Trim())' says '$litRaw ', which is not a number or a count word this script knows"
                 continue
             }
-            $exp = $c.want[$g - 1]
-            if ([Math]::Abs([double]$lit - [double]$exp) -gt 0.001) {
+            # An ABSOLUTE tolerance alone cannot discriminate small-magnitude figures: at
+            # 0.001 absolute, a board claiming 9.9e-5 would agree with an artifact giving
+            # 7.2e-5, a 37% error passing as a match. Rule 89's alpha values live exactly
+            # there. So both bounds must hold, making the effective tolerance
+            # min(0.001, 0.5% of expected) -- strictly tighter everywhere, never looser, so
+            # no figure that passed under the old rule is loosened by this one.
+            $diff = [Math]::Abs([double]$lit - [double]$exp)
+            $agrees = if ([double]$exp -eq 0) { [double]$lit -eq 0 }
+                      else { ($diff -le 0.001) -and (($diff / [Math]::Abs([double]$exp)) -le 0.005) }
+            if (-not $agrees) {
                 $badOnes += "'$($x.Value.Trim())' says $litRaw where the artifacts give $exp"
             }
         }

@@ -102,6 +102,16 @@ try {
             $payloads = $WORDPAY[$orig]
         } elseif ($orig -match '^\d+$') {
             $payloads = @([string]([int]$orig + 1), [string]([int]$orig + 13))
+        } elseif ($orig -cmatch '^[0-9a-f]{7,40}$') {
+            # A gated literal is not always a quantity: rule 90 pins a population to a
+            # COMMIT HASH, and [double]'5d3246b1163' throws, which took the whole battery
+            # down at the first such claim. The payload must stay inside the capture's own
+            # character class -- a perturbation that stops matching the pattern reports
+            # "matched nothing", which is the wrong failure and hides the real one.
+            $rot = { param($c) if ($c -eq 'f') { '0' } else { ([string]('0123456789abcdef'[('0123456789abcdef'.IndexOf($c) + 1)])) } }
+            $p1 = $orig.Substring(0, $orig.Length - 1) + (& $rot $orig[-1])
+            $p2 = $orig.Substring(0, $orig.Length - 2) + (& $rot $orig[-2]) + (& $rot $orig[-1])
+            $payloads = @($p1, $p2)
         } else {
             $payloads = @(([double]$orig + 1.11).ToString('0.00'), ([double]$orig + 2.22).ToString('0.00'))
         }

@@ -119,6 +119,24 @@ function Apply($name, $lines) {
             $n = [int]$Matches[1]; $c = 0
             foreach ($x in $lines) { if ($x -cmatch '^\d+\. ' -and $c -lt $n) { $c++; $out.Add($x + ' `'); continue }; $out.Add($x) }
         }
+        '^apos-(\d)$' {
+            # Rule 73: the two payloads must differ, and they must differ in the way the
+            # real defect did. apos-1 reintroduces the possessive form that leaked from
+            # every here-string edit; apos-2 puts the pair somewhere no possessive can be,
+            # so a guard narrowed to `''s` -- which is how the FIX was written -- fails
+            # here even though it would pass apos-1.
+            $n = [int]$Matches[1]; $c = 0
+            foreach ($x in $lines) {
+                if ($x -cmatch '^\d+\. ' -and $c -lt $n) {
+                    $c++
+                    if ($n -eq 1) { $s = $x -replace '^(\d+)\. ', '$1. The rule''''s own point. ' }
+                    else           { $s = $x + ' See '''' above.' }
+                    $out.Add($s)
+                    continue
+                }
+                $out.Add($x)
+            }
+        }
         default { foreach ($x in $lines) { $out.Add($x) } }
     }
     return $out
@@ -153,6 +171,8 @@ $cases = @(
     @{ n = 'ctrl-2';          want = 'control characters' },
     @{ n = 'ticks-1';         want = 'unbalanced backticks' },
     @{ n = 'ticks-2';         want = 'unbalanced backticks' },
+    @{ n = 'apos-1';          want = 'doubled apostrophes' },
+    @{ n = 'apos-2';          want = 'doubled apostrophes' },
     @{ n = 'pristine';        want = '<none>' }
 )
 
