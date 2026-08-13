@@ -295,6 +295,54 @@ $asymLatMode = AsymCells $s2Csv 'latency'    $true
 $asymThrRun  = AsymCells $s2Csv 'throughput' $false
 $asymThrMode = AsymCells $s2Csv 'throughput' $true
 
+# ---- rule 50: rot has three mechanisms, and the two git-derivable ones are derived ----
+# This check is available HERE and is not available in the P0.5 gate, which runs from a
+# `git archive` extract carrying no history. The property that makes that gate honest
+# about committed bytes is exactly what blinds it to what has moved since -- so the
+# instrument that can see rot has to be a different instrument, and this is it.
+# Every line number below is LOCATED BY CONTENT in each revision, never assumed at the
+# number the board publishes; otherwise the claim would confirm the board from the board.
+$ROT_REF = '7c725de8fc8'
+$CPC     = 'docs/design/lxr-port/P0.5-baselines/scripts/check-prose-claims.py'
+$GOG     = 'docs/design/lxr-port/P0.5-baselines/scripts/verify-gate-of-the-gate.sh'
+
+function FindLine ($ref, $path, $needle) {
+    $ls = @(& git -C $Repo show "${ref}:${path}" 2>$null)
+    if ($LASTEXITCODE -ne 0 -or $ls.Count -eq 0) { return 0 }
+    for ($i = 0; $i -lt $ls.Count; $i++) { if ("$($ls[$i])".Contains($needle)) { return $i + 1 } }
+    return 0
+}
+
+$ROT_NEEDLE = 'affected.add((r["scenario"], r["collector"], r["mode"]'
+$ROT_OLD    = FindLine "$ROT_REF^" $CPC $ROT_NEEDLE
+$ROT_NEW    = FindLine  $ROT_REF   $CPC $ROT_NEEDLE
+$ROT_SHIFT  = $ROT_NEW - $ROT_OLD
+$ROT_GOG    = FindLine  $ROT_REF   $GOG "grep -c '^RESULT: PASS'"
+if ($ROT_OLD -eq 0 -or $ROT_NEW -eq 0 -or $ROT_GOG -eq 0) {
+    Write-Output '  FAIL  a rule 50 rot target was not found by content; every figure below would be vacuous'
+    exit 2
+}
+
+# The citation sweep, re-rooted at the port tree. The first run of this was rooted at the
+# baselines directory while the harness sits a level up, and reported 9 of 13 unresolvable
+# -- a resolver rooted below its targets reports the DOCUMENT as broken and makes the
+# auditor confident. Root at the port tree and assert the resolvable count, so a future
+# re-rooting fails here instead of producing a finding.
+$rotDoc  = (@(& git -C $Repo show "${ROT_REF}:docs/design/lxr-port/P0.5-baselines.md")) -join "`n"
+$rotTree = @(& git -C $Repo ls-tree -r --name-only $ROT_REF 'docs/design/lxr-port') |
+           ForEach-Object { "$_".Trim() } | Where-Object { $_ }
+$rotHits = [regex]::Matches($rotDoc, '`([^`\s]*\.[A-Za-z0-9]+):(\d+)`')
+$ROT_OCC = $rotHits.Count
+$rotPairs = @($rotHits | ForEach-Object { "$($_.Groups[1].Value)|$($_.Groups[2].Value)" } |
+                         Sort-Object -Unique)
+$ROT_DISTINCT = $rotPairs.Count
+$ROT_UNRESOLVED = 0
+foreach ($pair in $rotPairs) {
+    $f = $pair.Split('|')[0]
+    $c = @($rotTree | Where-Object { $_ -eq $f -or $_.EndsWith("/$f") })
+    if ($c.Count -eq 0) { $ROT_UNRESOLVED++ }
+}
+
 $delivText = (Show-Blob ($BASE.TrimEnd('/') + '.md')) -join "`n"
 $ctrl = 0
 $ctlOk = $true
@@ -759,6 +807,26 @@ $claims = @(
        re   = 'cell count stays \*\*(\d+) either way\*\*.*?median CV \*\*(\d+\.\d+)% to (\d+\.\d+)%\*\*'
        sites = 1
        want = @($asymLatRun.Cells, [Math]::Round($asymLatRun.Median, 3), [Math]::Round($asymLatMode.Median, 3)) }
+
+    @{ name = 'rule 50: the citation that rotted inside the commit that introduced it'
+       re   = 'is at `:(\d+)` in the parent and `:(\d+)` in the commit'
+       sites = 1
+       want = @($ROT_OLD, $ROT_NEW) }
+
+    @{ name = 'rule 50: the same-commit insertion, and the arithmetic that closes it'
+       re   = '\*\*\+(\d+) above old line (\d+), and (\d+)\+(\d+)=(\d+) exactly\.\*\*'
+       sites = 1
+       want = @($ROT_SHIFT, $ROT_OLD, $ROT_OLD, $ROT_SHIFT, $ROT_NEW) }
+
+    @{ name = 'rule 50: where the hand-corrected anchor actually sits, two corrections later'
+       re   = 'the anchored `grep -c ''\^RESULT: PASS''` it cites sits at `:(\d+)`'
+       sites = 1
+       want = @($ROT_GOG) }
+
+    @{ name = 'rule 50: the citation sweep, re-rooted at the port tree'
+       re   = '\*\*(\d+) occurrences, (\d+) distinct, (\d+) unresolvable'
+       sites = 1
+       want = @($ROT_OCC, $ROT_DISTINCT, $ROT_UNRESOLVED) }
 
     @{ name = 'rule 89: the floor of the exact test at five against five'
        re   = 'enumerates `C\(10,5\) = (\d+(?:\.\d+)?)` arrangements, so the smallest attainable p is \*\*1/(\d+(?:\.\d+)?) = ([\d.]+)\*\* and the largest usable one is (\d+(?:\.\d+)?)/'
