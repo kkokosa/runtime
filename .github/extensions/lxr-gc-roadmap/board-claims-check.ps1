@@ -763,6 +763,22 @@ if ($CFG_IN_METRIC.Count -ne 0) {
     Write-Output ('  FAIL  $METRIC now contains configuration columns: ' + ($CFG_IN_METRIC -join ', '))
     exit 2
 }
+# Rule 107, second instance. Both endpoints are pinned so these counts cannot rot; the
+# ancestor test is run on each because the whole defect being recorded is a count reported
+# in a frame where it was not a distance. A count whose frame is unverified is not gated.
+$FRAME_BASE = 'df9c6988c20'
+$FRAME_TIP  = 'dc01449ffc1'
+$FRAME_SEG0 = 'b4418bb9bf2'
+foreach ($pair in @(@($FRAME_BASE, $FRAME_TIP), @($FRAME_SEG0, $FRAME_TIP))) {
+    & git merge-base --is-ancestor $pair[0] $pair[1] 2>$null
+    if ($LASTEXITCODE -ne 0) {
+        Write-Output ('  FAIL  ' + $pair[0] + ' is not an ancestor of ' + $pair[1] + '; its commit count would be a set difference, not a distance')
+        exit 2
+    }
+}
+$FRAME_TOTAL = [int](& git rev-list --count "$FRAME_BASE..$FRAME_TIP")
+$FRAME_SEG   = [int](& git rev-list --count "$FRAME_SEG0^..$FRAME_TIP")
+
 $domS2  = RatioDomain @('s2')
 $domAll = RatioDomain @('s2', 's3', 's4sdk')
 
@@ -953,6 +969,11 @@ $claims = @(
        re   = 'curated `\$METRIC` list of \*\*(\d+)\*\* columns, and two claims have been gating \*\*(\d+), (\d+) and (\d+)\*\*'
        sites = 1
        want = @($METRIC.Count, $domS2.pairs, $domS2.undef, $domS2.well) }
+
+    @{ name = 'rule 107 second instance: the two counts that are distances, and the one that is not'
+       re   = '`df9c6988c20` to `dc01449ffc1` is \*\*(\d+)\*\*, and this session\u2019s own segment through that same commit is \*\*(\d+)\*\*'
+       sites = 1
+       want = @($FRAME_TOTAL, $FRAME_SEG) }
 
     @{ name = 'rule 89: the floor of the exact test at five against five'
        re   = 'enumerates `C\(10,5\) = (\d+(?:\.\d+)?)` arrangements, so the smallest attainable p is \*\*1/(\d+(?:\.\d+)?) = ([\d.]+)\*\* and the largest usable one is (\d+(?:\.\d+)?)/'
