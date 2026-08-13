@@ -819,7 +819,7 @@ $claims = @(
        want = @($ROT_SHIFT, $ROT_OLD, $ROT_OLD, $ROT_SHIFT, $ROT_NEW) }
 
     @{ name = 'rule 50: where the hand-corrected anchor actually sits, two corrections later'
-       re   = 'the anchored `grep -c ''\^RESULT: PASS''` it cites sits at `:(\d+)`'
+       re   = 'the anchored `grep -c \x27\^RESULT: PASS\x27` it cites sits at `:(\d+)`'
        sites = 1
        want = @($ROT_GOG) }
 
