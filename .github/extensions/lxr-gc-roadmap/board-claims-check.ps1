@@ -260,6 +260,41 @@ $ctlLat = CvCells $s2Csv 'latencyP99Ms'        @('latency')
 $vPause = CvCells $s2Csv 'pauseP99Ms'          @('throughput', 'latency')
 $badPop = CvCells $csvRows 'operationsPerSecond' @('throughput')
 
+# ---- rule 32: the mode/runId substitution is asymmetric, so counting defends one section ----
+# Both keys are derived here rather than one being assumed, because the rule's whole content
+# is the DIFFERENCE between them. Keyed without the phase term: the phase IS the thing being
+# substituted, so including it in the key would make every cell agree by construction -- the
+# rule 108 defect, committed inside the check for the rule that motivated it.
+function AsymCells ($rowsIn, $phase, $byMode) {
+    $g = @{}
+    foreach ($r in $rowsIn) {
+        if ("$($r.valid)".Trim().ToLower() -ne 'true') { continue }
+        $ph = if ($byMode) { "$($r.mode)".Trim() } else { PhaseOf $r.runId }
+        if ($ph -ne $phase) { continue }
+        $k = "$($r.scenario)|$($r.collector)|$($r.heapFactor)"
+        if (-not $g.ContainsKey($k)) { $g[$k] = @() }
+        if (HasVal $r.latencyP99Ms) { $g[$k] += [double]$r.latencyP99Ms }
+    }
+    $cvs = @()
+    foreach ($v in $g.Values) {
+        if ($v.Count -lt 2) { continue }
+        $mean = ($v | Measure-Object -Average).Average
+        if ($mean -le 0) { continue }
+        $ss = ($v | ForEach-Object { ($_ - $mean) * ($_ - $mean) } | Measure-Object -Sum).Sum
+        $cvs += 100 * [Math]::Sqrt($ss / ($v.Count - 1)) / $mean
+    }
+    $s = @($cvs | Sort-Object); $n = $s.Count
+    $med = if ($n -eq 0) { $null } elseif ($n % 2) { $s[[int](($n - 1) / 2)] } else { ($s[$n / 2 - 1] + $s[$n / 2]) / 2 }
+    return [pscustomobject]@{ Cells = $g.Keys.Count; CvCells = $n; Median = $med }
+}
+$s2Valid   = @($s2Csv | Where-Object { "$($_.valid)".Trim().ToLower() -eq 'true' })
+$asymAgree = @($s2Valid | Where-Object { (PhaseOf $_.runId) -eq "$($_.mode)".Trim() }).Count
+$asymDiv   = $s2Valid.Count - $asymAgree
+$asymLatRun  = AsymCells $s2Csv 'latency'    $false
+$asymLatMode = AsymCells $s2Csv 'latency'    $true
+$asymThrRun  = AsymCells $s2Csv 'throughput' $false
+$asymThrMode = AsymCells $s2Csv 'throughput' $true
+
 $delivText = (Show-Blob ($BASE.TrimEnd('/') + '.md')) -join "`n"
 $ctrl = 0
 $ctlOk = $true
@@ -710,6 +745,21 @@ $LOP_LAST_RANK = 1 + [array]::IndexOf(@($lopLast | ForEach-Object { $_.key }), '
 $LOP_MEAN_RANK = 1 + [array]::IndexOf(@($lopMean | ForEach-Object { $_.key }), 'large-object-pressure|wks')
 
 $claims = @(
+    @{ name = 'rule 32: the mode/runId divergence, per row'
+       re   = "agree in \*\*(\d+)\*\* of s2's (\d+) valid rows and diverge in \*\*(\d+)\*\*"
+       sites = 1
+       want = @($asymAgree, $s2Valid.Count, $asymDiv) }
+
+    @{ name = 'rule 32: the throughput side, where cardinality detects the substitution'
+       re   = '\*\*(\d+) cells against (\d+)\*\*'
+       sites = 1
+       want = @($asymThrMode.Cells, $asymThrRun.Cells) }
+
+    @{ name = 'rule 32: the latency side, where only the statistic moves'
+       re   = 'cell count stays \*\*(\d+) either way\*\*.*?median CV \*\*(\d+\.\d+)% to (\d+\.\d+)%\*\*'
+       sites = 1
+       want = @($asymLatRun.Cells, [Math]::Round($asymLatRun.Median, 3), [Math]::Round($asymLatMode.Median, 3)) }
+
     @{ name = 'rule 89: the floor of the exact test at five against five'
        re   = 'enumerates `C\(10,5\) = (\d+(?:\.\d+)?)` arrangements, so the smallest attainable p is \*\*1/(\d+(?:\.\d+)?) = ([\d.]+)\*\* and the largest usable one is (\d+(?:\.\d+)?)/'
        sites = 1
