@@ -753,6 +753,16 @@ function RatioDomain ($sessions) {
               induced = [int]$byCol['induced']; arrival = [int]$byCol['arrival']
               armSizes = $armSizes }
 }
+
+# Rule 104, measurement form. The board now asserts that the curated metric list excludes
+# configuration echoed into the metrics file. That is a property of this file, so it is
+# checked here as a guard rather than argued in prose -- adding one of these columns to
+# $METRIC would silently falsify the board sentence and change 870/92/693 underneath it.
+$CFG_IN_METRIC = @('heapLimitMb', 'warmupSeconds', 'steadyStateSeconds') | Where-Object { $METRIC -contains $_ }
+if ($CFG_IN_METRIC.Count -ne 0) {
+    Write-Output ('  FAIL  $METRIC now contains configuration columns: ' + ($CFG_IN_METRIC -join ', '))
+    exit 2
+}
 $domS2  = RatioDomain @('s2')
 $domAll = RatioDomain @('s2', 's3', 's4sdk')
 
@@ -938,6 +948,11 @@ $claims = @(
                 $PIN['throughput|1.3'].OneRatio, $PIN['throughput|2'].OneRatio, $PIN['throughput|6'].OneRatio,
                 $PIN['latency|1.3'].Ratio, $PIN['latency|2'].Ratio, $PIN['latency|6'].Ratio,
                 $PIN['latency|1.3'].OneRatio, $PIN['latency|2'].OneRatio, $PIN['latency|6'].OneRatio) }
+
+    @{ name = 'rule 104 measurement form: the curated metric list and the figures it was already gating'
+       re   = 'curated `\$METRIC` list of \*\*(\d+)\*\* columns, and two claims have been gating \*\*(\d+), (\d+) and (\d+)\*\*'
+       sites = 1
+       want = @($METRIC.Count, $domS2.pairs, $domS2.undef, $domS2.well) }
 
     @{ name = 'rule 89: the floor of the exact test at five against five'
        re   = 'enumerates `C\(10,5\) = (\d+(?:\.\d+)?)` arrangements, so the smallest attainable p is \*\*1/(\d+(?:\.\d+)?) = ([\d.]+)\*\* and the largest usable one is (\d+(?:\.\d+)?)/'
