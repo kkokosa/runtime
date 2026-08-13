@@ -795,11 +795,15 @@ if ($listStart -lt 0 -or $listEnd -le $listStart) {
 $TERMS_UNEXPLAINED = ([regex]::Matches($r109.Substring($listStart, $listEnd - $listStart), '(?<!\*)\*[^*]+\*(?!\*)')).Count
 
 
-# The claim above asserts absence, and an absence claim with nothing behind it is decoration.
-# This is the assertion with teeth: if "fine-arm" ever appears in the P0.5 document, the board
-# sentence saying it appears nowhere becomes false and the checker must refuse to pass.
-if ($FINE_ARM -ne 0) {
-    Write-Output ('  FAIL  rule 109 says fine-arm appears nowhere in P0.5-baselines.md, but it appears ' + $FINE_ARM + ' time(s)')
+# The guard that stood here asserted the term must never appear in P0.5-baselines.md. That
+# encoded a false lesson: the term is real, and the correct repair was to DEFINE it in the
+# document, which the P0.5 session then did. Keeping the guard would have failed the board for
+# the fix. What is gated instead is the true shape of the defect -- absent from the write-up,
+# present in the source -- with both figures derived at the pinned ref.
+$FA_TREE_OCC   = @(& git -C $repoRoot grep -o -i -E 'fine[- ]arm' $Ref -- docs/design/lxr-port 2>$null).Count
+$FA_TREE_FILES = @(& git -C $repoRoot grep -l -i -E 'fine[- ]arm' $Ref -- docs/design/lxr-port 2>$null).Count
+if ($FA_TREE_OCC -eq 0 -or $FA_TREE_FILES -eq 0) {
+    Write-Output '  FAIL  the fine-arm corpus search returned nothing; its figures would be vacuous'
     exit 2
 }
 
@@ -1004,10 +1008,15 @@ $claims = @(
        sites = 1
        want = @($TERMS_UNEXPLAINED) }
 
-    @{ name = 'rule 109: fine-arm denotes nothing, checked against the document it summarised'
-       re   = 'a term appearing nowhere in the underlying document'
+    @{ name = 'rule 109: where the borrowed term actually lives, and where it does not'
+       re   = 'finding \*\*(\d+)\*\* occurrences'
        sites = 1
-       want = @() }
+       want = @($FINE_ARM) }
+
+    @{ name = 'rule 109: the corpus the term does live in'
+       re   = 'the term appears \*\*(\d+)\*\* times across \*\*(\d+)\*\* files'
+       sites = 1
+       want = @($FA_TREE_OCC, $FA_TREE_FILES) }
 
     @{ name = 'rule 89: the floor of the exact test at five against five'
        re   = 'enumerates `C\(10,5\) = (\d+(?:\.\d+)?)` arrangements, so the smallest attainable p is \*\*1/(\d+(?:\.\d+)?) = ([\d.]+)\*\* and the largest usable one is (\d+(?:\.\d+)?)/'
