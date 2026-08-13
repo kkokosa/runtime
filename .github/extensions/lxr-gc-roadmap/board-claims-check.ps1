@@ -343,6 +343,96 @@ foreach ($pair in $rotPairs) {
     if ($c.Count -eq 0) { $ROT_UNRESOLVED++ }
 }
 
+# ---- rule 84 / P0.6: the boundary count is C(z,n), and the exact test is one-sided ----
+# The published figure here was "exactly 1 of 252", hardcoded as 1 in this file's own want
+# list. It is right at z=n and wrong for every larger z the quantifier "at least n" admits,
+# so the series is DERIVED now and the claim asserts four values instead of one -- a single
+# value cannot distinguish "correct at the boundary" from "correct on the interval".
+function Comb ($nn, $kk) {
+    if ($kk -lt 0 -or $kk -gt $nn) { return 0 }
+    $r = 1.0
+    for ($i = 1; $i -le $kk; $i++) { $r = $r * ($nn - $kk + $i) / $i }
+    return [int][Math]::Round($r)
+}
+$UNDEF_Z = @(5, 6, 7, 8) | ForEach-Object { Comb $_ 5 }
+
+# Exact permutation p over all C(2n,n) splits. Sidedness is a PARAMETER rather than a
+# convention, because the whole finding is that the ratio/difference equivalence holds
+# one-sided and fails two-sided.
+function ExactP ($a, $b, $kind, $twoSided) {
+    $pool = @($a) + @($b)
+    $na = $a.Count
+    $N = $pool.Count
+    $idx = @(0..($N - 1))
+    $stat = {
+        param($A, $B)
+        $ma = ($A | Measure-Object -Average).Average
+        $mb = ($B | Measure-Object -Average).Average
+        switch ($kind) {
+            'ratio' { if ($mb -eq 0) { return $null }; if ($twoSided) { return ($ma / $mb) - 1.0 } else { return $ma / $mb } }
+            default { return $ma - $mb }
+        }
+    }
+    $obs = & $stat $a $b
+    if ($null -eq $obs) { return $null }
+    $cnt = 0; $tot = 0
+    $combos = New-Object System.Collections.ArrayList
+    function Rec ($start, $chosen) {
+        if ($chosen.Count -eq $na) { [void]$combos.Add(@($chosen)); return }
+        for ($i = $start; $i -lt $N; $i++) { Rec ($i + 1) (@($chosen) + $i) }
+    }
+    Rec 0 @()
+    foreach ($c in $combos) {
+        $A = @($c | ForEach-Object { $pool[$_] })
+        $B = @($idx | Where-Object { $c -notcontains $_ } | ForEach-Object { $pool[$_] })
+        $s = & $stat $A $B
+        if ($null -eq $s) { continue }
+        $tot++
+        if ($twoSided) { if ([Math]::Abs($s) -ge [Math]::Abs($obs) - 1e-12) { $cnt++ } }
+        else { if ($s -ge $obs - 1e-12) { $cnt++ } }
+    }
+    return [pscustomobject]@{ Count = $cnt; Total = $tot }
+}
+
+function PinArms ($phase, $heap) {
+    $out = @{}
+    foreach ($c in @('wks', 'srv')) {
+        $v = @()
+        foreach ($r in $s2Csv) {
+            if ("$($r.valid)".Trim().ToLower() -ne 'true') { continue }
+            if ("$($r.scenario)" -ne 'pinning-heavy-io' -or "$($r.collector)" -ne $c) { continue }
+            if ((PhaseOf $r.runId) -ne $phase) { continue }
+            if ([Math]::Abs([double]$r.heapFactor - $heap) -gt 1e-9) { continue }
+            if (-not (HasVal $r.pauseP99Ms)) { continue }
+            $v += [double]$r.pauseP99Ms
+        }
+        $out[$c] = $v
+    }
+    return $out
+}
+
+$PIN = @{}
+foreach ($ph in @('throughput', 'latency')) {
+    foreach ($h in @(1.3, 2.0, 6.0)) {
+        $arm = PinArms $ph $h
+        $r1 = ExactP $arm['srv'] $arm['wks'] 'ratio' $false
+        $d1 = ExactP $arm['srv'] $arm['wks'] 'diff'  $false
+        $r2 = ExactP $arm['srv'] $arm['wks'] 'ratio' $true
+        $d2 = ExactP $arm['srv'] $arm['wks'] 'diff'  $true
+        $ma = ($arm['srv'] | Measure-Object -Average).Average
+        $mb = ($arm['wks'] | Measure-Object -Average).Average
+        $PIN["$ph|$h"] = [pscustomobject]@{
+            Ratio = [Math]::Round($ma / $mb, 2)
+            OneRatio = $r1.Count; OneDiff = $d1.Count
+            TwoRatio = $r2.Count; TwoDiff = $d2.Count
+        }
+    }
+}
+if ($PIN.Keys.Count -ne 6) {
+    Write-Output '  FAIL  the pinning-heavy-io arm table did not populate; its figures would be vacuous'
+    exit 2
+}
+
 $delivText = (Show-Blob ($BASE.TrimEnd('/') + '.md')) -join "`n"
 $ctrl = 0
 $ctlOk = $true
@@ -828,6 +918,27 @@ $claims = @(
        sites = 1
        want = @($ROT_OCC, $ROT_DISTINCT, $ROT_UNRESOLVED) }
 
+    @{ name = 'rule 84: the boundary count is C(z,n), not one arrangement'
+       re   = 'that is \*\*(\d+), (\d+), (\d+) and (\d+) of (\d+)\*\* for z = 5, 6, 7 and 8'
+       sites = 1
+       want = @($UNDEF_Z[0], $UNDEF_Z[1], $UNDEF_Z[2], $UNDEF_Z[3], $ARRANGEMENTS_5v5) }
+
+    @{ name = 'rule 84: the equivalence is one-sided, and two-sided disagrees by exactly 2x'
+       re   = 'exactly 2x on every heap: \*\*(\d+) vs (\d+), (\d+) vs (\d+), (\d+) vs (\d+) of (\d+)\*\*'
+       sites = 1
+       want = @($PIN['throughput|1.3'].TwoRatio, $PIN['throughput|1.3'].TwoDiff,
+                $PIN['throughput|2'].TwoRatio,   $PIN['throughput|2'].TwoDiff,
+                $PIN['throughput|6'].TwoRatio,   $PIN['throughput|6'].TwoDiff,
+                $ARRANGEMENTS_5v5) }
+
+    @{ name = 'rule 84: the phase-free table, and what it reads as under each phase'
+       re   = 'throughput gives ratios \*\*([\d.]+) / ([\d.]+) / ([\d.]+)\*\* at one-sided p of \*\*(\d+), (\d+), (\d+) of 252\*\*, while latency gives \*\*([\d.]+) / ([\d.]+) / ([\d.]+)\*\* at \*\*(\d+), (\d+), (\d+) of 252\*\*'
+       sites = 1
+       want = @($PIN['throughput|1.3'].Ratio, $PIN['throughput|2'].Ratio, $PIN['throughput|6'].Ratio,
+                $PIN['throughput|1.3'].OneRatio, $PIN['throughput|2'].OneRatio, $PIN['throughput|6'].OneRatio,
+                $PIN['latency|1.3'].Ratio, $PIN['latency|2'].Ratio, $PIN['latency|6'].Ratio,
+                $PIN['latency|1.3'].OneRatio, $PIN['latency|2'].OneRatio, $PIN['latency|6'].OneRatio) }
+
     @{ name = 'rule 89: the floor of the exact test at five against five'
        re   = 'enumerates `C\(10,5\) = (\d+(?:\.\d+)?)` arrangements, so the smallest attainable p is \*\*1/(\d+(?:\.\d+)?) = ([\d.]+)\*\* and the largest usable one is (\d+(?:\.\d+)?)/'
        sites = 1
@@ -897,9 +1008,9 @@ $claims = @(
        want = @($FAMILY_5) }
 
     @{ name = 'P0.6 amendment: the arrangement-level hazard is real and currently vacuous'
-       re   = 'exactly (\d+(?:\.\d+)?) of (\d+(?:\.\d+)?) arrangements goes undefined in that case.*?coincide on the committed data at \*\*(\d+(?:\.\d+)?) of (\d+(?:\.\d+)?)\*\*'
+       re   = 'coincide on the committed data at \*\*(\d+(?:\.\d+)?) of (\d+(?:\.\d+)?)\*\*'
        sites = 1
-       want = @(1, $ARRANGEMENTS_5v5, 0, $domS2.well) }
+       want = @(0, $domS2.well) }
 
     @{ name = 'P0.6 amendment: the directive applied literally, s2 population'
        re   = 'yields \*\*(\d+(?:\.\d+)?) \(cell, column\) pairs, of which (\d+(?:\.\d+)?) are undefined and (\d+(?:\.\d+)?) are well-formed\*\*'
