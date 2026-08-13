@@ -37,7 +37,7 @@ param(
     # The artifacts live on the P0.5 branch, not this one. Pinned to the reviewed tree by
     # hash rather than to a branch name: a moving ref would silently change the subject of
     # every claim below. After the pull request merges this becomes the merge commit.
-    [string]$Ref = '9f054925372',
+    [string]$Ref = 'd272dabb7b4',
     # Parameterised only so the negative control can point this at a fabricated board, the
     # same reason board-check.ps1 parameterises $LogDir. The banner prints it, per rule 63.
     [string]$Board = (Join-Path $PSScriptRoot 'roadmap.md')
