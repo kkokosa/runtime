@@ -50,15 +50,21 @@ public sealed class MatrixRunner
             _options.HeapFactors.Count > 0 ? _options.HeapFactors : null,
             _options.Invocations,
             scenario => _options.TimeoutFor(ScenarioCatalog.Get(scenario).DefaultTimeoutSeconds),
-            scenario => ScenarioCatalog.Get(scenario).Primary);
+            scenario => ScenarioCatalog.Get(scenario).Primary,
+
+            // P0.4 planned the heap axis and then never connected it: this argument was omitted, so
+            // HeapLimitMb stayed null for every cell, the heap-limit branch in LaunchCell never fired,
+            // and running at three heap factors would have produced three identically configured
+            // unpinned runs published under three different heap labels. Passing it is what makes the
+            // factor a configuration rather than a caption.
+            HeapBaselines.LimitMb);
 
         var document = new ResultDocument
         {
             Id = _options.RunId,
-            Date = DateTime.UtcNow.ToString("yyyy-MM-dd", CultureInfo.InvariantCulture),
-            StepId = "P0.4",
-            Notes = "Harness smoke evidence, not a baseline. Published from artifacts/lxr-harness only; " +
-                "P0.5 owns publication into the roadmap board.",
+            Date = _options.CheckpointDate ?? DateTime.UtcNow.ToString("yyyy-MM-dd", CultureInfo.InvariantCulture),
+            StepId = _options.StepId,
+            Notes = _options.CheckpointNotes ?? string.Empty,
         };
 
         var skipped = new List<MatrixCell>();
@@ -119,61 +125,18 @@ public sealed class MatrixRunner
 
         foreach (MatrixCell cell in runnable)
         {
-            document.Results.Add(Aggregator.ToResult(aggregates[cell.Id], _options.RunId, _options.NoiseThresholdPercent));
+            document.Results.Add(Aggregator.ToResult(
+                aggregates[cell.Id],
+                _options.RunId,
+                _options.NoiseThresholdPercent,
+                _options.MachinePowerPlan,
+                _options.MachinePhysicalCores,
+                _options.MachineModel,
+                _options.RunnerTotalMemoryBytes));
         }
 
-        ApplyRatios(document, runnable, aggregates);
+        Aggregator.ApplyRatios(document, runnable, aggregates, _options.BaselineArm ?? CollectorArms.WorkstationId);
         return document;
-    }
-
-    private void ApplyRatios(ResultDocument document, List<MatrixCell> cells, Dictionary<string, CellAggregate> aggregates)
-    {
-        string baselineArm = _options.BaselineArm ?? CollectorArms.WorkstationId;
-        var byResult = new Dictionary<string, RunResult>(StringComparer.Ordinal);
-        foreach (RunResult result in document.Results)
-        {
-            byResult[$"{result.Scenario}.{result.Collector}.{result.Host}.{(result.HeapFactor is double f ? "h" + f.ToString("0.0#", CultureInfo.InvariantCulture) : "hdefault")}"] = result;
-        }
-
-        foreach (MatrixCell cell in cells)
-        {
-            if (string.Equals(cell.Arm.Id, baselineArm, StringComparison.Ordinal))
-            {
-                continue;
-            }
-
-            string baselineId = cell.Id.Replace($".{cell.Arm.Id}.", $".{baselineArm}.", StringComparison.Ordinal);
-            if (!aggregates.TryGetValue(baselineId, out CellAggregate? baseline) ||
-                !byResult.TryGetValue(cell.Id, out RunResult? result))
-            {
-                continue;
-            }
-
-            (RatioEstimate? estimate, string? refusal) = Aggregator.Ratio(baseline, aggregates[cell.Id]);
-
-            // Name the statistic the bootstrap actually resamples, not just the field it came from.
-            // "latencyP99Ms" alone would let a reader assume the ratio is of the two published p99
-            // values as-is; it is the ratio of their means across invocations, which is the same thing
-            // only because the published field is now that mean too.
-            result.RatioStatistic = cell.Primary is PrimaryMetric.Latency
-                ? "mean over invocations of latencyP99Ms"
-                : "mean over invocations of operationsPerSecond";
-
-            if (estimate is RatioEstimate ratio)
-            {
-                result.RatioVsBaseline = ratio.Ratio;
-                result.RatioCiLow = ratio.Low;
-                result.RatioCiHigh = ratio.High;
-                result.CiMethod = Aggregator.CiMethodDescription;
-            }
-            else
-            {
-                // Refusing to publish a ratio is the enforcement of "a run whose collector cannot be
-                // confirmed is invalid". Flagging would not be enough; the number must not exist.
-                result.CiMethod = $"ratio-refused: {refusal}";
-                result.Notes += $" | ratio refused vs {baselineArm}: {refusal}";
-            }
-        }
     }
 
     private RunResult SkipResult(MatrixCell cell)
@@ -206,8 +169,24 @@ public sealed class MatrixRunner
         return result;
     }
 
-    public InvocationOutcome LaunchCell(
-        MatrixCell cell,
+    /// <summary>
+    /// The offered arrival rate for a scenario's open-loop pass.
+    /// </summary>
+    /// <remarks>
+    /// <para>A single global rate is wrong in both directions at once. Offered far below capacity, the
+    /// run measures an idle system and every percentile collapses to the service time; offered above
+    /// capacity, the queue grows without bound and the number produced is the capacity limit wearing a
+    /// latency's units. This host's scenarios differ by four orders of magnitude in sustainable rate, so
+    /// no one value avoids both.</para>
+    ///
+    /// <para>The same rate is used for every arm at a given scenario, deliberately. Deriving each arm's
+    /// rate from its own measured capacity would offer the faster collector more work and then compare
+    /// the resulting latencies as though the load had been equal.</para>
+    /// </remarks>
+    public double RateFor(string scenario) =>
+        _options.ScenarioRates.TryGetValue(scenario, out double rate) ? rate : _options.ArrivalRatePerSecond;
+
+    public InvocationOutcome LaunchCell(        MatrixCell cell,
         int invocation,
         IReadOnlyDictionary<string, string>? extraEnvironment = null,
         IReadOnlyList<string>? extraArguments = null)
@@ -229,7 +208,7 @@ public sealed class MatrixRunner
         if (mode is "latency")
         {
             arguments.Add("--rate");
-            arguments.Add(_options.ArrivalRatePerSecond.ToString(CultureInfo.InvariantCulture));
+            arguments.Add(RateFor(cell.Scenario).ToString(CultureInfo.InvariantCulture));
         }
 
         if (_options.KeepSamples)

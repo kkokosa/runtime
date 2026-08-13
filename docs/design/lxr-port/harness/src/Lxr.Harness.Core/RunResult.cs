@@ -30,6 +30,12 @@ public static class InvalidReason
     public const string Timeout = "timeout";
     public const string Crashed = "crashed";
     public const string WorkerError = "worker-error";
+
+    /// <summary>
+    /// The open-loop dispatcher could not keep the arrival schedule, so the reported latency is its
+    /// own backlog rather than the collector's behaviour.
+    /// </summary>
+    public const string ScheduleNotDelivered = "schedule-not-delivered";
 }
 
 /// <summary>
@@ -99,6 +105,34 @@ public sealed class RunResult
     /// <summary>An overloaded open-loop run measures the capacity limit, not latency, and must not be
     /// silently compared.</summary>
     public bool Overloaded { get; set; }
+
+    /// <summary>
+    /// Share of arrival slots dispatched late. Null outside open-loop runs. Published because a
+    /// latency percentile is only a collector measurement if the arrival process was actually
+    /// delivered, and a reader cannot tell from the percentile alone.
+    /// </summary>
+    public double? LateFraction { get; set; }
+
+    /// <summary>
+    /// The p99 gap between when an operation was scheduled to start and when the dispatcher released
+    /// it. This is the harness's own scheduling error; it bounds how much of the reported latency can
+    /// be attributed to the collector at all.
+    /// </summary>
+    public double? DispatchLagP99Ms { get; set; }
+
+    /// <summary>
+    /// The part of <see cref="DispatchLagP99Ms"/> that the collector does not account for: the p99
+    /// dispatch lag less the longest observed pause, floored at zero.
+    /// </summary>
+    /// <remarks>
+    /// The dispatcher runs inside the process it measures, so a suspension delays it along with the
+    /// workload and the schedule slips by the length of the pause. That slip is a property of the
+    /// collector; what is left after subtracting it is the harness failing to keep up. The two
+    /// populations do not overlap - see <c>Aggregator.MaximumUnexplainedDispatchLagMs</c>. Both terms
+    /// are published per invocation in the raw CSV, so this figure can be recomputed without the
+    /// harness.
+    /// </remarks>
+    public double? UnexplainedDispatchLagMs { get; set; }
 
     // ---- heap axis: the paper's throughput results invert with heap generosity ----
     public double? HeapFactor { get; set; }
@@ -253,6 +287,9 @@ public static class ResultWriter
         WriteOptionalNumber(writer, "arrivalRatePerSecond", r.ArrivalRatePerSecond);
         WriteOptionalNumber(writer, "achievedRatePerSecond", r.AchievedRatePerSecond);
         writer.WriteBoolean("overloaded", r.Overloaded);
+        WriteOptionalNumber(writer, "lateFraction", r.LateFraction);
+        WriteOptionalNumber(writer, "dispatchLagP99Ms", r.DispatchLagP99Ms);
+        WriteOptionalNumber(writer, "unexplainedDispatchLagMs", r.UnexplainedDispatchLagMs);
 
         WriteOptionalNumber(writer, "heapFactor", r.HeapFactor);
         if (r.HeapLimitMb is long heapLimit)
@@ -325,7 +362,15 @@ public static class ResultWriter
             writer.WriteNumber("totalMemoryBytes", machine.TotalMemoryBytes);
             WriteOptionalString(writer, "powerPlan", machine.PowerPlan);
             WriteOptionalString(writer, "systemModel", machine.SystemModel);
-            writer.WriteBoolean("virtualized", machine.Virtualized);
+            if (machine.Virtualized is bool virtualized)
+            {
+                writer.WriteBoolean("virtualized", virtualized);
+            }
+            else
+            {
+                // Absent, not false. 'false' would claim bare metal on a host nobody characterised.
+                writer.WriteNull("virtualized");
+            }
             writer.WriteString("osDescription", machine.OsDescription);
             writer.WriteNumber("processCount", machine.ProcessCount);
             writer.WriteNumber("timerResolutionNs", Round(machine.TimerResolutionNs));

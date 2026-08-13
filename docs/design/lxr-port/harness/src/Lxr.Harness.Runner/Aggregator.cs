@@ -47,6 +47,37 @@ public static class Aggregator
     /// </remarks>
     public const int MinimumInvocationsForBootstrap = 3;
 
+    /// <summary>
+    /// The share of arrival slots a latency run may dispatch late before its percentiles stop being a
+    /// statement about the collector. Chosen generously - the observed dispatcher-bound cell was at
+    /// 0.68, and a healthy run is near zero - so that ordinary jitter cannot trip it but a run whose
+    /// offered load was never delivered cannot be published.
+    /// </summary>
+    public const double MaximumLateFraction = 0.05;
+
+    /// <summary>
+    /// The p99 dispatcher scheduling error that a collector pause does not account for, in
+    /// milliseconds, beyond which a latency run is not a measurement of the collector.
+    /// </summary>
+    /// <remarks>
+    /// The bound is on <em>unexplained</em> lag, and the distinction is the whole point. An in-process
+    /// dispatcher is suspended by the collector it is measuring, so when the collector pauses, the
+    /// schedule slips by exactly that pause - and that slip is the measurement, not an artefact. Across
+    /// P0.5's 54 open-loop rate probes the worst dispatch lag equalled the worst pause to within
+    /// 0.01 ms in run after run: 135.34 against 135.33 ms, 32.22 against 32.22 ms, 19.57 against
+    /// 19.58 ms, on two independent clocks. Rejecting those runs, or lowering their arrival rate until
+    /// the lag went away, would have discarded precisely the configurations where the collector pauses
+    /// most - and allocation-churn's rate would have fallen to 1,993 op/s, 1.6% of its capacity, which
+    /// is choosing the offered load from the result it produces.
+    /// <para>
+    /// What remains after subtracting the pause is dispatcher overload, and it does not overlap: the
+    /// six probes that asked for more than the dispatcher could deliver ran 1,205 to 6,015 ms
+    /// unexplained, while the largest unexplained value among the other 48 was 0.14 ms. One
+    /// millisecond sits seven times above the latter and four orders of magnitude below the former.
+    /// </para>
+    /// </remarks>
+    public const double MaximumUnexplainedDispatchLagMs = 1.0;
+
     public static CellAggregate Aggregate(MatrixCell cell, List<InvocationOutcome> outcomes)
     {
         var aggregate = new CellAggregate { Cell = cell, Outcomes = outcomes };
@@ -88,7 +119,75 @@ public static class Aggregator
         return true;
     }
 
-    public static RunResult ToResult(CellAggregate aggregate, string runId, double noiseThresholdPercent)
+    /// <summary>
+    /// Applies the collector-versus-baseline ratio to every non-baseline cell. Shared by the matrix
+    /// and by <c>reaggregate</c> so a re-derived document carries ratios computed by the same rule as
+    /// a freshly measured one; a second copy of this rule is a second place for it to drift.
+    /// </summary>
+    public static void ApplyRatios(
+        ResultDocument document,
+        IReadOnlyList<MatrixCell> cells,
+        IReadOnlyDictionary<string, CellAggregate> aggregates,
+        string baselineArm)
+    {
+        var byResult = new Dictionary<string, RunResult>(StringComparer.Ordinal);
+        foreach (RunResult result in document.Results)
+        {
+            byResult[$"{result.Scenario}.{result.Collector}.{result.Host}.{(result.HeapFactor is double f ? "h" + f.ToString("0.0#", CultureInfo.InvariantCulture) : "hdefault")}"] = result;
+        }
+
+        foreach (MatrixCell cell in cells)
+        {
+            if (string.Equals(cell.Arm.Id, baselineArm, StringComparison.Ordinal))
+            {
+                continue;
+            }
+
+            string baselineId = cell.Id.Replace($".{cell.Arm.Id}.", $".{baselineArm}.", StringComparison.Ordinal);
+            if (!aggregates.TryGetValue(baselineId, out CellAggregate? baseline) ||
+                !byResult.TryGetValue(cell.Id, out RunResult? result))
+            {
+                continue;
+            }
+
+            (RatioEstimate? estimate, string? refusal) = Ratio(baseline, aggregates[cell.Id]);
+
+            // Name the statistic the bootstrap actually resamples, not just the field it came from.
+            // "latencyP99Ms" alone would let a reader assume the ratio is of the two published p99
+            // values as-is; it is the ratio of their means across invocations, which is the same thing
+            // only because the published field is now that mean too.
+            result.RatioStatistic = cell.Primary is PrimaryMetric.Latency
+                ? "mean over invocations of latencyP99Ms"
+                : "mean over invocations of operationsPerSecond";
+
+            if (estimate is RatioEstimate ratio)
+            {
+                result.RatioVsBaseline = ratio.Ratio;
+                result.RatioCiLow = ratio.Low;
+                result.RatioCiHigh = ratio.High;
+                result.CiMethod = Aggregator.CiMethodDescription;
+            }
+            else
+            {
+                // Refusing to publish a ratio is the enforcement of "a run whose collector cannot be
+                // confirmed is invalid". Flagging would not be enough; the number must not exist.
+                result.CiMethod = $"ratio-refused: {refusal}";
+                result.Notes += $" | ratio refused vs {baselineArm}: {refusal}";
+            }
+        }
+    }
+
+    public static RunResult ToResult(CellAggregate aggregate, string runId, double noiseThresholdPercent) =>
+        ToResult(aggregate, runId, noiseThresholdPercent, null, null, null, null);
+
+    public static RunResult ToResult(
+        CellAggregate aggregate,
+        string runId,
+        double noiseThresholdPercent,
+        string? machinePowerPlan,
+        int? machinePhysicalCores,
+        string? machineModel,
+        long? machineTotalMemoryBytes)
     {
         MatrixCell cell = aggregate.Cell;
         var result = new RunResult
@@ -161,36 +260,90 @@ public static class Aggregator
         result.Valid = true;
 
         PopulateFromReport(result, report, aggregate);
+        result.Machine = ReadMachine(report, machinePowerPlan, machinePhysicalCores, machineModel, machineTotalMemoryBytes);
+
+        // The arm's properties are what the arm asks for; they are not the whole request. The heap hard
+        // limit is per cell, so populating requestedConfig from the arm alone published a run pinned to
+        // 128 MiB whose requestedConfig said only Server and Concurrent - the one knob this step varies
+        // was the one knob missing. Merging the worker's own copy fixes that and is stronger besides:
+        // it records what the worker was actually told rather than what the runner meant to tell it.
+        MergeRequestedConfig(result, report);
 
         double[] samples = aggregate.PrimarySamples;
         if (samples.Length > 0)
         {
-            if (cell.Primary is PrimaryMetric.Latency)
+            // Every published statistic is the mean across the cell's valid invocations of that
+            // invocation's own figure, and which family gets aggregated is decided by what the
+            // invocations reported rather than by the scenario catalogue's declared primary metric.
+            //
+            // Keying it on `cell.Primary` - which is what this did - is F16 again, and it reached
+            // further here. Nine of the ten scenarios declare Throughput and run open-loop, so their
+            // latency percentiles skipped the mean entirely and were published as PopulateFromReport
+            // left them: one invocation's values, out of five measured. In P0.5's first published
+            // checkpoint `low-allocation-compute.wks` at h1.3 published a 0.3498 ms latency p99 whose
+            // five invocations mean 0.7668 ms. Nothing was wrong with either number; the record simply
+            // did not say which one it was, and `invocations: 5` beside it said the wrong thing.
+            //
+            // The mean specifically, because Stats.BootstrapRatio resamples invocations and takes
+            // their mean: a reader dividing two published p99 values must land on the published ratio.
+            result.LatencyP50Ms = MeanAcross(aggregate, "latencyP50Ms") ?? result.LatencyP50Ms;
+            result.LatencyP99Ms = MeanAcross(aggregate, "latencyP99Ms") ?? result.LatencyP99Ms;
+            result.LatencyP999Ms = MeanAcross(aggregate, "latencyP999Ms") ?? result.LatencyP999Ms;
+            result.LatencyP9999Ms = MeanAcross(aggregate, "latencyP9999Ms") ?? result.LatencyP9999Ms;
+            result.LatencyMaxMs = MeanAcross(aggregate, "latencyMaxMs") ?? result.LatencyMaxMs;
+            result.ServiceTimeP99Ms = MeanAcross(aggregate, "serviceTimeP99Ms") ?? result.ServiceTimeP99Ms;
+
+            // Read by name rather than from PrimarySamples, which holds whichever metric the cell
+            // declared primary: for a latency-primary cell those samples are latencies, and meaning
+            // them into OperationsPerSecond would publish a latency as a throughput.
+            result.OperationsPerSecond = MeanAcross(aggregate, "operationsPerSecond") ?? result.OperationsPerSecond;
+
+            // The pause statistics and collection counts are still whatever PopulateFromReport copied
+            // out of a single invocation. They are not meaned here because doing so would change what
+            // `pauseP99Ms` denotes without the schema saying so - a p99 of one invocation's pauses and
+            // the mean of five invocations' p99s are different estimators. The per-invocation values
+            // are all in the published CSV; see finding F20.
+        }
+
+        // A run that delivered an arrival schedule is judged on whether it delivered it, whatever the
+        // scenario's declared primary metric is. Keying this on `cell.Primary` - which is a property of
+        // the scenario catalogue entry, not of the run - is what P0.5's first latency matrix did, and
+        // in that matrix nine of the ten scenarios ran open-loop while declaring Throughput as their
+        // primary. Nineteen cells were published valid with a dispatch lag over the bound, including
+        // `lifecycle-semantics.srv` at h6.0, whose published 90.25 ms latency p99 sat against a 90.79 ms
+        // dispatcher lag: the number was the harness's own backlog, quotable as a collector baseline.
+        //
+        // MeanAcross returns null when no invocation reported the field, so a closed-loop run - which
+        // has no schedule to keep and emits no dispatch lag - is untouched by this block.
+        result.LateFraction = MeanAcross(aggregate, "lateFraction");
+
+        // A latency run is a statement about a delivered arrival process. When the dispatcher cannot
+        // keep the schedule, the reported percentiles are its own backlog: in P0.5's first latency
+        // matrix a cell reported a 22.15 ms p99 of which 22.15 ms was queue delay, against a 0.0015 ms
+        // service time and zero collections in the measured region. `Overloaded` does not catch it -
+        // late work still completes, so achieved rate matches requested. The run is marked invalid
+        // rather than flagged, because a number that measures the harness must not be available to be
+        // quoted as a collector baseline.
+        //
+        // The test is on lag the collector does not explain. The dispatcher runs in the process it is
+        // measuring, so a suspension stops it too, and the schedule slips by the length of the pause;
+        // that slip is a real consequence of the collector and belongs in the result. Subtracting the
+        // longest observed pause from the p99 lag is deliberately generous to the collector, which is
+        // the right direction for a bound whose purpose is catching apparatus failure.
+        //
+        // The test is on the lag's magnitude, not on how many slots were late. A Poisson schedule at a
+        // high rate puts many arrivals closer together than one dispatch costs, so a healthy run is
+        // late on a third of its slots by a few microseconds each.
+        result.DispatchLagP99Ms = MeanAcross(aggregate, "dispatchLagP99Ms");
+        double? explainedBy = MeanAcrossSection(aggregate, "gc", "pauseMaxMs");
+        if (result.DispatchLagP99Ms is double lag)
+        {
+            result.UnexplainedDispatchLagMs = Math.Max(0, lag - (explainedBy ?? 0));
+            if (result.UnexplainedDispatchLagMs > MaximumUnexplainedDispatchLagMs)
             {
-                // Every latency percentile is aggregated the same way: the mean across invocations of
-                // that invocation's percentile. Two properties matter and neither is free.
-                //
-                // First, one estimator for the whole family. Taking p99 from one place and its siblings
-                // from another put two different runs in one record, so ValidatePercentileOrdering
-                // could reject a perfectly good document whenever the last invocation happened to be
-                // the fastest, and 'latencyP99Ms' silently meant different things in latency-primary
-                // and throughput-primary rows.
-                //
-                // Second, the mean specifically, because Stats.BootstrapRatio resamples invocations and
-                // takes their mean. Publishing a median here while the ratio bootstraps a mean would
-                // mean a reader dividing the two published p99 values could not reproduce the published
-                // ratio - which is exactly the kind of quiet inconsistency this harness exists to catch
-                // rather than commit.
-                result.LatencyP50Ms = MeanAcross(aggregate, "latencyP50Ms");
-                result.LatencyP99Ms = MeanAcross(aggregate, "latencyP99Ms");
-                result.LatencyP999Ms = MeanAcross(aggregate, "latencyP999Ms");
-                result.LatencyP9999Ms = MeanAcross(aggregate, "latencyP9999Ms");
-                result.LatencyMaxMs = MeanAcross(aggregate, "latencyMaxMs");
-                result.ServiceTimeP99Ms = MeanAcross(aggregate, "serviceTimeP99Ms");
-            }
-            else
-            {
-                result.OperationsPerSecond = Stats.Mean(samples);
+                result.Valid = false;
+                result.InvalidReason = Core.InvalidReason.ScheduleNotDelivered;
+                result.Status = RunStatus.Failed;
             }
         }
 
@@ -262,6 +415,7 @@ public static class Aggregator
             result.LatencyMethod = ReadString(metrics, "latencyMethod");
             result.Overloaded = metrics.TryGetProperty("overloaded", out JsonElement overloaded) &&
                 overloaded.ValueKind is JsonValueKind.True;
+            result.LateFraction = ReadDouble(metrics, "lateFraction");
         }
 
         if (report.TryGetProperty("gc", out JsonElement gc))
@@ -368,7 +522,14 @@ public static class Aggregator
     /// The mean across valid invocations of a per-invocation metric, or null when no invocation
     /// reported it. Null rather than zero: a metric nobody measured is absent, not zero.
     /// </summary>
-    private static double? MeanAcross(CellAggregate aggregate, string metric)
+    private static double? MeanAcross(CellAggregate aggregate, string metric) =>
+        MeanAcrossSection(aggregate, "metrics", metric);
+
+    /// <summary>
+    /// Means a field from a named top-level section of the worker's report across the cell's valid
+    /// invocations, returning <see langword="null"/> when no invocation reported it.
+    /// </summary>
+    private static double? MeanAcrossSection(CellAggregate aggregate, string section, string metric)
     {
         double total = 0;
         int count = 0;
@@ -376,8 +537,8 @@ public static class Aggregator
         foreach (InvocationOutcome outcome in aggregate.ValidOutcomes)
         {
             if (outcome.Report is JsonElement report &&
-                report.TryGetProperty("metrics", out JsonElement metrics) &&
-                ReadDouble(metrics, metric) is double value)
+                report.TryGetProperty(section, out JsonElement fields) &&
+                ReadDouble(fields, metric) is double value)
             {
                 total += value;
                 count++;
@@ -387,8 +548,78 @@ public static class Aggregator
         return count > 0 ? total / count : null;
     }
 
-    private static double? ReadDouble(JsonElement element, string name) =>
-        element.TryGetProperty(name, out JsonElement value) && value.ValueKind is JsonValueKind.Number
+    /// <summary>
+    /// Copies the worker's own record of the configuration it was given into the published result.
+    /// </summary>
+    public static void MergeRequestedConfig(RunResult result, JsonElement report)
+    {
+        if (report.ValueKind is JsonValueKind.Object &&
+            report.TryGetProperty("requestedConfig", out JsonElement requested) &&
+            requested.ValueKind is JsonValueKind.Object)
+        {
+            foreach (JsonProperty property in requested.EnumerateObject())
+            {
+                if (property.Value.ValueKind is JsonValueKind.String)
+                {
+                    result.RequestedConfig[property.Name] = property.Value.GetString()!;
+                }
+            }
+        }
+    }
+
+    /// <summary>Test seam for <see cref="ReadMachine"/>.</summary>
+    public static MachineInfo? MachineFromReport(
+        JsonElement report,
+        string? powerPlan,
+        int? physicalCores,
+        string? model,
+        long? totalMemoryBytes) =>
+        ReadMachine(report, powerPlan, physicalCores, model, totalMemoryBytes);
+
+    /// <summary>
+    /// The machine block, merging what the worker could observe with the facts it could not.
+    /// </summary>
+    /// <remarks>
+    /// P0.4 captured a <see cref="MachineInfo"/> in the worker and never copied it into the result, so
+    /// every published record carried <c>machine: null</c> - the schema field existed and was empty on
+    /// the only files it was ever asked to describe. Power plan, physical core count and system model
+    /// are not readable in-process without a WMI dependency the harness deliberately does not take, so
+    /// they arrive from the operator's machine survey and are recorded as given. A null there is honest;
+    /// a plausible default would not be.
+    /// </remarks>
+    private static MachineInfo? ReadMachine(
+        JsonElement report,
+        string? powerPlan,
+        int? physicalCores,
+        string? model,
+        long? totalMemoryBytes)
+    {
+        if (!report.TryGetProperty("machine", out JsonElement machine) || machine.ValueKind is not JsonValueKind.Object)
+        {
+            return null;
+        }
+
+        return new MachineInfo
+        {
+            ProcessorName = ReadString(machine, "processorName"),
+            LogicalCores = (int)(ReadDouble(machine, "logicalCores") ?? 0),
+            PhysicalCores = physicalCores,
+            // The runner's reading when it has one, because the worker's is the heap limit under a pin.
+            TotalMemoryBytes = totalMemoryBytes ?? (long)(ReadDouble(machine, "totalMemoryBytes") ?? 0),
+            PowerPlan = powerPlan,
+            SystemModel = model,
+            Virtualized = model is null
+                ? null
+                : model.Contains("Virtual", StringComparison.OrdinalIgnoreCase) ||
+                  model.Contains("VMware", StringComparison.OrdinalIgnoreCase) ||
+                  model.Contains("KVM", StringComparison.OrdinalIgnoreCase),
+            OsDescription = ReadString(machine, "osDescription") ?? string.Empty,
+            ProcessCount = (int)(ReadDouble(machine, "processCount") ?? 0),
+            TimerResolutionNs = ReadDouble(machine, "timerResolutionNs") ?? 0,
+        };
+    }
+
+    private static double? ReadDouble(JsonElement element, string name) =>        element.TryGetProperty(name, out JsonElement value) && value.ValueKind is JsonValueKind.Number
             ? value.GetDouble()
             : null;
 

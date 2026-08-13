@@ -527,9 +527,10 @@ public static class WorkerEntryPoint
             }
         }
 
-        double[] endToIntended = new double[steady];
-        double[] endToService = new double[steady];
-        double[] queueDelay = new double[steady];
+        using var endToIntended = new NativeBuffer<double>(steady);
+        using var endToService = new NativeBuffer<double>(steady);
+        using var queueDelay = new NativeBuffer<double>(steady);
+        using var dispatchLag = new NativeBuffer<double>(steady);
         int next = 0;
         for (int i = 0; i < run.RecordCount; i++)
         {
@@ -542,35 +543,50 @@ public static class WorkerEntryPoint
             endToIntended[next] = (record.EndTimestamp - record.IntendedTimestamp) * toMs;
             endToService[next] = (record.EndTimestamp - record.ServiceStartTimestamp) * toMs;
             queueDelay[next] = (record.ServiceStartTimestamp - record.IntendedTimestamp) * toMs;
+            dispatchLag[next] = (record.DispatchTimestamp - record.IntendedTimestamp) * toMs;
             next++;
         }
 
-        Array.Sort(endToIntended);
-        Array.Sort(endToService);
-        Array.Sort(queueDelay);
+        endToIntended.AsSpan().Sort();
+        endToService.AsSpan().Sort();
+        queueDelay.AsSpan().Sort();
+        dispatchLag.AsSpan().Sort();
 
         writer.WriteNumber("operationsPerSecond", run.AchievedRatePerSecond);
         writer.WriteNumber("arrivalRatePerSecond", run.RequestedRatePerSecond);
         writer.WriteNumber("achievedRatePerSecond", run.AchievedRatePerSecond);
         writer.WriteBoolean("overloaded", run.Overloaded);
         writer.WriteNumber("lateCount", run.LateCount);
+        // The fraction of arrival slots that had already elapsed when the dispatcher reached them. An
+        // open-loop run that cannot keep its own schedule is measuring the harness, not the collector:
+        // the queue delay it reports is dispatcher backlog. `overloaded` cannot see this, because it
+        // compares achieved throughput against requested and late work still completes.
+        writer.WriteNumber("lateFraction", run.RecordCount > 0 ? run.LateCount / (double)run.RecordCount : 0.0);
         writer.WriteNumber("backlogMax", run.BacklogMax);
         writer.WriteNumber("checksum", run.Checksum);
         writer.WriteNumber("wallSeconds", run.WallSeconds);
         writer.WriteNumber("steadyStateOperations", steady);
+        writer.WriteNumber("apparatusBytes", run.ApparatusBytes);
 
         // The coordinated-omission-free numbers.
         writer.WriteString("latencyMethod", OpenLoopDriver.LatencyMethod);
-        WritePercentiles(writer, "latency", endToIntended);
+        WritePercentiles(writer, "latency", endToIntended.AsSpan());
 
         // The same run analysed the way a closed-loop harness would report it. Retained so the size of
         // the coordinated-omission error is a measured quantity in every run, not just in control 2.
         writer.WriteString("serviceTimeMethod", "closed-loop-service-start");
-        WritePercentiles(writer, "serviceTime", endToService);
-        WritePercentiles(writer, "queueDelay", queueDelay);
+        WritePercentiles(writer, "serviceTime", endToService.AsSpan());
+        WritePercentiles(writer, "queueDelay", queueDelay.AsSpan());
+
+        // How far behind its own schedule the dispatcher ran. Latency is only a statement about the
+        // collector to the extent this stays small: a lag of tens of milliseconds means the reported
+        // percentiles are the harness's backlog. Counting merely *late* slots cannot say this, because
+        // a Poisson schedule puts many arrivals closer together than the cost of dispatching one, so a
+        // third of slots are microseconds late in a perfectly healthy run.
+        WritePercentiles(writer, "dispatchLag", dispatchLag.AsSpan());
     }
 
-    private static void WritePercentiles(Utf8JsonWriter writer, string prefix, double[] sorted)
+    private static void WritePercentiles(Utf8JsonWriter writer, string prefix, ReadOnlySpan<double> sorted)
     {
         writer.WriteNumber(prefix + "P50Ms", Safe(Stats.Percentile(sorted, 50)));
         writer.WriteNumber(prefix + "P99Ms", Safe(Stats.Percentile(sorted, 99)));

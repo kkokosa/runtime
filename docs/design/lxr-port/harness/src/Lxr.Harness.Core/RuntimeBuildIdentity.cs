@@ -149,7 +149,17 @@ public sealed class MachineInfo
 
     public string? SystemModel { get; init; }
 
-    public required bool Virtualized { get; init; }
+    /// <summary>
+    /// Whether the host is virtualized, or null when it was not determined.
+    /// </summary>
+    /// <remarks>
+    /// Nullable deliberately. Virtualization is inferred from the system model, and the model is an
+    /// operator-supplied fact the worker cannot read for itself. When it is absent, 'false' is a
+    /// definite claim that the host is bare metal - which is the boolean form of publishing 0 for a
+    /// metric nobody measured, and on this project's own hardware it is also wrong: every run made
+    /// without --machine-model would assert 'not virtualized' from a VM.
+    /// </remarks>
+    public bool? Virtualized { get; init; }
 
     public required string OsDescription { get; init; }
 
@@ -160,10 +170,11 @@ public sealed class MachineInfo
 
     public static MachineInfo Capture(string? processorName, int? physicalCores, string? powerPlan, string? systemModel)
     {
-        bool virtualized = systemModel is not null &&
-            (systemModel.Contains("Virtual", StringComparison.OrdinalIgnoreCase) ||
-             systemModel.Contains("VMware", StringComparison.OrdinalIgnoreCase) ||
-             systemModel.Contains("KVM", StringComparison.OrdinalIgnoreCase));
+        bool? virtualized = systemModel is null
+            ? null
+            : systemModel.Contains("Virtual", StringComparison.OrdinalIgnoreCase) ||
+              systemModel.Contains("VMware", StringComparison.OrdinalIgnoreCase) ||
+              systemModel.Contains("KVM", StringComparison.OrdinalIgnoreCase);
 
         return new MachineInfo
         {

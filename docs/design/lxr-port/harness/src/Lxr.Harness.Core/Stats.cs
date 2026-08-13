@@ -47,6 +47,16 @@ public static class Stats
     public static double Percentile(double[] sortedAscending, double percentile)
     {
         ArgumentNullException.ThrowIfNull(sortedAscending);
+        return Percentile((ReadOnlySpan<double>)sortedAscending, percentile);
+    }
+
+    /// <summary>
+    /// Nearest-rank percentile over an ascending-sorted sample. The span overload exists because the
+    /// latency arrays live off the GC heap; it carries the algorithm and the array overload forwards
+    /// to it, so there is exactly one definition of a published percentile.
+    /// </summary>
+    public static double Percentile(ReadOnlySpan<double> sortedAscending, double percentile)
+    {
         ArgumentOutOfRangeException.ThrowIfNegative(percentile);
         ArgumentOutOfRangeException.ThrowIfGreaterThan(percentile, 100);
 
@@ -72,6 +82,11 @@ public static class Stats
     public static double Mean(double[] values)
     {
         ArgumentNullException.ThrowIfNull(values);
+        return Mean((ReadOnlySpan<double>)values);
+    }
+
+    public static double Mean(ReadOnlySpan<double> values)
+    {
         if (values.Length == 0)
         {
             return double.NaN;
