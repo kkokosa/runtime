@@ -21,7 +21,7 @@ function serializeMutation(operation) {
 }
 
 function parseField(body, name) {
-    const match = body.match(new RegExp(`^- \\*\\*${name}:\\*\\*\\s*(.*)$`, "mi"));
+    const match = body.match(new RegExp(`^- \\*\\*${name}:\\*\\*[ \\t]*(.*)$`, "mi"));
     return match?.[1]?.trim() ?? "";
 }
 
@@ -42,7 +42,7 @@ const KNOWN_STEP_FIELDS = new Map([
 function parseStepFields(stepBody) {
     const known = {};
     const extra = [];
-    for (const match of stepBody.matchAll(/^- \*\*(.+?):\*\*\s*(.*)$/gm)) {
+    for (const match of stepBody.matchAll(/^- \*\*(.+?):\*\*[ \t]*(.*)$/gm)) {
         const label = match[1].trim();
         const value = match[2].trim();
         const target = KNOWN_STEP_FIELDS.get(label.toLowerCase());
