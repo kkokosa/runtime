@@ -779,6 +779,30 @@ foreach ($pair in @(@($FRAME_BASE, $FRAME_TIP), @($FRAME_SEG0, $FRAME_TIP))) {
 $FRAME_TOTAL = [int](& git rev-list --count "$FRAME_BASE..$FRAME_TIP")
 $FRAME_SEG   = [int](& git rev-list --count "$FRAME_SEG0^..$FRAME_TIP")
 
+# Rule 109. Two falsifiable claims sit in that rule and both are checked here rather than
+# asserted. The first is a count of the terms the user could not parse; the second is that
+# "fine-arm" -- a term that reached a PR description -- denotes nothing, which is decidable
+# by looking for it in the document the description summarises.
+$P05DOC   = Show-Blob 'docs/design/lxr-port/P0.5-baselines.md'
+$FINE_ARM = ([regex]::Matches($P05DOC, '(?i)fine[- ]arm')).Count
+$r109 = ($text -split "`r?`n" | Where-Object { $_ -match '^109\. ' }) -join ' '
+$listStart = $r109.IndexOf('could not parse ')
+$listEnd   = $r109.IndexOf('unexplained terms in one description')
+if ($listStart -lt 0 -or $listEnd -le $listStart) {
+    Write-Output '  FAIL  rule 109 term list could not be located; its count would be ungated'
+    exit 2
+}
+$TERMS_UNEXPLAINED = ([regex]::Matches($r109.Substring($listStart, $listEnd - $listStart), '(?<!\*)\*[^*]+\*(?!\*)')).Count
+
+
+# The claim above asserts absence, and an absence claim with nothing behind it is decoration.
+# This is the assertion with teeth: if "fine-arm" ever appears in the P0.5 document, the board
+# sentence saying it appears nowhere becomes false and the checker must refuse to pass.
+if ($FINE_ARM -ne 0) {
+    Write-Output ('  FAIL  rule 109 says fine-arm appears nowhere in P0.5-baselines.md, but it appears ' + $FINE_ARM + ' time(s)')
+    exit 2
+}
+
 $domS2  = RatioDomain @('s2')
 $domAll = RatioDomain @('s2', 's3', 's4sdk')
 
@@ -974,6 +998,16 @@ $claims = @(
        re   = '`df9c6988c20` to `dc01449ffc1` is \*\*(\d+)\*\*, and this session\u2019s own segment through that same commit is \*\*(\d+)\*\*'
        sites = 1
        want = @($FRAME_TOTAL, $FRAME_SEG) }
+
+    @{ name = 'rule 109: the count of terms the user could not parse'
+       re   = '\*\*(\d+)\*\* unexplained terms in one description'
+       sites = 1
+       want = @($TERMS_UNEXPLAINED) }
+
+    @{ name = 'rule 109: fine-arm denotes nothing, checked against the document it summarised'
+       re   = 'a term appearing nowhere in the underlying document'
+       sites = 1
+       want = @() }
 
     @{ name = 'rule 89: the floor of the exact test at five against five'
        re   = 'enumerates `C\(10,5\) = (\d+(?:\.\d+)?)` arrangements, so the smallest attainable p is \*\*1/(\d+(?:\.\d+)?) = ([\d.]+)\*\* and the largest usable one is (\d+(?:\.\d+)?)/'
