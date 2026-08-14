@@ -98,6 +98,10 @@ public:
     // Initializes a standalone GC.
     static HRESULT InitializeStandaloneGC();
 
+    static HRESULT SelectWriteBarrierCapabilities(IGCHeap* gcHeap, const VersionInfo& version);
+
+    static const GCWriteBarrierCapabilities& GetWriteBarrierCapabilities();
+
     // Records a change in eventing state. This ultimately will inform the GC that it needs to be aware
     // of new events being enabled.
     static void RecordEventStateChange(bool isPublicProvider, GCEventKeyword keywords, GCEventLevel level);

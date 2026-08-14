@@ -336,6 +336,8 @@ public:
     // Loads (if using a standalone GC) and initializes the GC.
     static HRESULT LoadAndInitialize();
 
+    static const GCWriteBarrierCapabilities& GetWriteBarrierCapabilities();
+
     // Records a change in eventing state. This ultimately will inform the GC that it needs to be aware
     // of new events being enabled.
     static void RecordEventStateChange(bool isPublicProvider, GCEventKeyword keywords, GCEventLevel level);
@@ -349,4 +351,3 @@ private:
 };
 
 #endif // _GCHEAPUTILITIES_H_
-

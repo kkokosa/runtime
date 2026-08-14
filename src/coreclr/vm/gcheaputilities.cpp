@@ -6,6 +6,7 @@
 #include "gcheaputilities.h"
 #include "appdomain.hpp"
 #include "hostinformation.h"
+#include "../gc/gccapabilities.h"
 
 #include "../gc/env/gcenv.ee.h"
 #include "../gc/env/gctoeeinterface.standalone.inl"
@@ -67,6 +68,7 @@ VersionInfo g_gc_version_info;
 PTR_VOID g_gc_module_base;
 
 bool GCHeapUtilities::s_useThreadAllocationContexts;
+GCWriteBarrierCapabilities g_write_barrier_capabilities;
 
 // GC entrypoints for the linked-in GC. These symbols are invoked
 // directly if we are not using a standalone GC.
@@ -88,6 +90,51 @@ PTR_VOID GCHeapUtilities::GetGCModuleBase()
 
 namespace
 {
+HRESULT SelectWriteBarrierCapabilities(IGCHeap* gcHeap, const VersionInfo& version)
+{
+    GCWriteBarrierCapabilities capabilities = {};
+    capabilities.Size = sizeof(capabilities);
+    capabilities.Version = GC_WRITE_BARRIER_CAPABILITIES_VERSION;
+
+    if (UsesGCWriteBarrierCapabilities(version.MajorVersion, version.MinorVersion))
+    {
+        HRESULT result = gcHeap->GetWriteBarrierCapabilities(&capabilities);
+        if (FAILED(result))
+        {
+            LOG((LF_GC, LL_FATALERROR,
+                "GC write-barrier capability query failed for interface %u.%u with HR = 0x%X\n",
+                version.MajorVersion, version.MinorVersion, result));
+            return result;
+        }
+    }
+    else
+    {
+        capabilities.Kind = GCWriteBarrierKind::CardTable;
+    }
+
+    GCWriteBarrierCapabilitiesValidationError error = ValidateGCWriteBarrierCapabilities(capabilities);
+    if (error != GCWriteBarrierCapabilitiesValidationError::None)
+    {
+        LOG((LF_GC, LL_FATALERROR,
+            "GC write-barrier declaration for interface %u.%u is invalid: %s\n",
+            version.MajorVersion,
+            version.MinorVersion,
+            GetGCWriteBarrierCapabilitiesValidationErrorMessage(error)));
+        return E_INVALIDARG;
+    }
+
+    if (capabilities.Kind == GCWriteBarrierKind::SideMetadataFieldLog)
+    {
+        LOG((LF_GC, LL_FATALERROR,
+            "GC write-barrier declaration requests side-metadata field logging, "
+            "which this runtime revision recognizes but does not implement\n"));
+        return E_NOTIMPL;
+    }
+
+    g_write_barrier_capabilities = capabilities;
+    return S_OK;
+}
+
 // This block of code contains all of the state necessary to handle incoming
 // EtwCallbacks before the GC has been initialized. This is a tricky problem
 // because EtwCallbacks can appear at any time, even when we are just about
@@ -110,8 +157,18 @@ BOOL g_gcEventTracingInitialized = FALSE;
 // to "publish" it by assigning it to g_pGCHeap.
 //
 // This function can proceed concurrently with StashKeywordAndLevel below.
-void FinalizeLoad(IGCHeap* gcHeap, IGCHandleManager* handleMgr, PTR_VOID pGcModuleBase)
+HRESULT FinalizeLoad(
+    IGCHeap* gcHeap,
+    IGCHandleManager* handleMgr,
+    PTR_VOID pGcModuleBase,
+    const VersionInfo& version)
 {
+    HRESULT result = SelectWriteBarrierCapabilities(gcHeap, version);
+    if (FAILED(result))
+    {
+        return result;
+    }
+
     g_pGCHeap = gcHeap;
 
     {
@@ -131,6 +188,7 @@ void FinalizeLoad(IGCHeap* gcHeap, IGCHandleManager* handleMgr, PTR_VOID pGcModu
     LOG((LF_GC, LL_INFO100, "GC load successful\n"));
 
     StressLog::AddModule((uint8_t*)pGcModuleBase);
+    return S_OK;
 }
 
 void StashKeywordAndLevel(bool isPublicProvider, GCEventKeyword keywords, GCEventLevel level)
@@ -311,7 +369,7 @@ HRESULT LoadAndInitializeGC(LPCWSTR standaloneGCName, LPCWSTR standaloneGCPath)
         pGcModuleBase = (PTR_VOID)PAL_GetSymbolModuleBase((PVOID)initFunc);
 #endif
 
-        FinalizeLoad(heap, manager, pGcModuleBase);
+        initResult = FinalizeLoad(heap, manager, pGcModuleBase, g_gc_version_info);
     }
     else
     {
@@ -350,7 +408,7 @@ HRESULT InitializeDefaultGC()
     HRESULT initResult = GC_Initialize(nullptr, &heap, &manager, &g_gc_dac_vars);
     if (initResult == S_OK)
     {
-        FinalizeLoad(heap, manager, GetClrModuleBase());
+        initResult = FinalizeLoad(heap, manager, GetClrModuleBase(), g_gc_version_info);
     }
     else
     {
@@ -362,6 +420,11 @@ HRESULT InitializeDefaultGC()
 }
 
 } // anonymous namespace
+
+const GCWriteBarrierCapabilities& GCHeapUtilities::GetWriteBarrierCapabilities()
+{
+    return g_write_barrier_capabilities;
+}
 
 // Loads (if necessary) and initializes the GC. If using a standalone GC,
 // it loads the library containing it and dynamically loads the GC entry point.

@@ -11,7 +11,9 @@
 // The minor version of the IGCHeap interface. Non-breaking changes are required
 // to bump the minor version number. GCs and EEs with minor version number
 // mismatches can still interoperate correctly, with some care.
-#define GC_INTERFACE_MINOR_VERSION 8
+#define GC_INTERFACE_MINOR_VERSION 9
+
+#include "gcwritebarrier.h"
 
 // The major version of the IGCToCLR interface. Breaking changes to this interface
 // require bumps in the major version number.
@@ -253,7 +255,6 @@ struct segment_info
 // Software Write Watch table.
 #define SOFTWARE_WRITE_WATCH_AddressToTableByteIndexShift 0xc
 
-class Object;
 class IGCHeap;
 class IGCHandleManager;
 
@@ -1074,6 +1075,10 @@ public:
     virtual void DiagWalkHeapWithACHandling(walk_fn fn, void* context, int gen_number, bool walk_large_object_heap_p) PURE_VIRTUAL
 
     virtual void NullBridgeObjectsWeakRefs(size_t length, void* unreachableObjectHandles) PURE_VIRTUAL;
+
+    // Appended in GC interface 5.9. The runtime calls this only for collectors
+    // that report 5.9 or later.
+    virtual HRESULT GetWriteBarrierCapabilities(GCWriteBarrierCapabilities* capabilities) PURE_VIRTUAL;
 };
 
 #ifdef WRITE_BARRIER_CHECK

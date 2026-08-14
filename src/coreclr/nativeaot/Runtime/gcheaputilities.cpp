@@ -8,6 +8,7 @@
 
 #include "gceventstatus.h"
 #include "gcinterface.h"
+#include "../../gc/gccapabilities.h"
 
 // This is the global GC heap, maintained by the VM.
 GPTR_IMPL(IGCHeap, g_pGCHeap);
@@ -36,6 +37,7 @@ IGCHandleManager* g_pGCHandleManager = nullptr;
 
 GcDacVars g_gc_dac_vars;
 GPTR_IMPL(GcDacVars, g_gcDacGlobals);
+GCWriteBarrierCapabilities g_write_barrier_capabilities;
 
 // GC entrypoints for the linked-in GC. These symbols are invoked
 // directly if we are not using a standalone GC.
@@ -49,6 +51,56 @@ extern "C" HRESULT LOCALGC_CALLCONV GC_Initialize(
 #ifndef DACCESS_COMPILE
 
 HRESULT InitializeGCSelector();
+
+HRESULT GCHeapUtilities::SelectWriteBarrierCapabilities(IGCHeap* gcHeap, const VersionInfo& version)
+{
+    GCWriteBarrierCapabilities capabilities = {};
+    capabilities.Size = sizeof(capabilities);
+    capabilities.Version = GC_WRITE_BARRIER_CAPABILITIES_VERSION;
+
+    if (UsesGCWriteBarrierCapabilities(version.MajorVersion, version.MinorVersion))
+    {
+        HRESULT result = gcHeap->GetWriteBarrierCapabilities(&capabilities);
+        if (FAILED(result))
+        {
+            LOG((LF_GC, LL_FATALERROR,
+                "GC write-barrier capability query failed for interface %u.%u with HR = 0x%X\n",
+                version.MajorVersion, version.MinorVersion, result));
+            return result;
+        }
+    }
+    else
+    {
+        capabilities.Kind = GCWriteBarrierKind::CardTable;
+    }
+
+    GCWriteBarrierCapabilitiesValidationError error = ValidateGCWriteBarrierCapabilities(capabilities);
+    if (error != GCWriteBarrierCapabilitiesValidationError::None)
+    {
+        LOG((LF_GC, LL_FATALERROR,
+            "GC write-barrier declaration for interface %u.%u is invalid: %s\n",
+            version.MajorVersion,
+            version.MinorVersion,
+            GetGCWriteBarrierCapabilitiesValidationErrorMessage(error)));
+        return E_INVALIDARG;
+    }
+
+    if (capabilities.Kind == GCWriteBarrierKind::SideMetadataFieldLog)
+    {
+        LOG((LF_GC, LL_FATALERROR,
+            "GC write-barrier declaration requests side-metadata field logging, "
+            "which NativeAOT recognizes but does not implement\n"));
+        return E_NOTIMPL;
+    }
+
+    g_write_barrier_capabilities = capabilities;
+    return S_OK;
+}
+
+const GCWriteBarrierCapabilities& GCHeapUtilities::GetWriteBarrierCapabilities()
+{
+    return g_write_barrier_capabilities;
+}
 
 HRESULT GCHeapUtilities::InitializeGC()
 {
@@ -75,6 +127,14 @@ HRESULT GCHeapUtilities::InitializeDefaultGC()
     g_gc_dac_vars.major_version_number = GC_INTERFACE_MAJOR_VERSION;
     g_gc_dac_vars.minor_version_number = GC_INTERFACE_MINOR_VERSION;
     HRESULT initResult = GC_Initialize(nullptr, &heap, &manager, &g_gc_dac_vars);
+    if (initResult == S_OK)
+    {
+        VersionInfo version = {};
+        version.MajorVersion = GC_INTERFACE_MAJOR_VERSION;
+        version.MinorVersion = GC_INTERFACE_MINOR_VERSION;
+        initResult = SelectWriteBarrierCapabilities(heap, version);
+    }
+
     if (initResult == S_OK)
     {
         g_pGCHeap = heap;

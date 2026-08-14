@@ -1140,5 +1140,14 @@ void InitJITWriteBarrierHelpers()
 {
     STANDARD_VM_CONTRACT;
 
-    g_WriteBarrierManager.Initialize();
+    switch (GCHeapUtilities::GetWriteBarrierCapabilities().Kind)
+    {
+        case GCWriteBarrierKind::CardTable:
+            g_WriteBarrierManager.Initialize();
+            break;
+
+        case GCWriteBarrierKind::SideMetadataFieldLog:
+        default:
+            UNREACHABLE();
+    }
 }

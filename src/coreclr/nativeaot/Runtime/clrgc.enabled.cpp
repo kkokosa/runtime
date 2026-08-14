@@ -218,6 +218,11 @@ HRESULT GCHeapUtilities::InitializeStandaloneGC()
     HRESULT initResult = initFunc(gcToClr, &heap, &manager, &g_gc_dac_vars);
     if (initResult == S_OK)
     {
+        initResult = GCHeapUtilities::SelectWriteBarrierCapabilities(heap, g_gc_version_info);
+    }
+
+    if (initResult == S_OK)
+    {
         g_pGCHeap = heap;
         {
             CrstHolder lh(&g_eventStashLock);
