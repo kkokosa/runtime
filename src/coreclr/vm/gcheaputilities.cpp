@@ -110,7 +110,7 @@ HRESULT SelectWriteBarrierCapabilities(IGCHeap* gcHeap, const VersionInfo& versi
         LOG((LF_GC, LL_FATALERROR,
             "GC write-barrier capability query failed for interface %u.%u with HR = 0x%X\n",
             version.MajorVersion, version.MinorVersion, selection.QueryResult));
-        return selection.QueryResult;
+        return GetGCWriteBarrierCapabilitiesSelectionFailureResult(selection.Error, selection.QueryResult);
     }
 
     if (selection.Error == GCWriteBarrierCapabilitiesSelectionError::InvalidDeclaration)
@@ -120,7 +120,7 @@ HRESULT SelectWriteBarrierCapabilities(IGCHeap* gcHeap, const VersionInfo& versi
             version.MajorVersion,
             version.MinorVersion,
             GetGCWriteBarrierCapabilitiesValidationErrorMessage(selection.ValidationError)));
-        return E_INVALIDARG;
+        return GetGCWriteBarrierCapabilitiesSelectionFailureResult(selection.Error, selection.QueryResult);
     }
 
     if (selection.Error == GCWriteBarrierCapabilitiesSelectionError::UnsupportedKind)
@@ -128,7 +128,7 @@ HRESULT SelectWriteBarrierCapabilities(IGCHeap* gcHeap, const VersionInfo& versi
         LOG((LF_GC, LL_FATALERROR,
             "GC write-barrier declaration requests side-metadata field logging, "
             "which this runtime revision recognizes but does not implement\n"));
-        return E_NOTIMPL;
+        return GetGCWriteBarrierCapabilitiesSelectionFailureResult(selection.Error, selection.QueryResult);
     }
 
     g_write_barrier_capabilities = capabilities;

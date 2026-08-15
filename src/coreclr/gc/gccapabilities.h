@@ -39,6 +39,26 @@ typedef int32_t (*GCWriteBarrierCapabilitiesQuery)(
     void* context,
     GCWriteBarrierCapabilities* capabilities);
 
+constexpr int32_t GCWriteBarrierCapabilitiesEInvalidArg = static_cast<int32_t>(UINT32_C(0x80070057));
+constexpr int32_t GCWriteBarrierCapabilitiesENotImpl = static_cast<int32_t>(UINT32_C(0x80004001));
+
+inline int32_t GetGCWriteBarrierCapabilitiesSelectionFailureResult(
+    GCWriteBarrierCapabilitiesSelectionError error,
+    int32_t queryResult)
+{
+    switch (error)
+    {
+        case GCWriteBarrierCapabilitiesSelectionError::QueryFailed:
+            return queryResult;
+        case GCWriteBarrierCapabilitiesSelectionError::InvalidDeclaration:
+            return GCWriteBarrierCapabilitiesEInvalidArg;
+        case GCWriteBarrierCapabilitiesSelectionError::UnsupportedKind:
+            return GCWriteBarrierCapabilitiesENotImpl;
+        default:
+            return 0;
+    }
+}
+
 inline bool IsGCInterfaceMajorVersionCompatible(uint32_t runtimeMajorVersion, uint32_t collectorMajorVersion)
 {
     return runtimeMajorVersion == collectorMajorVersion;

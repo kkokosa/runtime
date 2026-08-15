@@ -75,7 +75,7 @@ HRESULT GCHeapUtilities::SelectWriteBarrierCapabilities(IGCHeap* gcHeap, const V
         LOG((LF_GC, LL_FATALERROR,
             "GC write-barrier capability query failed for interface %u.%u with HR = 0x%X\n",
             version.MajorVersion, version.MinorVersion, selection.QueryResult));
-        return selection.QueryResult;
+        return GetGCWriteBarrierCapabilitiesSelectionFailureResult(selection.Error, selection.QueryResult);
     }
 
     if (selection.Error == GCWriteBarrierCapabilitiesSelectionError::InvalidDeclaration)
@@ -85,7 +85,7 @@ HRESULT GCHeapUtilities::SelectWriteBarrierCapabilities(IGCHeap* gcHeap, const V
             version.MajorVersion,
             version.MinorVersion,
             GetGCWriteBarrierCapabilitiesValidationErrorMessage(selection.ValidationError)));
-        return E_NOTIMPL;
+        return GetGCWriteBarrierCapabilitiesSelectionFailureResult(selection.Error, selection.QueryResult);
     }
 
     if (selection.Error == GCWriteBarrierCapabilitiesSelectionError::UnsupportedKind)
@@ -93,7 +93,7 @@ HRESULT GCHeapUtilities::SelectWriteBarrierCapabilities(IGCHeap* gcHeap, const V
         LOG((LF_GC, LL_FATALERROR,
             "GC write-barrier declaration requests side-metadata field logging, "
             "which NativeAOT recognizes but does not implement\n"));
-        return E_FAIL;
+        return GetGCWriteBarrierCapabilitiesSelectionFailureResult(selection.Error, selection.QueryResult);
     }
 
     g_write_barrier_capabilities = capabilities;

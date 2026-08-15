@@ -152,6 +152,22 @@ int main()
         IsGCInterfaceMajorVersionCompatible(5, 5) &&
         !IsGCInterfaceMajorVersionCompatible(5, 4) &&
         !IsGCInterfaceMajorVersionCompatible(5, 6));
+    ExpectTrue(
+        "invalid declarations map to E_INVALIDARG",
+        GetGCWriteBarrierCapabilitiesSelectionFailureResult(
+            GCWriteBarrierCapabilitiesSelectionError::InvalidDeclaration,
+            0) == static_cast<int32_t>(UINT32_C(0x80070057)));
+    ExpectTrue(
+        "unsupported kinds map to E_NOTIMPL",
+        GetGCWriteBarrierCapabilitiesSelectionFailureResult(
+            GCWriteBarrierCapabilitiesSelectionError::UnsupportedKind,
+            0) == static_cast<int32_t>(UINT32_C(0x80004001)));
+    ExpectTrue(
+        "query failures preserve the collector's HRESULT",
+        GetGCWriteBarrierCapabilitiesSelectionFailureResult(
+            GCWriteBarrierCapabilitiesSelectionError::QueryFailed,
+            static_cast<int32_t>(UINT32_C(0x81234567))) ==
+            static_cast<int32_t>(UINT32_C(0x81234567)));
 
     GCWriteBarrierCapabilities value = CardTable();
     Expect("card table", ValidateGCWriteBarrierCapabilities(value), GCWriteBarrierCapabilitiesValidationError::None);
