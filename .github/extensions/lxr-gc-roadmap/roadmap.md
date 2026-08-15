@@ -288,13 +288,13 @@ consumer rather than the definition.
 - **Status:** planned
 - **Summary:** Extend the GC contract with capabilities any collector could use — a parameterized barrier family, exact allocation notification, object reference enumeration, and negotiated header bits — then prove they cost nothing when unused.
 
-### P1.1 — GC capability negotiation and barrier-family contract
+### P1.1 — GC-requested barrier-shape contract
 
-- **Status:** done
-- **Summary:** Added a versioned startup contract that lets a collector declare its field-write barrier family without adding a branch to managed reference writes. Existing collector source and 5.8 binaries remain compatible; side-metadata execution is deliberately rejected until P1.2 implements it.
-- **Correctness:** CoreCLR and NativeAOT reject incompatible major versions, negotiate bounded size/version records, fail before heap publication on invalid declarations, and preserve the built-in card-table default. Windows x64 builds and Workstation/Server execution passed; the committed validator passed 57/57 and six old/new runtime and collector combinations passed 6/6 from a clean archive. Windows x86 and ARM64 cross-builds passed; other architectures were source-audited, and no NativeAOT application ran.
-- **Benchmarks:** Built-in field-write output remained byte-for-byte identical in three CoreCLR barrier objects, the NativeAOT x64 barrier object, and representative Workstation/Server methods with ReadyToRun on and off. The repaired matrix produced 24/24 valid 60-second runs and 58/58 harness checks; paired smoke differences of -0.33% Workstation and -0.71% Server were inside about +/-1.35% uncertainty, so no speedup is claimed, and a later interference-contaminated rerun was rejected.
-- **Runtime changes:** Bumps the GC interface minor version to 5.9 and appends a source-compatible capability query with a default card-table answer. Adds a generic, size/version-negotiated side-metadata field-log description (metadata base, granularity shift, bit meaning, and slow helper), shared fail-closed validation, exact major-version checks, and startup-only selection in CoreCLR and NativeAOT; side-metadata execution returns E_NOTIMPL until P1.2.
+- **Status:** in progress
+- **Summary:** Replacing the completed versioned negotiation prototype with a simpler generic contract: the collector requests one write-barrier shape through the existing GC-to-EE path, and initialization fails immediately when that shape is unsupported. The redesign must also define and measure how a shape with a C/C++ slow path preserves the JIT's register contract before P1.2 implements it.
+- **Correctness:** The earlier prototype passed its contract, compatibility, and loader checks, but those results are no longer the final P1.1 evidence because the control plane is being replaced. Completion requires CoreCLR and NativeAOT parity, explicit rejection before heap publication, old-interface compatibility, exact preservation of the built-in card-table path, and executable register-preservation checks for the generic slow-call design.
+- **Benchmarks:** The earlier prototype proved byte identity for the unused family and found no measurable regression, but the revised design must re-establish that evidence. It must additionally measure the cost of the slow-call convention rather than treating a C/C++ callback pointer as a complete execution contract.
+- **Runtime changes:** In progress: remove the parallel capability query and bounded record negotiation, extend the existing write-barrier parameter path with a generic shape request, fail fast on unsupported shapes, and define a shape-specific slow-call convention that preserves all JIT-assumed state without charging collectors that use the built-in barrier.
 - **Dependencies:** P0.3
 - **References:** `src/coreclr/gc/gcinterface.h:9,14,49-56`; `mmtk-core/src/plan/barriers.rs`
 
