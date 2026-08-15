@@ -47,6 +47,13 @@ if (NOT CLR_CMAKE_HOST_ARCH_WASM)
         ${CLR_SOURCES}
     )
 
+    if(CLR_CMAKE_ENABLE_WRITE_BARRIER_STANDARD_ABI_TEST)
+        target_link_options(coreclr PRIVATE
+            "/EXPORT:GC_WriteBarrierTest_GetCallCount"
+            "/EXPORT:GC_WriteBarrierTest_GetClobberMask"
+        )
+    endif()
+
     add_custom_target(coreclr_exports DEPENDS ${EXPORTS_FILE})
     add_custom_target(coreclr_def DEPENDS ${DEF_FILE})
 

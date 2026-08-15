@@ -25,6 +25,7 @@
 #include "genanalysis.h"
 #include "eventpipeadapter.h"
 #ifdef FEATURE_WRITE_BARRIER_STANDARD_ABI_TEST
+#include <clrconfignocache.h>
 #include "writebarriermanager.h"
 #endif
 #include <minipal/memorybarrierprocesswide.h>
@@ -1111,6 +1112,20 @@ void GCToEEInterface::StompWriteBarrier(WriteBarrierParameters* args)
     {
         assert(args->is_runtime_suspended && "the runtime must be suspended here!");
 
+        // This operation should only be invoked once, upon initialization.
+        assert(g_card_table == nullptr);
+        assert(g_lowest_address == nullptr);
+        assert(g_highest_address == nullptr);
+#ifdef FEATURE_MANUALLY_MANAGED_CARD_BUNDLES
+        assert(g_card_bundle_table == nullptr);
+#endif
+        assert(args->card_table != nullptr);
+        assert(args->lowest_address != nullptr);
+        assert(args->highest_address != nullptr);
+        assert(args->ephemeral_low != nullptr);
+        assert(args->ephemeral_high != nullptr);
+        assert(!args->requires_upper_bounds_check && "the ephemeral generation must be at the top of the heap!");
+
         bool useStandardWriteBarrierAbi = false;
         if (g_write_barrier_parameters_include_shape)
         {
@@ -1155,13 +1170,37 @@ void GCToEEInterface::StompWriteBarrier(WriteBarrierParameters* args)
             }
         }
 
+#ifdef FEATURE_WRITE_BARRIER_STANDARD_ABI_TEST
+        CLRConfigNoCache conflictTest = CLRConfigNoCache::Get("GCWriteBarrierTestConflict");
+        DWORD conflictTestEnabled = 0;
+        if (conflictTest.IsSet() &&
+            conflictTest.TryAsInteger(10, conflictTestEnabled) &&
+            conflictTestEnabled != 0)
+        {
+            bool preparedOppositeMode =
+                GCHeapUtilities::TryPrepareWriteBarrierCodegenMode(!useStandardWriteBarrierAbi);
+            if (!preparedOppositeMode)
+            {
+                EEPOLICY_HANDLE_FATAL_ERROR_WITH_MESSAGE(
+                    COR_E_EXECUTIONENGINE,
+                    W("Unable to prepare the write-barrier codegen conflict test."));
+                UNREACHABLE();
+            }
+        }
+#endif
+
         if (!GCHeapUtilities::TryPrepareWriteBarrierCodegenMode(useStandardWriteBarrierAbi))
         {
             if (g_write_barrier_parameters_include_shape)
             {
                 args->write_barrier_request_status = WriteBarrierRequestStatus::Unsupported;
+                return;
             }
-            return;
+
+            EEPOLICY_HANDLE_FATAL_ERROR_WITH_MESSAGE(
+                COR_E_EXECUTIONENGINE,
+                W("Conflicting write-barrier codegen mode during GC initialization."));
+            UNREACHABLE();
         }
 
 #ifdef FEATURE_WRITE_BARRIER_STANDARD_ABI_TEST
@@ -1179,21 +1218,9 @@ void GCToEEInterface::StompWriteBarrier(WriteBarrierParameters* args)
             args->write_barrier_request_status = WriteBarrierRequestStatus::Accepted;
         }
 
-        // This operation should only be invoked once, upon initialization.
-        assert(g_card_table == nullptr);
-        assert(g_lowest_address == nullptr);
-        assert(g_highest_address == nullptr);
-        assert(args->card_table != nullptr);
-        assert(args->lowest_address != nullptr);
-        assert(args->highest_address != nullptr);
-        assert(args->ephemeral_low != nullptr);
-        assert(args->ephemeral_high != nullptr);
-        assert(!args->requires_upper_bounds_check && "the ephemeral generation must be at the top of the heap!");
-
         g_card_table = args->card_table;
 
 #ifdef FEATURE_MANUALLY_MANAGED_CARD_BUNDLES
-        assert(g_card_bundle_table == nullptr);
         g_card_bundle_table = args->card_bundle_table;
 #endif
 

@@ -33,7 +33,7 @@ internal static class Program
             throw new InvalidOperationException("The destructive write-barrier callback was not selected.");
         }
 
-        List<string> executedState = ["integer", "object", "Vector128"];
+        List<string> executedState = ["field/array helpers", "integer", "object", "Vector128"];
         if (Vector256.IsHardwareAccelerated)
         {
             executedState.Add("Vector256");
@@ -266,9 +266,11 @@ internal static class Program
 
     private static NativeHooks LoadNativeHooks()
     {
-        string gcPath = Environment.GetEnvironmentVariable("DOTNET_GCPath")
-            ?? throw new InvalidOperationException("DOTNET_GCPath is required.");
-        nint library = NativeLibrary.Load(gcPath);
+        string libraryPath = Environment.GetEnvironmentVariable("P11_NATIVE_HOOK_LIBRARY")
+            ?? Environment.GetEnvironmentVariable("DOTNET_GCPath")
+            ?? throw new InvalidOperationException(
+                "P11_NATIVE_HOOK_LIBRARY or DOTNET_GCPath is required.");
+        nint library = NativeLibrary.Load(libraryPath);
         nint callCount = NativeLibrary.GetExport(library, "GC_WriteBarrierTest_GetCallCount");
         nint clobberMask = NativeLibrary.GetExport(library, "GC_WriteBarrierTest_GetClobberMask");
         return new NativeHooks(

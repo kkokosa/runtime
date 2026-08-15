@@ -207,6 +207,7 @@ void InitializeStandardWriteBarrierForTest(WriteBarrierSlowPath slowPath)
     _ASSERTE(JIT_WriteBarrier_Loc != nullptr);
 
     g_standard_write_barrier_slow_path = slowPath;
+    // P1.1 validates scalar field and array helpers; ASSIGN_BYREF retains its specialized contract.
     SetJitHelperFunction(CORINFO_HELP_ASSIGN_REF, StandardWriteBarrierForTest);
     SetJitHelperFunction(CORINFO_HELP_CHECKED_ASSIGN_REF, StandardCheckedWriteBarrierForTest);
 }

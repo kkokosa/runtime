@@ -1009,6 +1009,15 @@ list(APPEND VM_SOURCES_WKS
      ${GC_SOURCES_WKS}
 )
 
+if(CLR_CMAKE_ENABLE_WRITE_BARRIER_STANDARD_ABI_TEST)
+    list(APPEND VM_SOURCES_WKS
+        ../gc/standardwritebarriertest.cpp
+    )
+    list(APPEND VM_SOURCES_WKS_ARCH_ASM
+        ../gc/amd64/standardwritebarriertest.asm
+    )
+endif()
+
 list(APPEND VM_HEADERS_WKS
      ${GC_HEADERS_WKS}
 )
@@ -1095,6 +1104,13 @@ if(FEATURE_SVR_GC)
     target_compile_definitions(vm_gc_svr PRIVATE GC_DESCRIPTOR SERVER_GC)
     add_dependencies(vm_gc_svr eventing_headers)
     add_pgo(vm_gc_svr)
+endif()
+
+if(CLR_CMAKE_ENABLE_WRITE_BARRIER_STANDARD_ABI_TEST)
+    target_compile_definitions(vm_gc_wks PRIVATE FEATURE_WRITE_BARRIER_STANDARD_ABI_TEST)
+    if(FEATURE_SVR_GC)
+        target_compile_definitions(vm_gc_svr PRIVATE FEATURE_WRITE_BARRIER_STANDARD_ABI_TEST)
+    endif()
 endif()
 
 if (NOT CLR_CMAKE_TARGET_ARCH_WASM)
