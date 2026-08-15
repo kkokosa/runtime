@@ -131,6 +131,14 @@ HRESULT SelectWriteBarrierCapabilities(IGCHeap* gcHeap, const VersionInfo& versi
         return GetGCWriteBarrierCapabilitiesSelectionFailureResult(selection.Error, selection.QueryResult);
     }
 
+    if (selection.Error != GCWriteBarrierCapabilitiesSelectionError::None)
+    {
+        LOG((LF_GC, LL_FATALERROR,
+            "GC write-barrier capability selection failed with unexpected error %u\n",
+            static_cast<uint32_t>(selection.Error)));
+        return GetGCWriteBarrierCapabilitiesSelectionFailureResult(selection.Error, selection.QueryResult);
+    }
+
     g_write_barrier_capabilities = capabilities;
     return S_OK;
 }

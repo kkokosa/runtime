@@ -40,6 +40,7 @@ typedef int32_t (*GCWriteBarrierCapabilitiesQuery)(
     GCWriteBarrierCapabilities* capabilities);
 
 constexpr int32_t GCWriteBarrierCapabilitiesEInvalidArg = static_cast<int32_t>(UINT32_C(0x80070057));
+constexpr int32_t GCWriteBarrierCapabilitiesEFail = static_cast<int32_t>(UINT32_C(0x80004005));
 constexpr int32_t GCWriteBarrierCapabilitiesENotImpl = static_cast<int32_t>(UINT32_C(0x80004001));
 
 inline int32_t GetGCWriteBarrierCapabilitiesSelectionFailureResult(
@@ -55,7 +56,7 @@ inline int32_t GetGCWriteBarrierCapabilitiesSelectionFailureResult(
         case GCWriteBarrierCapabilitiesSelectionError::UnsupportedKind:
             return GCWriteBarrierCapabilitiesENotImpl;
         default:
-            return 0;
+            return GCWriteBarrierCapabilitiesEFail;
     }
 }
 

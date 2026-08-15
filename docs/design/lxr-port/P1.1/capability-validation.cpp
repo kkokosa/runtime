@@ -168,6 +168,16 @@ int main()
             GCWriteBarrierCapabilitiesSelectionError::QueryFailed,
             static_cast<int32_t>(UINT32_C(0x81234567))) ==
             static_cast<int32_t>(UINT32_C(0x81234567)));
+    ExpectTrue(
+        "unknown negative selection errors fail with E_FAIL",
+        GetGCWriteBarrierCapabilitiesSelectionFailureResult(
+            static_cast<GCWriteBarrierCapabilitiesSelectionError>(-1),
+            0) == static_cast<int32_t>(UINT32_C(0x80004005)));
+    ExpectTrue(
+        "unknown positive selection errors fail with E_FAIL rather than S_OK",
+        GetGCWriteBarrierCapabilitiesSelectionFailureResult(
+            static_cast<GCWriteBarrierCapabilitiesSelectionError>(INT32_MAX),
+            0) == static_cast<int32_t>(UINT32_C(0x80004005)));
 
     GCWriteBarrierCapabilities value = CardTable();
     Expect("card table", ValidateGCWriteBarrierCapabilities(value), GCWriteBarrierCapabilitiesValidationError::None);
