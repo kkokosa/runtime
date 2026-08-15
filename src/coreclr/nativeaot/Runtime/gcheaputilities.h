@@ -10,6 +10,9 @@
 // The singular heap instance.
 GPTR_DECL(IGCHeap, g_pGCHeap);
 
+// Whether the loaded collector's WriteBarrierParameters contains the 5.9 tail.
+extern bool g_write_barrier_parameters_include_shape;
+
 #ifndef DACCESS_COMPILE
 extern "C" {
 #endif // !DACCESS_COMPILE
@@ -97,10 +100,6 @@ public:
 
     // Initializes a standalone GC.
     static HRESULT InitializeStandaloneGC();
-
-    static HRESULT SelectWriteBarrierCapabilities(IGCHeap* gcHeap, const VersionInfo& version);
-
-    static const GCWriteBarrierCapabilities& GetWriteBarrierCapabilities();
 
     // Records a change in eventing state. This ultimately will inform the GC that it needs to be aware
     // of new events being enabled.

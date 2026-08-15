@@ -11013,6 +11013,11 @@ static CORJIT_FLAGS GetCompileFlags(PrepareCodeConfig* prepareConfig, MethodDesc
     //
     flags.Add(ExecutionManager::GetEEJitManager()->GetCPUCompileFlags());
 
+    if (GCHeapUtilities::UseStandardWriteBarrierAbiForJit())
+    {
+        flags.Set(CORJIT_FLAGS::CORJIT_FLAG_USE_STANDARD_WRITE_BARRIER_ABI);
+    }
+
     //
     // Find the debugger and profiler related flags
     //

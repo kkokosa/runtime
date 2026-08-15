@@ -169,6 +169,49 @@ EXTERN_C void JIT_WriteBarrier_Patch_Label_GCShadowEnd();
 
 WriteBarrierManager g_WriteBarrierManager;
 
+#ifdef FEATURE_WRITE_BARRIER_STANDARD_ABI_TEST
+extern "C" void* JIT_WriteBarrier_Loc;
+extern "C" void JIT_CheckedWriteBarrier(Object** destination, Object* reference);
+
+namespace
+{
+WriteBarrierSlowPath g_standard_write_barrier_slow_path;
+
+using WriteBarrierHelper = void (*)(Object**, Object*);
+
+NOINLINE void StandardWriteBarrierForTest(Object** destination, Object* reference)
+{
+    Object* oldReference = *destination;
+    g_standard_write_barrier_slow_path(destination, oldReference, reference);
+
+    WriteBarrierHelper stockWriteBarrier = reinterpret_cast<WriteBarrierHelper>(JIT_WriteBarrier_Loc);
+    stockWriteBarrier(destination, reference);
+}
+
+NOINLINE void StandardCheckedWriteBarrierForTest(Object** destination, Object* reference)
+{
+    uint8_t* address = reinterpret_cast<uint8_t*>(destination);
+    if ((address >= g_lowest_address) && (address < g_highest_address))
+    {
+        Object* oldReference = *destination;
+        g_standard_write_barrier_slow_path(destination, oldReference, reference);
+    }
+
+    JIT_CheckedWriteBarrier(destination, reference);
+}
+}
+
+void InitializeStandardWriteBarrierForTest(WriteBarrierSlowPath slowPath)
+{
+    _ASSERTE(slowPath != nullptr);
+    _ASSERTE(JIT_WriteBarrier_Loc != nullptr);
+
+    g_standard_write_barrier_slow_path = slowPath;
+    SetJitHelperFunction(CORINFO_HELP_ASSIGN_REF, StandardWriteBarrierForTest);
+    SetJitHelperFunction(CORINFO_HELP_CHECKED_ASSIGN_REF, StandardCheckedWriteBarrierForTest);
+}
+#endif
+
 WriteBarrierManager::WriteBarrierManager() :
     m_currentWriteBarrier(WRITE_BARRIER_UNINITIALIZED)
 {
@@ -1140,14 +1183,5 @@ void InitJITWriteBarrierHelpers()
 {
     STANDARD_VM_CONTRACT;
 
-    switch (GCHeapUtilities::GetWriteBarrierCapabilities().Kind)
-    {
-        case GCWriteBarrierKind::CardTable:
-            g_WriteBarrierManager.Initialize();
-            break;
-
-        case GCWriteBarrierKind::SideMetadataFieldLog:
-        default:
-            UNREACHABLE();
-    }
+    g_WriteBarrierManager.Initialize();
 }

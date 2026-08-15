@@ -24,6 +24,9 @@
 #include "configuration.h"
 #include "genanalysis.h"
 #include "eventpipeadapter.h"
+#ifdef FEATURE_WRITE_BARRIER_STANDARD_ABI_TEST
+#include "writebarriermanager.h"
+#endif
 #include <minipal/memorybarrierprocesswide.h>
 
 // Finalizes a weak reference directly.
@@ -1105,7 +1108,77 @@ void GCToEEInterface::StompWriteBarrier(WriteBarrierParameters* args)
         break;
 
     case WriteBarrierOp::Initialize:
+    {
         assert(args->is_runtime_suspended && "the runtime must be suspended here!");
+
+        bool useStandardWriteBarrierAbi = false;
+        if (g_write_barrier_parameters_include_shape)
+        {
+            assert(args->write_barrier_request_status == WriteBarrierRequestStatus::NotProcessed);
+
+            if (args->write_barrier_request_status != WriteBarrierRequestStatus::NotProcessed)
+            {
+                args->write_barrier_request_status = WriteBarrierRequestStatus::Unsupported;
+                return;
+            }
+
+            switch (args->write_barrier_shape)
+            {
+                case WriteBarrierShape::CardTable:
+                    break;
+
+                case WriteBarrierShape::SideMetadataFieldLog:
+#ifdef FEATURE_WRITE_BARRIER_STANDARD_ABI_TEST
+                    if ((args->write_barrier_side_metadata.metadata_base == nullptr) ||
+                        (args->write_barrier_side_metadata.slow_path == nullptr) ||
+                        (args->write_barrier_side_metadata.granularity_shift >= ((sizeof(uintptr_t) * 8) - 3)) ||
+                        ((args->write_barrier_side_metadata.bit_meaning !=
+                          WriteBarrierMetadataBitMeaning::WorkWhenBitIsClear) &&
+                         (args->write_barrier_side_metadata.bit_meaning !=
+                          WriteBarrierMetadataBitMeaning::WorkWhenBitIsSet)) ||
+                        g_pConfig->ReadyToRun())
+                    {
+                        args->write_barrier_request_status = WriteBarrierRequestStatus::Unsupported;
+                        return;
+                    }
+
+                    useStandardWriteBarrierAbi = true;
+                    break;
+#else
+                    args->write_barrier_request_status = WriteBarrierRequestStatus::Unsupported;
+                    return;
+#endif
+
+                default:
+                    args->write_barrier_request_status = WriteBarrierRequestStatus::Unsupported;
+                    return;
+            }
+        }
+
+        if (!GCHeapUtilities::TryPrepareWriteBarrierCodegenMode(useStandardWriteBarrierAbi))
+        {
+            if (g_write_barrier_parameters_include_shape)
+            {
+                args->write_barrier_request_status = WriteBarrierRequestStatus::Unsupported;
+            }
+            return;
+        }
+
+#ifdef FEATURE_WRITE_BARRIER_STANDARD_ABI_TEST
+        if (useStandardWriteBarrierAbi)
+        {
+            InitializeStandardWriteBarrierForTest(args->write_barrier_side_metadata.slow_path);
+            GCHeapUtilities::CompleteStandardWriteBarrierCodegenMode();
+        }
+#else
+        assert(!useStandardWriteBarrierAbi);
+#endif
+
+        if (g_write_barrier_parameters_include_shape)
+        {
+            args->write_barrier_request_status = WriteBarrierRequestStatus::Accepted;
+        }
+
         // This operation should only be invoked once, upon initialization.
         assert(g_card_table == nullptr);
         assert(g_lowest_address == nullptr);
@@ -1146,6 +1219,7 @@ void GCToEEInterface::StompWriteBarrier(WriteBarrierParameters* args)
         // called with the parameters (true, false), as it is above.
         stompWBCompleteActions |= ::StompWriteBarrierEphemeral(true);
         break;
+    }
 
     case WriteBarrierOp::SwitchToWriteWatch:
 #ifdef FEATURE_USE_SOFTWARE_WRITE_WATCH_FOR_GC_HEAP

@@ -334,7 +334,6 @@ public:
     virtual int RefreshMemoryLimit();
 
     virtual void NullBridgeObjectsWeakRefs(size_t length, void* unreachableObjectHandles);
-
 };
 
 #endif  // GCIMPL_H_

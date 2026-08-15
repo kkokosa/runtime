@@ -13320,7 +13320,8 @@ void Lowering::FinalizeOutgoingArgSpace()
     {
         if (m_compiler->opts.compDbgCode || m_compiler->compUsesThrowHelper || m_compiler->compIsProfilerHookNeeded() ||
             (m_compiler->compMethodRequiresPInvokeFrame() && !m_compiler->opts.ShouldUsePInvokeHelpers()) ||
-            m_compiler->getNeedsGSSecurityCookie())
+            m_compiler->getNeedsGSSecurityCookie() ||
+            m_compiler->opts.jitFlags->IsSet(JitFlags::JIT_FLAG_USE_STANDARD_WRITE_BARRIER_ABI))
         {
             m_outgoingArgSpaceSize = MIN_ARG_AREA_FOR_CALL;
             JITDUMP("Bumping outgoing arg space size to %u for possible helper or profile hook call",

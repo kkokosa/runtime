@@ -82,7 +82,7 @@ mechanisms share one oracle. `lxr-x/simplified` is explicitly excluded.
 | [`P0.2-paper-targets.md`](P0.2-paper-targets.md) | The paper's own acceptance targets — throughput vs G1, pause p50/p95, the reclamation split and barrier overhead — each cited to a table and page, with the measurement context and the paper's errata |
 | [`P0.3-parity-ledger.md`](P0.3-parity-ledger.md) | **The mechanism parity ledger** — 26 rows, each with its declared oracle and reason, coupled group, validation oracle, citation at the declared oracle revision, provenance tag, required .NET realization and closure evidence. This is the artifact P9.1 audits |
 | [`P0.3-oracle-probes.md`](P0.3-oracle-probes.md) | The evidence behind the ledger: the citation-basis correction, three P0.1 open items resolved from source, the two oracle probes, and the two questions P0.3 had to close |
-| [`P1.1-gc-capability-contract.md`](P1.1-gc-capability-contract.md) | The generic startup declaration for selecting existing card-table behavior or requesting a future side-metadata field-write implementation, plus compatibility and machine-instruction evidence |
+| [`P1.1-write-barrier-shape-contract.md`](P1.1-write-barrier-shape-contract.md) | The generic GC-requested write-barrier shape, startup failure contract, ordinary-ABI slow-call strategy, compatibility matrix, and executable/codegen/performance evidence |
 | [`scripts/`](scripts/) | The clone, build, sanity, benchmark and probe scripts actually used, plus `verify-ledger.sh` (the ledger's gate) and `verify-gate.sh` (the gate's own positive control) |
 
 ## P0.1 outcome in one paragraph

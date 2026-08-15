@@ -9,7 +9,6 @@
 #include "gchandleutilities.h"
 
 #include "gceventstatus.h"
-#include "../../gc/gccapabilities.h"
 #include "holder.h"
 #include "RhConfig.h"
 
@@ -200,9 +199,9 @@ HRESULT GCHeapUtilities::InitializeStandaloneGC()
     versionInfo(&g_gc_version_info);
     g_gc_load_status = GC_LOAD_STATUS_CALL_VERSIONINFO;
 
-    if (!IsGCInterfaceMajorVersionCompatible(GC_INTERFACE_MAJOR_VERSION, g_gc_version_info.MajorVersion))
+    if (g_gc_version_info.MajorVersion < GC_INTERFACE_MAJOR_VERSION)
     {
-        LOG((LF_GC, LL_FATALERROR, "GC initialization failed because the Standalone GC reported a different major interface version.\n"));
+        LOG((LF_GC, LL_FATALERROR, "GC initialization failed with the Standalone GC reported a major version lower than what the runtime requires.\n"));
         return E_FAIL;
     }
 
@@ -216,11 +215,10 @@ HRESULT GCHeapUtilities::InitializeStandaloneGC()
     g_gc_load_status = GC_LOAD_STATUS_GET_INITIALIZE;
     IGCHeap* heap;
     IGCHandleManager* manager;
+    g_write_barrier_parameters_include_shape =
+        (g_gc_version_info.MajorVersion == GC_INTERFACE_MAJOR_VERSION) &&
+        (g_gc_version_info.MinorVersion >= GC_WRITE_BARRIER_SHAPE_INTERFACE_MINOR_VERSION);
     HRESULT initResult = initFunc(gcToClr, &heap, &manager, &g_gc_dac_vars);
-    if (initResult == S_OK)
-    {
-        initResult = GCHeapUtilities::SelectWriteBarrierCapabilities(heap, g_gc_version_info);
-    }
 
     if (initResult == S_OK)
     {

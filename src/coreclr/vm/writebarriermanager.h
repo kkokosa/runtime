@@ -93,6 +93,10 @@ private:
 
 extern WriteBarrierManager g_WriteBarrierManager;
 
+#ifdef FEATURE_WRITE_BARRIER_STANDARD_ABI_TEST
+void InitializeStandardWriteBarrierForTest(WriteBarrierSlowPath slowPath);
+#endif
+
 #endif // TARGET_AMD64 || TARGET_ARM64
 
 #endif // WRITEBARRIERMANAGER_H

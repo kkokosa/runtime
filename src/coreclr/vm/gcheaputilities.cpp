@@ -6,7 +6,6 @@
 #include "gcheaputilities.h"
 #include "appdomain.hpp"
 #include "hostinformation.h"
-#include "../gc/gccapabilities.h"
 
 #include "../gc/env/gcenv.ee.h"
 #include "../gc/env/gctoeeinterface.standalone.inl"
@@ -63,12 +62,12 @@ GC_LOAD_STATUS g_gc_load_status = GC_LOAD_STATUS_BEFORE_START;
 
 // The version of the GC that we have loaded.
 VersionInfo g_gc_version_info;
+bool g_write_barrier_parameters_include_shape;
 
 // The module that contains the GC.
 PTR_VOID g_gc_module_base;
 
 bool GCHeapUtilities::s_useThreadAllocationContexts;
-GCWriteBarrierCapabilities g_write_barrier_capabilities;
 
 // GC entrypoints for the linked-in GC. These symbols are invoked
 // directly if we are not using a standalone GC.
@@ -90,58 +89,102 @@ PTR_VOID GCHeapUtilities::GetGCModuleBase()
 
 namespace
 {
-int32_t QueryWriteBarrierCapabilities(void* context, GCWriteBarrierCapabilities* capabilities)
+enum WriteBarrierCodegenMode : LONG
 {
-    return static_cast<IGCHeap*>(context)->GetWriteBarrierCapabilities(capabilities);
+    WriteBarrierCodegenModeUninitialized,
+    WriteBarrierCodegenModeSpecialized,
+    WriteBarrierCodegenModeStandardInitializing,
+    WriteBarrierCodegenModeStandard,
+    WriteBarrierCodegenModeSpecializedObserved,
+};
+
+LONG g_write_barrier_codegen_mode;
 }
 
-HRESULT SelectWriteBarrierCapabilities(IGCHeap* gcHeap, const VersionInfo& version)
+bool GCHeapUtilities::TryPrepareWriteBarrierCodegenMode(bool useStandardAbi)
 {
-    GCWriteBarrierCapabilities capabilities;
-    GCWriteBarrierCapabilitiesSelectionResult selection = SelectGCWriteBarrierCapabilities(
-        version.MajorVersion,
-        version.MinorVersion,
-        QueryWriteBarrierCapabilities,
-        gcHeap,
-        &capabilities);
+    LONG desiredMode =
+        useStandardAbi ? WriteBarrierCodegenModeStandardInitializing : WriteBarrierCodegenModeSpecialized;
 
-    if (selection.Error == GCWriteBarrierCapabilitiesSelectionError::QueryFailed)
+    while (true)
     {
-        LOG((LF_GC, LL_FATALERROR,
-            "GC write-barrier capability query failed for interface %u.%u with HR = 0x%X\n",
-            version.MajorVersion, version.MinorVersion, selection.QueryResult));
-        return GetGCWriteBarrierCapabilitiesSelectionFailureResult(selection.Error, selection.QueryResult);
-    }
+        LONG currentMode = VolatileLoad(&g_write_barrier_codegen_mode);
 
-    if (selection.Error == GCWriteBarrierCapabilitiesSelectionError::InvalidDeclaration)
-    {
-        LOG((LF_GC, LL_FATALERROR,
-            "GC write-barrier declaration for interface %u.%u is invalid: %s\n",
-            version.MajorVersion,
-            version.MinorVersion,
-            GetGCWriteBarrierCapabilitiesValidationErrorMessage(selection.ValidationError)));
-        return GetGCWriteBarrierCapabilitiesSelectionFailureResult(selection.Error, selection.QueryResult);
-    }
+        if (currentMode == WriteBarrierCodegenModeUninitialized)
+        {
+            if (InterlockedCompareExchange(
+                    &g_write_barrier_codegen_mode,
+                    desiredMode,
+                    WriteBarrierCodegenModeUninitialized) == WriteBarrierCodegenModeUninitialized)
+            {
+                return true;
+            }
 
-    if (selection.Error == GCWriteBarrierCapabilitiesSelectionError::UnsupportedKind)
-    {
-        LOG((LF_GC, LL_FATALERROR,
-            "GC write-barrier declaration requests side-metadata field logging, "
-            "which this runtime revision recognizes but does not implement\n"));
-        return GetGCWriteBarrierCapabilitiesSelectionFailureResult(selection.Error, selection.QueryResult);
-    }
+            continue;
+        }
 
-    if (selection.Error != GCWriteBarrierCapabilitiesSelectionError::None)
-    {
-        LOG((LF_GC, LL_FATALERROR,
-            "GC write-barrier capability selection failed with unexpected error %u\n",
-            static_cast<uint32_t>(selection.Error)));
-        return GetGCWriteBarrierCapabilitiesSelectionFailureResult(selection.Error, selection.QueryResult);
-    }
+        if (!useStandardAbi && (currentMode == WriteBarrierCodegenModeSpecializedObserved))
+        {
+            if (InterlockedCompareExchange(
+                    &g_write_barrier_codegen_mode,
+                    WriteBarrierCodegenModeSpecialized,
+                    WriteBarrierCodegenModeSpecializedObserved) == WriteBarrierCodegenModeSpecializedObserved)
+            {
+                return true;
+            }
 
-    g_write_barrier_capabilities = capabilities;
-    return S_OK;
+            continue;
+        }
+
+        return false;
+    }
 }
+
+void GCHeapUtilities::CompleteStandardWriteBarrierCodegenMode()
+{
+    if (InterlockedCompareExchange(
+            &g_write_barrier_codegen_mode,
+            WriteBarrierCodegenModeStandard,
+            WriteBarrierCodegenModeStandardInitializing) != WriteBarrierCodegenModeStandardInitializing)
+    {
+        _ASSERTE(!"Unexpected write-barrier codegen mode");
+    }
+}
+
+bool GCHeapUtilities::UseStandardWriteBarrierAbiForJit()
+{
+    while (true)
+    {
+        LONG currentMode = VolatileLoad(&g_write_barrier_codegen_mode);
+
+        if (currentMode == WriteBarrierCodegenModeStandard)
+        {
+            return true;
+        }
+
+        if (currentMode == WriteBarrierCodegenModeStandardInitializing)
+        {
+            YieldProcessor();
+            continue;
+        }
+
+        if (currentMode != WriteBarrierCodegenModeUninitialized)
+        {
+            return false;
+        }
+
+        if (InterlockedCompareExchange(
+                &g_write_barrier_codegen_mode,
+                WriteBarrierCodegenModeSpecializedObserved,
+                WriteBarrierCodegenModeUninitialized) == WriteBarrierCodegenModeUninitialized)
+        {
+            return false;
+        }
+    }
+}
+
+namespace
+{
 
 // This block of code contains all of the state necessary to handle incoming
 // EtwCallbacks before the GC has been initialized. This is a tricky problem
@@ -171,11 +214,7 @@ HRESULT FinalizeLoad(
     PTR_VOID pGcModuleBase,
     const VersionInfo& version)
 {
-    HRESULT result = SelectWriteBarrierCapabilities(gcHeap, version);
-    if (FAILED(result))
-    {
-        return result;
-    }
+    UNREFERENCED_PARAMETER(version);
 
     g_pGCHeap = gcHeap;
 
@@ -339,9 +378,9 @@ HRESULT LoadAndInitializeGC(LPCWSTR standaloneGCName, LPCWSTR standaloneGCPath)
     versionInfo(&g_gc_version_info);
     g_gc_load_status = GC_LOAD_STATUS_CALL_VERSIONINFO;
 
-    if (!IsGCInterfaceMajorVersionCompatible(GC_INTERFACE_MAJOR_VERSION, g_gc_version_info.MajorVersion))
+    if (g_gc_version_info.MajorVersion < GC_INTERFACE_MAJOR_VERSION)
     {
-        LOG((LF_GC, LL_FATALERROR, "Loaded GC has incompatible major version number (expected %d, got %d)\n",
+        LOG((LF_GC, LL_FATALERROR, "Loaded GC has incompatible major version number (expected at least %d, got %d)\n",
             GC_INTERFACE_MAJOR_VERSION, g_gc_version_info.MajorVersion));
         return E_FAIL;
     }
@@ -365,6 +404,9 @@ HRESULT LoadAndInitializeGC(LPCWSTR standaloneGCName, LPCWSTR standaloneGCPath)
     g_gc_load_status = GC_LOAD_STATUS_GET_INITIALIZE;
     IGCHeap* heap;
     IGCHandleManager* manager;
+    g_write_barrier_parameters_include_shape =
+        (g_gc_version_info.MajorVersion == GC_INTERFACE_MAJOR_VERSION) &&
+        (g_gc_version_info.MinorVersion >= GC_WRITE_BARRIER_SHAPE_INTERFACE_MINOR_VERSION);
     HRESULT initResult = initFunc(gcToClr, &heap, &manager, &g_gc_dac_vars);
     if (initResult == S_OK)
     {
@@ -412,6 +454,7 @@ HRESULT InitializeDefaultGC()
 
     IGCHeap* heap;
     IGCHandleManager* manager;
+    g_write_barrier_parameters_include_shape = true;
     HRESULT initResult = GC_Initialize(nullptr, &heap, &manager, &g_gc_dac_vars);
     if (initResult == S_OK)
     {
@@ -427,11 +470,6 @@ HRESULT InitializeDefaultGC()
 }
 
 } // anonymous namespace
-
-const GCWriteBarrierCapabilities& GCHeapUtilities::GetWriteBarrierCapabilities()
-{
-    return g_write_barrier_capabilities;
-}
 
 // Loads (if necessary) and initializes the GC. If using a standalone GC,
 // it loads the library containing it and dynamically loads the GC entry point.
