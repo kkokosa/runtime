@@ -290,11 +290,11 @@ consumer rather than the definition.
 
 ### P1.1 — GC capability negotiation and barrier-family contract
 
-- **Status:** planned
-- **Summary:** Let a GC declare which barrier family and optional runtime services it requires, and have the EE select and patch the corresponding implementations at initialization.
-- **Correctness:** The built-in GC declares the existing card-table family and its generated code does not move; existing standalone GCs build and run unchanged against the extended contract.
-- **Benchmarks:** Codegen diff proving byte-identical output for the built-in collectors, plus the P0.4 matrix as a regression check.
-- **Runtime changes:** Adds a capability-declaration surface and a structurally described side-metadata slot-log barrier family parameterized by metadata base, granularity shift, polarity, and slow-path helper, covering LXR's unlog bit, SATB/deletion barriers, and generational field-log barriers; additive and gated by a `GC_INTERFACE_MINOR_VERSION` bump, never reshaping existing members.
+- **Status:** done
+- **Summary:** Added a versioned startup contract that lets a collector declare its field-write barrier family without adding a branch to managed reference writes. Existing collector source and 5.8 binaries remain compatible; side-metadata execution is deliberately rejected until P1.2 implements it.
+- **Correctness:** CoreCLR and NativeAOT reject incompatible major versions, negotiate bounded size/version records, fail before heap publication on invalid declarations, and preserve the built-in card-table default. Windows x64 builds and Workstation/Server execution passed; the committed validator passed 57/57 and six old/new runtime and collector combinations passed 6/6 from a clean archive. Windows x86 and ARM64 cross-builds passed; other architectures were source-audited, and no NativeAOT application ran.
+- **Benchmarks:** Built-in field-write output remained byte-for-byte identical in three CoreCLR barrier objects, the NativeAOT x64 barrier object, and representative Workstation/Server methods with ReadyToRun on and off. The repaired matrix produced 24/24 valid 60-second runs and 58/58 harness checks; paired smoke differences of -0.33% Workstation and -0.71% Server were inside about +/-1.35% uncertainty, so no speedup is claimed, and a later interference-contaminated rerun was rejected.
+- **Runtime changes:** Bumps the GC interface minor version to 5.9 and appends a source-compatible capability query with a default card-table answer. Adds a generic, size/version-negotiated side-metadata field-log description (metadata base, granularity shift, bit meaning, and slow helper), shared fail-closed validation, exact major-version checks, and startup-only selection in CoreCLR and NativeAOT; side-metadata execution returns E_NOTIMPL until P1.2.
 - **Dependencies:** P0.3
 - **References:** `src/coreclr/gc/gcinterface.h:9,14,49-56`; `mmtk-core/src/plan/barriers.rs`
 
