@@ -335,7 +335,6 @@ public:
 
     virtual void NullBridgeObjectsWeakRefs(size_t length, void* unreachableObjectHandles);
 
-    virtual HRESULT GetWriteBarrierCapabilities(GCWriteBarrierCapabilities* capabilities);
 };
 
 #endif  // GCIMPL_H_

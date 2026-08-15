@@ -10,6 +10,7 @@ enum class GCWriteBarrierCapabilitiesValidationError
 {
     None,
     StructureTooSmall,
+    StructureTooLarge,
     UnsupportedStructureVersion,
     UnknownKind,
     MissingMetadataBase,
@@ -19,22 +20,46 @@ enum class GCWriteBarrierCapabilitiesValidationError
     ReservedFieldsNotZero,
 };
 
+enum class GCWriteBarrierCapabilitiesSelectionError
+{
+    None,
+    QueryFailed,
+    InvalidDeclaration,
+    UnsupportedKind,
+};
+
+struct GCWriteBarrierCapabilitiesSelectionResult
+{
+    GCWriteBarrierCapabilitiesSelectionError Error;
+    GCWriteBarrierCapabilitiesValidationError ValidationError;
+    int32_t QueryResult;
+};
+
+typedef int32_t (*GCWriteBarrierCapabilitiesQuery)(
+    void* context,
+    GCWriteBarrierCapabilities* capabilities);
+
+inline bool IsGCInterfaceMajorVersionCompatible(uint32_t runtimeMajorVersion, uint32_t collectorMajorVersion)
+{
+    return runtimeMajorVersion == collectorMajorVersion;
+}
+
 inline bool UsesGCWriteBarrierCapabilities(uint32_t majorVersion, uint32_t minorVersion)
 {
-    return (majorVersion > GC_WRITE_BARRIER_CAPABILITIES_INTERFACE_MAJOR_VERSION) ||
-        ((majorVersion == GC_WRITE_BARRIER_CAPABILITIES_INTERFACE_MAJOR_VERSION) &&
-         (minorVersion >= GC_WRITE_BARRIER_CAPABILITIES_INTERFACE_MINOR_VERSION));
+    return (majorVersion == GC_WRITE_BARRIER_CAPABILITIES_INTERFACE_MAJOR_VERSION) &&
+        (minorVersion >= GC_WRITE_BARRIER_CAPABILITIES_INTERFACE_MINOR_VERSION);
 }
 
 inline GCWriteBarrierCapabilitiesValidationError ValidateGCWriteBarrierCapabilities(
     const GCWriteBarrierCapabilities& capabilities)
 {
-    if (capabilities.Size < sizeof(GCWriteBarrierCapabilities))
+    if (capabilities.Size < GC_WRITE_BARRIER_CAPABILITIES_VERSION_1_SIZE)
     {
         return GCWriteBarrierCapabilitiesValidationError::StructureTooSmall;
     }
 
-    if (capabilities.Version != GC_WRITE_BARRIER_CAPABILITIES_VERSION)
+    if ((capabilities.Version < GC_WRITE_BARRIER_CAPABILITIES_VERSION_1) ||
+        (capabilities.Version > GC_WRITE_BARRIER_CAPABILITIES_LATEST_VERSION))
     {
         return GCWriteBarrierCapabilitiesValidationError::UnsupportedStructureVersion;
     }
@@ -86,6 +111,77 @@ inline GCWriteBarrierCapabilitiesValidationError ValidateGCWriteBarrierCapabilit
     }
 }
 
+inline GCWriteBarrierCapabilitiesSelectionResult SelectGCWriteBarrierCapabilities(
+    uint32_t majorVersion,
+    uint32_t minorVersion,
+    GCWriteBarrierCapabilitiesQuery query,
+    void* queryContext,
+    GCWriteBarrierCapabilities* selectedCapabilities)
+{
+    GCWriteBarrierCapabilities capabilities = {};
+    capabilities.Size = sizeof(capabilities);
+    capabilities.Version = GC_WRITE_BARRIER_CAPABILITIES_LATEST_VERSION;
+    uint32_t capacity = capabilities.Size;
+
+    int32_t queryResult = 0;
+    if (UsesGCWriteBarrierCapabilities(majorVersion, minorVersion))
+    {
+        queryResult = query(queryContext, &capabilities);
+        if (queryResult < 0)
+        {
+            return {
+                GCWriteBarrierCapabilitiesSelectionError::QueryFailed,
+                GCWriteBarrierCapabilitiesValidationError::None,
+                queryResult
+            };
+        }
+    }
+    else if (!TrySetGCWriteBarrierCapabilitiesToCardTable(&capabilities))
+    {
+        return {
+            GCWriteBarrierCapabilitiesSelectionError::InvalidDeclaration,
+            GCWriteBarrierCapabilitiesValidationError::StructureTooSmall,
+            queryResult
+        };
+    }
+
+    if (capabilities.Size > capacity)
+    {
+        return {
+            GCWriteBarrierCapabilitiesSelectionError::InvalidDeclaration,
+            GCWriteBarrierCapabilitiesValidationError::StructureTooLarge,
+            queryResult
+        };
+    }
+
+    GCWriteBarrierCapabilitiesValidationError validationError =
+        ValidateGCWriteBarrierCapabilities(capabilities);
+    if (validationError != GCWriteBarrierCapabilitiesValidationError::None)
+    {
+        return {
+            GCWriteBarrierCapabilitiesSelectionError::InvalidDeclaration,
+            validationError,
+            queryResult
+        };
+    }
+
+    if (capabilities.Kind == GCWriteBarrierKind::SideMetadataFieldLog)
+    {
+        return {
+            GCWriteBarrierCapabilitiesSelectionError::UnsupportedKind,
+            GCWriteBarrierCapabilitiesValidationError::None,
+            queryResult
+        };
+    }
+
+    *selectedCapabilities = capabilities;
+    return {
+        GCWriteBarrierCapabilitiesSelectionError::None,
+        GCWriteBarrierCapabilitiesValidationError::None,
+        queryResult
+    };
+}
+
 inline const char* GetGCWriteBarrierCapabilitiesValidationErrorMessage(
     GCWriteBarrierCapabilitiesValidationError error)
 {
@@ -95,6 +191,8 @@ inline const char* GetGCWriteBarrierCapabilitiesValidationErrorMessage(
             return "no error";
         case GCWriteBarrierCapabilitiesValidationError::StructureTooSmall:
             return "the declaration is smaller than version 1 requires";
+        case GCWriteBarrierCapabilitiesValidationError::StructureTooLarge:
+            return "the declaration says it wrote beyond the caller's buffer";
         case GCWriteBarrierCapabilitiesValidationError::UnsupportedStructureVersion:
             return "the declaration uses an unsupported structure version";
         case GCWriteBarrierCapabilitiesValidationError::UnknownKind:

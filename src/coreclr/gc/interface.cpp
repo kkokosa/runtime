@@ -2737,22 +2737,6 @@ void GCHeap::NullBridgeObjectsWeakRefs(size_t length, void* unreachableObjectHan
 #endif
 }
 
-HRESULT GCHeap::GetWriteBarrierCapabilities(GCWriteBarrierCapabilities* capabilities)
-{
-    if ((capabilities == nullptr) ||
-        (capabilities->Version < GC_WRITE_BARRIER_CAPABILITIES_VERSION) ||
-        (capabilities->Size < sizeof(GCWriteBarrierCapabilities)))
-    {
-        return E_INVALIDARG;
-    }
-
-    *capabilities = {};
-    capabilities->Size = sizeof(GCWriteBarrierCapabilities);
-    capabilities->Version = GC_WRITE_BARRIER_CAPABILITIES_VERSION;
-    capabilities->Kind = GCWriteBarrierKind::CardTable;
-    return S_OK;
-}
-
 HRESULT GCHeap::WaitUntilConcurrentGCCompleteAsync(int millisecondsTimeout)
 {
 #ifdef BACKGROUND_GC

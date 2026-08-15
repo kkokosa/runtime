@@ -90,40 +90,40 @@ PTR_VOID GCHeapUtilities::GetGCModuleBase()
 
 namespace
 {
+int32_t QueryWriteBarrierCapabilities(void* context, GCWriteBarrierCapabilities* capabilities)
+{
+    return static_cast<IGCHeap*>(context)->GetWriteBarrierCapabilities(capabilities);
+}
+
 HRESULT SelectWriteBarrierCapabilities(IGCHeap* gcHeap, const VersionInfo& version)
 {
-    GCWriteBarrierCapabilities capabilities = {};
-    capabilities.Size = sizeof(capabilities);
-    capabilities.Version = GC_WRITE_BARRIER_CAPABILITIES_VERSION;
+    GCWriteBarrierCapabilities capabilities;
+    GCWriteBarrierCapabilitiesSelectionResult selection = SelectGCWriteBarrierCapabilities(
+        version.MajorVersion,
+        version.MinorVersion,
+        QueryWriteBarrierCapabilities,
+        gcHeap,
+        &capabilities);
 
-    if (UsesGCWriteBarrierCapabilities(version.MajorVersion, version.MinorVersion))
+    if (selection.Error == GCWriteBarrierCapabilitiesSelectionError::QueryFailed)
     {
-        HRESULT result = gcHeap->GetWriteBarrierCapabilities(&capabilities);
-        if (FAILED(result))
-        {
-            LOG((LF_GC, LL_FATALERROR,
-                "GC write-barrier capability query failed for interface %u.%u with HR = 0x%X\n",
-                version.MajorVersion, version.MinorVersion, result));
-            return result;
-        }
-    }
-    else
-    {
-        capabilities.Kind = GCWriteBarrierKind::CardTable;
+        LOG((LF_GC, LL_FATALERROR,
+            "GC write-barrier capability query failed for interface %u.%u with HR = 0x%X\n",
+            version.MajorVersion, version.MinorVersion, selection.QueryResult));
+        return selection.QueryResult;
     }
 
-    GCWriteBarrierCapabilitiesValidationError error = ValidateGCWriteBarrierCapabilities(capabilities);
-    if (error != GCWriteBarrierCapabilitiesValidationError::None)
+    if (selection.Error == GCWriteBarrierCapabilitiesSelectionError::InvalidDeclaration)
     {
         LOG((LF_GC, LL_FATALERROR,
             "GC write-barrier declaration for interface %u.%u is invalid: %s\n",
             version.MajorVersion,
             version.MinorVersion,
-            GetGCWriteBarrierCapabilitiesValidationErrorMessage(error)));
+            GetGCWriteBarrierCapabilitiesValidationErrorMessage(selection.ValidationError)));
         return E_INVALIDARG;
     }
 
-    if (capabilities.Kind == GCWriteBarrierKind::SideMetadataFieldLog)
+    if (selection.Error == GCWriteBarrierCapabilitiesSelectionError::UnsupportedKind)
     {
         LOG((LF_GC, LL_FATALERROR,
             "GC write-barrier declaration requests side-metadata field logging, "
@@ -331,15 +331,14 @@ HRESULT LoadAndInitializeGC(LPCWSTR standaloneGCName, LPCWSTR standaloneGCPath)
     versionInfo(&g_gc_version_info);
     g_gc_load_status = GC_LOAD_STATUS_CALL_VERSIONINFO;
 
-    if (g_gc_version_info.MajorVersion < GC_INTERFACE_MAJOR_VERSION)
+    if (!IsGCInterfaceMajorVersionCompatible(GC_INTERFACE_MAJOR_VERSION, g_gc_version_info.MajorVersion))
     {
-        LOG((LF_GC, LL_FATALERROR, "Loaded GC has incompatible major version number (expected at least %d, got %d)\n",
+        LOG((LF_GC, LL_FATALERROR, "Loaded GC has incompatible major version number (expected %d, got %d)\n",
             GC_INTERFACE_MAJOR_VERSION, g_gc_version_info.MajorVersion));
         return E_FAIL;
     }
 
-    if ((g_gc_version_info.MajorVersion == GC_INTERFACE_MAJOR_VERSION) &&
-        (g_gc_version_info.MinorVersion < GC_INTERFACE_MINOR_VERSION))
+    if (g_gc_version_info.MinorVersion < GC_INTERFACE_MINOR_VERSION)
     {
         LOG((LF_GC, LL_INFO100, "Loaded GC has lower minor version number (%d) than EE was compiled against (%d)\n",
             g_gc_version_info.MinorVersion, GC_INTERFACE_MINOR_VERSION));

@@ -1077,8 +1077,16 @@ public:
     virtual void NullBridgeObjectsWeakRefs(size_t length, void* unreachableObjectHandles) PURE_VIRTUAL;
 
     // Appended in GC interface 5.9. The runtime calls this only for collectors
-    // that report 5.9 or later.
-    virtual HRESULT GetWriteBarrierCapabilities(GCWriteBarrierCapabilities* capabilities) PURE_VIRTUAL;
+    // that report interface 5.9 or later. On entry, Size is the caller's byte
+    // capacity and Version is the highest structure version the caller
+    // understands. The collector must not write beyond Size. On success, Size
+    // is the bytes written and Version is the mutually understood version.
+    // Collectors that do not override this method inherit valid card-table
+    // behavior, so their existing source remains compatible with interface 5.9.
+    virtual HRESULT GetWriteBarrierCapabilities(GCWriteBarrierCapabilities* capabilities)
+    {
+        return TrySetGCWriteBarrierCapabilitiesToCardTable(capabilities) ? S_OK : E_FAIL;
+    }
 };
 
 #ifdef WRITE_BARRIER_CHECK

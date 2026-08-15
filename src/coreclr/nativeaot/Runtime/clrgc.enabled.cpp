@@ -9,6 +9,7 @@
 #include "gchandleutilities.h"
 
 #include "gceventstatus.h"
+#include "../../gc/gccapabilities.h"
 #include "holder.h"
 #include "RhConfig.h"
 
@@ -199,9 +200,9 @@ HRESULT GCHeapUtilities::InitializeStandaloneGC()
     versionInfo(&g_gc_version_info);
     g_gc_load_status = GC_LOAD_STATUS_CALL_VERSIONINFO;
 
-    if (g_gc_version_info.MajorVersion < GC_INTERFACE_MAJOR_VERSION)
+    if (!IsGCInterfaceMajorVersionCompatible(GC_INTERFACE_MAJOR_VERSION, g_gc_version_info.MajorVersion))
     {
-        LOG((LF_GC, LL_FATALERROR, "GC initialization failed with the Standalone GC reported a major version lower than what the runtime requires.\n"));
+        LOG((LF_GC, LL_FATALERROR, "GC initialization failed because the Standalone GC reported a different major interface version.\n"));
         return E_FAIL;
     }
 

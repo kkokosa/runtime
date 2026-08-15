@@ -47,7 +47,6 @@ struct GCWriteBarrierSideMetadata
     uint8_t Reserved[6];
 };
 
-#define GC_WRITE_BARRIER_CAPABILITIES_VERSION 1
 #define GC_WRITE_BARRIER_CAPABILITIES_INTERFACE_MAJOR_VERSION 5
 #define GC_WRITE_BARRIER_CAPABILITIES_INTERFACE_MINOR_VERSION 9
 
@@ -59,5 +58,36 @@ struct GCWriteBarrierCapabilities
     uint32_t Reserved;
     GCWriteBarrierSideMetadata SideMetadata;
 };
+
+#define GC_WRITE_BARRIER_CAPABILITIES_VERSION_1 1
+#define GC_WRITE_BARRIER_CAPABILITIES_VERSION_1_SIZE ((uint32_t)(sizeof(void*) == 8 ? 40 : 32))
+#define GC_WRITE_BARRIER_CAPABILITIES_LATEST_VERSION GC_WRITE_BARRIER_CAPABILITIES_VERSION_1
+
+static_assert(sizeof(GCWriteBarrierCapabilities) == GC_WRITE_BARRIER_CAPABILITIES_VERSION_1_SIZE);
+
+inline bool TrySetGCWriteBarrierCapabilitiesToCardTable(GCWriteBarrierCapabilities* capabilities)
+{
+    if ((capabilities == nullptr) ||
+        (capabilities->Size < GC_WRITE_BARRIER_CAPABILITIES_VERSION_1_SIZE) ||
+        (capabilities->Version < GC_WRITE_BARRIER_CAPABILITIES_VERSION_1))
+    {
+        return false;
+    }
+
+    capabilities->Size = GC_WRITE_BARRIER_CAPABILITIES_VERSION_1_SIZE;
+    capabilities->Version = GC_WRITE_BARRIER_CAPABILITIES_VERSION_1;
+    capabilities->Kind = GCWriteBarrierKind::CardTable;
+    capabilities->Reserved = 0;
+    capabilities->SideMetadata.SlowPath = nullptr;
+    capabilities->SideMetadata.MetadataBase = nullptr;
+    capabilities->SideMetadata.GranularityShift = 0;
+    capabilities->SideMetadata.MetadataMeaning = GCWriteBarrierMetadataMeaning::WorkWhenBitIsClear;
+    for (uint8_t& reserved : capabilities->SideMetadata.Reserved)
+    {
+        reserved = 0;
+    }
+
+    return true;
+}
 
 #endif // GCWRITEBARRIER_H
