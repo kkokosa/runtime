@@ -300,13 +300,13 @@ consumer rather than the definition.
 
 ### P1.2 — Implement the slot-log barrier family on x64
 
-- **Status:** planned
-- **Summary:** Implement the family on x64 in MASM and GAS, reproducing the reference fast path's shape while reading its parameters from the descriptor rather than hardcoding them.
-- **Correctness:** Barrier stress shows no lost or duplicated log entries under contention; volatile and SIMD state is preserved across the fast and slow paths; an unused family leaves the built-in barrier untouched.
-- **Benchmarks:** Barrier-only microbenchmark and allocation rate against the stock barrier, plus end-to-end low-allocation compute and allocation churn scenarios.
-- **Runtime changes:** Adds x64 Windows and Linux assembly for the family — side byte load at base plus slot shifted right, zero-byte early-out, bit extract, polarity compare, tail-call to the configured slow helper — selected through the existing write-barrier patching path so an unused family costs nothing.
+- **Status:** done
+- **Summary:** Implemented the generic descriptor-driven slot-log barrier on Windows and Linux x64, with a leaf metadata-bit fast path and a normal-ABI pre-store slow path. The selected family composes with software write watch, while unsupported targets and precompiled-code combinations fail closed and the stock card-table family remains unchanged.
+- **Correctness:** Final local commits `302a5a26fcc`, `fa1c9cef001`, `57cca577aa7`, `3255d81b626`, and `16914407790` passed selected built-in/standalone Workstation/Server matrices in both polarities on Windows and Linux (8/8 each), interpreter copy/clear execution (2/2 each), x64/x86 contract checks (15/15 plus 5/5 initialization checks), NativeAOT default/rejection (2/2), JIT and GC stress, contention, overlap, clear, atomic, VM, dependent-edge, register, unwind, and epoch-reset checks. The exact committed archive passed 125 checks, rejected four deliberate evidence/code perturbations, and re-passed untouched; final Claude and Gemini reviews found no actionable runtime issue.
+- **Benchmarks:** On the measured Windows x64 host, stock field/array stores cost 3.033/4.092 ns, claimed-bit slot fast paths 2.161/3.822 ns, empty slow callbacks 14.39/16.12 ns, and counting/card callbacks 21.63/23.55 ns. Claimed-bit low-allocation ratios of 0.922x Workstation and 0.933x Server remain unresolved below the historical 8.35% host-resolution floor; every-store slow-path allocation churn measured 0.555x/0.370x and is an upper bound, while whole-table epoch reset measured 0.053x/0.104x and is explicitly rejected as a production policy. The corrected one-callback range path improved 16-reference `Array.Copy` by 13.4% and `Array.Clear` by 5.6% versus the exact pre-fix build.
+- **Runtime changes:** Adds GC interface 5.10 range/dependent-edge callbacks and the 5.11 epoch-reset callback, immutable JIT old-value semantics, MASM/GAS slot-log and write-watch templates patched from generic descriptor parameters, and full scalar, checked, atomic, VM, reference-range, mixed-layout, interpreter, and collectible-edge pre-store coverage. Null range source means clear-to-null; RC width and saturation remain collector-owned; ReadyToRun, NativeAOT runtime selection, non-x64 targets, incomplete descriptors, and incompatible modes reject activation before managed execution.
 - **Dependencies:** P1.1
-- **References:** `mmtk-openjdk/openjdk/barriers/mmtkFieldBarrier.cpp:78-127`; `src/coreclr/vm/writebarriermanager.cpp`; `src/coreclr/vm/amd64/JitHelpers_FastWriteBarriers.asm`
+- **References:** `docs/design/lxr-port/P1.2-x64-slot-log-barrier.md`; `src/coreclr/vm/writebarriermanager.cpp`; `src/coreclr/vm/amd64/JitHelpers_FastWriteBarriers.asm`; `src/coreclr/vm/amd64/jithelpers_fastwritebarriers.S`; `0682434:openjdk/barriers/mmtkFieldBarrier.cpp:78-127`
 
 ### P1.3 — Cover all reference-store paths for the family
 
