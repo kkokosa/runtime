@@ -11,15 +11,24 @@
 // The minor version of the IGCHeap interface. Non-breaking changes are required
 // to bump the minor version number. GCs and EEs with minor version number
 // mismatches can still interoperate correctly, with some care.
-#define GC_INTERFACE_MINOR_VERSION 8
+#define GC_INTERFACE_MINOR_VERSION 9
+
+#define GC_WRITE_BARRIER_SHAPE_INTERFACE_MINOR_VERSION 9
 
 // The major version of the IGCToCLR interface. Breaking changes to this interface
 // require bumps in the major version number.
 #define EE_INTERFACE_MAJOR_VERSION 4
 
+#ifdef TARGET_X86
+#define LOCALGC_CALLCONV __cdecl
+#else
+#define LOCALGC_CALLCONV
+#endif
+
 struct ScanContext;
 struct gc_alloc_context;
 class CrawlFrame;
+class Object;
 
 // Callback passed to GcScanRoots.
 typedef void promote_func(PTR_PTR_Object, ScanContext*, uint32_t);
@@ -53,6 +62,47 @@ enum class WriteBarrierOp
     Initialize,
     SwitchToWriteWatch,
     SwitchToNonWriteWatch
+};
+
+enum class WriteBarrierShape : uint32_t
+{
+    CardTable = 0,
+    SideMetadataFieldLog = 1,
+};
+
+enum class WriteBarrierRequestStatus : uint32_t
+{
+    NotProcessed = 0,
+    Accepted = 1,
+    Unsupported = 2,
+};
+
+enum class WriteBarrierMetadataBitMeaning : uint8_t
+{
+    WorkWhenBitIsClear = 0,
+    WorkWhenBitIsSet = 1,
+};
+
+// Called before the field is overwritten. The helper must not trigger a
+// garbage collection, block, switch GC mode, or throw across the callback.
+typedef void (LOCALGC_CALLCONV *WriteBarrierSlowPath)(
+    Object** destination,
+    Object* old_reference,
+    Object* new_reference);
+
+struct WriteBarrierSideMetadataParameters
+{
+    // A biased base address. For destination address D, the metadata byte is
+    // metadata_base + (D >> (granularity_shift + 3)). The bit within that byte
+    // is (D >> granularity_shift) & 7.
+    uint8_t* metadata_base;
+
+    WriteBarrierSlowPath slow_path;
+
+    // The base-2 logarithm of destination bytes represented by one metadata bit.
+    uint8_t granularity_shift;
+
+    WriteBarrierMetadataBitMeaning bit_meaning;
 };
 
 // Arguments to GCToEEInterface::StompWriteBarrier
@@ -113,6 +163,19 @@ struct WriteBarrierParameters
 
     // whether to use the more precise but slower write barrier
     bool region_use_bitwise_write_barrier;
+
+    // The write-barrier mechanics requested by the collector. Used only for
+    // WriteBarrierOp::Initialize. CardTable is the compatibility default. The
+    // explicit pointer alignment keeps the tail beyond the complete 5.8
+    // parameter block, including its trailing padding.
+    alignas(void*) WriteBarrierShape write_barrier_shape;
+
+    // Set to NotProcessed by the collector before the Initialize request. A
+    // runtime that understands this tail replaces it with Accepted or Unsupported.
+    WriteBarrierRequestStatus write_barrier_request_status;
+
+    // Used only when write_barrier_shape is SideMetadataFieldLog.
+    WriteBarrierSideMetadataParameters write_barrier_side_metadata;
 };
 
 struct FinalizerWorkItem
@@ -253,7 +316,6 @@ struct segment_info
 // Software Write Watch table.
 #define SOFTWARE_WRITE_WATCH_AddressToTableByteIndexShift 0xc
 
-class Object;
 class IGCHeap;
 class IGCHandleManager;
 
@@ -1165,12 +1227,6 @@ struct VersionInfo {
     uint32_t BuildVersion;
     const char* Name;
 };
-
-#ifdef TARGET_X86
-#define LOCALGC_CALLCONV __cdecl
-#else
-#define LOCALGC_CALLCONV
-#endif
 
 typedef void (LOCALGC_CALLCONV *GC_VersionInfoFunction)(
     /* Out */ VersionInfo*

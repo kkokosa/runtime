@@ -10,6 +10,9 @@
 // The singular heap instance.
 GPTR_DECL(IGCHeap, g_pGCHeap);
 
+// Whether the loaded collector's WriteBarrierParameters contains the 5.9 tail.
+extern bool g_write_barrier_parameters_include_shape;
+
 #ifndef DACCESS_COMPILE
 extern "C" {
 #endif // !DACCESS_COMPILE

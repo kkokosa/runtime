@@ -62,6 +62,7 @@ GC_LOAD_STATUS g_gc_load_status = GC_LOAD_STATUS_BEFORE_START;
 
 // The version of the GC that we have loaded.
 VersionInfo g_gc_version_info;
+bool g_write_barrier_parameters_include_shape;
 
 // The module that contains the GC.
 PTR_VOID g_gc_module_base;
@@ -88,6 +89,103 @@ PTR_VOID GCHeapUtilities::GetGCModuleBase()
 
 namespace
 {
+enum WriteBarrierCodegenMode : LONG
+{
+    WriteBarrierCodegenModeUninitialized,
+    WriteBarrierCodegenModeSpecialized,
+    WriteBarrierCodegenModeStandardInitializing,
+    WriteBarrierCodegenModeStandard,
+    WriteBarrierCodegenModeSpecializedObserved,
+};
+
+LONG g_write_barrier_codegen_mode;
+}
+
+bool GCHeapUtilities::TryPrepareWriteBarrierCodegenMode(bool useStandardAbi)
+{
+    LONG desiredMode =
+        useStandardAbi ? WriteBarrierCodegenModeStandardInitializing : WriteBarrierCodegenModeSpecialized;
+
+    while (true)
+    {
+        LONG currentMode = VolatileLoad(&g_write_barrier_codegen_mode);
+
+        if (currentMode == WriteBarrierCodegenModeUninitialized)
+        {
+            if (InterlockedCompareExchange(
+                    &g_write_barrier_codegen_mode,
+                    desiredMode,
+                    WriteBarrierCodegenModeUninitialized) == WriteBarrierCodegenModeUninitialized)
+            {
+                return true;
+            }
+
+            continue;
+        }
+
+        if (!useStandardAbi && (currentMode == WriteBarrierCodegenModeSpecializedObserved))
+        {
+            if (InterlockedCompareExchange(
+                    &g_write_barrier_codegen_mode,
+                    WriteBarrierCodegenModeSpecialized,
+                    WriteBarrierCodegenModeSpecializedObserved) == WriteBarrierCodegenModeSpecializedObserved)
+            {
+                return true;
+            }
+
+            continue;
+        }
+
+        return false;
+    }
+}
+
+void GCHeapUtilities::CompleteStandardWriteBarrierCodegenMode()
+{
+    if (InterlockedCompareExchange(
+            &g_write_barrier_codegen_mode,
+            WriteBarrierCodegenModeStandard,
+            WriteBarrierCodegenModeStandardInitializing) != WriteBarrierCodegenModeStandardInitializing)
+    {
+        _ASSERTE(!"Unexpected write-barrier codegen mode");
+    }
+}
+
+bool GCHeapUtilities::UseStandardWriteBarrierAbiForJit()
+{
+    while (true)
+    {
+        LONG currentMode = VolatileLoad(&g_write_barrier_codegen_mode);
+
+        if (currentMode == WriteBarrierCodegenModeStandard)
+        {
+            return true;
+        }
+
+        if (currentMode == WriteBarrierCodegenModeStandardInitializing)
+        {
+            YieldProcessor();
+            continue;
+        }
+
+        if (currentMode != WriteBarrierCodegenModeUninitialized)
+        {
+            return false;
+        }
+
+        if (InterlockedCompareExchange(
+                &g_write_barrier_codegen_mode,
+                WriteBarrierCodegenModeSpecializedObserved,
+                WriteBarrierCodegenModeUninitialized) == WriteBarrierCodegenModeUninitialized)
+        {
+            return false;
+        }
+    }
+}
+
+namespace
+{
+
 // This block of code contains all of the state necessary to handle incoming
 // EtwCallbacks before the GC has been initialized. This is a tricky problem
 // because EtwCallbacks can appear at any time, even when we are just about
@@ -110,8 +208,14 @@ BOOL g_gcEventTracingInitialized = FALSE;
 // to "publish" it by assigning it to g_pGCHeap.
 //
 // This function can proceed concurrently with StashKeywordAndLevel below.
-void FinalizeLoad(IGCHeap* gcHeap, IGCHandleManager* handleMgr, PTR_VOID pGcModuleBase)
+HRESULT FinalizeLoad(
+    IGCHeap* gcHeap,
+    IGCHandleManager* handleMgr,
+    PTR_VOID pGcModuleBase,
+    const VersionInfo& version)
 {
+    UNREFERENCED_PARAMETER(version);
+
     g_pGCHeap = gcHeap;
 
     {
@@ -131,6 +235,7 @@ void FinalizeLoad(IGCHeap* gcHeap, IGCHandleManager* handleMgr, PTR_VOID pGcModu
     LOG((LF_GC, LL_INFO100, "GC load successful\n"));
 
     StressLog::AddModule((uint8_t*)pGcModuleBase);
+    return S_OK;
 }
 
 void StashKeywordAndLevel(bool isPublicProvider, GCEventKeyword keywords, GCEventLevel level)
@@ -280,8 +385,7 @@ HRESULT LoadAndInitializeGC(LPCWSTR standaloneGCName, LPCWSTR standaloneGCPath)
         return E_FAIL;
     }
 
-    if ((g_gc_version_info.MajorVersion == GC_INTERFACE_MAJOR_VERSION) &&
-        (g_gc_version_info.MinorVersion < GC_INTERFACE_MINOR_VERSION))
+    if (g_gc_version_info.MinorVersion < GC_INTERFACE_MINOR_VERSION)
     {
         LOG((LF_GC, LL_INFO100, "Loaded GC has lower minor version number (%d) than EE was compiled against (%d)\n",
             g_gc_version_info.MinorVersion, GC_INTERFACE_MINOR_VERSION));
@@ -300,6 +404,9 @@ HRESULT LoadAndInitializeGC(LPCWSTR standaloneGCName, LPCWSTR standaloneGCPath)
     g_gc_load_status = GC_LOAD_STATUS_GET_INITIALIZE;
     IGCHeap* heap;
     IGCHandleManager* manager;
+    g_write_barrier_parameters_include_shape =
+        (g_gc_version_info.MajorVersion == GC_INTERFACE_MAJOR_VERSION) &&
+        (g_gc_version_info.MinorVersion >= GC_WRITE_BARRIER_SHAPE_INTERFACE_MINOR_VERSION);
     HRESULT initResult = initFunc(gcToClr, &heap, &manager, &g_gc_dac_vars);
     if (initResult == S_OK)
     {
@@ -311,7 +418,7 @@ HRESULT LoadAndInitializeGC(LPCWSTR standaloneGCName, LPCWSTR standaloneGCPath)
         pGcModuleBase = (PTR_VOID)PAL_GetSymbolModuleBase((PVOID)initFunc);
 #endif
 
-        FinalizeLoad(heap, manager, pGcModuleBase);
+        initResult = FinalizeLoad(heap, manager, pGcModuleBase, g_gc_version_info);
     }
     else
     {
@@ -347,10 +454,11 @@ HRESULT InitializeDefaultGC()
 
     IGCHeap* heap;
     IGCHandleManager* manager;
+    g_write_barrier_parameters_include_shape = true;
     HRESULT initResult = GC_Initialize(nullptr, &heap, &manager, &g_gc_dac_vars);
     if (initResult == S_OK)
     {
-        FinalizeLoad(heap, manager, GetClrModuleBase());
+        initResult = FinalizeLoad(heap, manager, GetClrModuleBase(), g_gc_version_info);
     }
     else
     {

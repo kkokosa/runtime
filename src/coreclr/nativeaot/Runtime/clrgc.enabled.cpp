@@ -215,7 +215,11 @@ HRESULT GCHeapUtilities::InitializeStandaloneGC()
     g_gc_load_status = GC_LOAD_STATUS_GET_INITIALIZE;
     IGCHeap* heap;
     IGCHandleManager* manager;
+    g_write_barrier_parameters_include_shape =
+        (g_gc_version_info.MajorVersion == GC_INTERFACE_MAJOR_VERSION) &&
+        (g_gc_version_info.MinorVersion >= GC_WRITE_BARRIER_SHAPE_INTERFACE_MINOR_VERSION);
     HRESULT initResult = initFunc(gcToClr, &heap, &manager, &g_gc_dac_vars);
+
     if (initResult == S_OK)
     {
         g_pGCHeap = heap;
