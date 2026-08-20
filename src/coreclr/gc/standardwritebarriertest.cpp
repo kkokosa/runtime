@@ -33,6 +33,9 @@ volatile int64_t g_write_barrier_test_call_count;
 volatile int64_t g_write_barrier_test_attempt_count;
 volatile int64_t g_write_barrier_test_win_count;
 volatile int64_t g_write_barrier_test_argument_error_count;
+volatile int64_t g_write_barrier_test_range_call_count;
+volatile int64_t g_write_barrier_test_clear_range_call_count;
+volatile int64_t g_write_barrier_test_dependent_edge_call_count;
 uint32_t g_write_barrier_test_clobber_mask;
 void (*g_write_barrier_test_clobber)();
 WriteBarrierSlowPath g_write_barrier_test_selected_slow_path;
@@ -200,12 +203,18 @@ NOINLINE void WriteBarrierTestRange(
     Object** source,
     size_t referenceCount)
 {
+    Interlocked::ExchangeAdd64(&g_write_barrier_test_range_call_count, static_cast<int64_t>(1));
+    if (source == nullptr)
+    {
+        Interlocked::ExchangeAdd64(&g_write_barrier_test_clear_range_call_count, static_cast<int64_t>(1));
+    }
+
     for (size_t index = 0; index < referenceCount; index++)
     {
         g_write_barrier_test_selected_slow_path(
             destination + index,
             destination[index],
-            source[index]);
+            (source == nullptr) ? nullptr : source[index]);
     }
 }
 
@@ -214,6 +223,8 @@ NOINLINE void WriteBarrierTestDependentEdge(
     Object* oldReference,
     Object* newReference)
 {
+    Interlocked::ExchangeAdd64(&g_write_barrier_test_dependent_edge_call_count, static_cast<int64_t>(1));
+
     Object** slot = reinterpret_cast<Object**>(destination);
     WriteBarrierTestMarkCard(slot);
     if (!WriteBarrierTestTryClaim(slot) || g_write_barrier_test_uncounted)
@@ -342,6 +353,21 @@ extern "C" DLLEXPORT uint32_t GC_WriteBarrierTest_GetClobberMask()
     return g_write_barrier_test_clobber_mask;
 }
 
+extern "C" DLLEXPORT uint64_t GC_WriteBarrierTest_GetRangeCallCount()
+{
+    return static_cast<uint64_t>(g_write_barrier_test_range_call_count);
+}
+
+extern "C" DLLEXPORT uint64_t GC_WriteBarrierTest_GetClearRangeCallCount()
+{
+    return static_cast<uint64_t>(g_write_barrier_test_clear_range_call_count);
+}
+
+extern "C" DLLEXPORT uint64_t GC_WriteBarrierTest_GetDependentEdgeCallCount()
+{
+    return static_cast<uint64_t>(g_write_barrier_test_dependent_edge_call_count);
+}
+
 extern "C" DLLEXPORT void GC_WriteBarrierTest_ResetRange(
     uintptr_t destination,
     size_t referenceCount,
@@ -373,6 +399,9 @@ extern "C" DLLEXPORT void GC_WriteBarrierTest_ResetRange(
     g_write_barrier_test_attempt_count = 0;
     g_write_barrier_test_win_count = 0;
     g_write_barrier_test_argument_error_count = 0;
+    g_write_barrier_test_range_call_count = 0;
+    g_write_barrier_test_clear_range_call_count = 0;
+    g_write_barrier_test_dependent_edge_call_count = 0;
     g_write_barrier_test_last_destination = nullptr;
     g_write_barrier_test_last_old_reference = nullptr;
     g_write_barrier_test_last_new_reference = nullptr;

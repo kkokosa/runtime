@@ -1,6 +1,8 @@
 // Licensed to the .NET Foundation under one or more agreements.
 // The .NET Foundation licenses this file to you under the MIT license.
 
+using System.Reflection;
+using System.Reflection.Emit;
 using System.Runtime.CompilerServices;
 using System.Runtime.InteropServices;
 using System.Runtime.Intrinsics;
@@ -294,6 +296,10 @@ internal static class Program
         nint library = NativeLibrary.Load(libraryPath);
         nint callCount = NativeLibrary.GetExport(library, "GC_WriteBarrierTest_GetCallCount");
         nint clobberMask = NativeLibrary.GetExport(library, "GC_WriteBarrierTest_GetClobberMask");
+        nint rangeCallCount = NativeLibrary.GetExport(library, "GC_WriteBarrierTest_GetRangeCallCount");
+        nint clearRangeCallCount = NativeLibrary.GetExport(library, "GC_WriteBarrierTest_GetClearRangeCallCount");
+        nint dependentEdgeCallCount =
+            NativeLibrary.GetExport(library, "GC_WriteBarrierTest_GetDependentEdgeCallCount");
         nint reset = NativeLibrary.GetExport(library, "GC_WriteBarrierTest_Reset");
         nint resetRange = NativeLibrary.GetExport(library, "GC_WriteBarrierTest_ResetRange");
         nint attemptCount = NativeLibrary.GetExport(library, "GC_WriteBarrierTest_GetAttemptCount");
@@ -302,9 +308,19 @@ internal static class Program
         nint lastDestination = NativeLibrary.GetExport(library, "GC_WriteBarrierTest_GetLastDestination");
         nint syntheticDestination = NativeLibrary.GetExport(library, "GC_WriteBarrierTest_GetSyntheticDestination");
         nint claimSynthetic = NativeLibrary.GetExport(library, "GC_WriteBarrierTest_ClaimSynthetic");
+        string runtimeLibraryPath = Environment.GetEnvironmentVariable("P12_RUNTIME_HOOK_LIBRARY")
+            ?? Path.Combine(
+                Path.GetDirectoryName(libraryPath)!,
+                OperatingSystem.IsWindows() ? "coreclr.dll" : "libcoreclr.so");
+        nint runtimeLibrary = NativeLibrary.Load(runtimeLibraryPath);
+        nint invokeEmptyRange =
+            NativeLibrary.GetExport(runtimeLibrary, "GC_WriteBarrierTest_InvokeEmptyRange");
         return new NativeHooks(
             Marshal.GetDelegateForFunctionPointer<GetCallCount>(callCount),
             Marshal.GetDelegateForFunctionPointer<GetClobberMask>(clobberMask),
+            Marshal.GetDelegateForFunctionPointer<GetCallCount>(rangeCallCount),
+            Marshal.GetDelegateForFunctionPointer<GetCallCount>(clearRangeCallCount),
+            Marshal.GetDelegateForFunctionPointer<GetCallCount>(dependentEdgeCallCount),
             Marshal.GetDelegateForFunctionPointer<ResetSlotLog>(reset),
             Marshal.GetDelegateForFunctionPointer<ResetSlotLogRange>(resetRange),
             Marshal.GetDelegateForFunctionPointer<GetCallCount>(attemptCount),
@@ -312,7 +328,8 @@ internal static class Program
             Marshal.GetDelegateForFunctionPointer<GetCallCount>(argumentErrorCount),
             Marshal.GetDelegateForFunctionPointer<GetPointer>(lastDestination),
             Marshal.GetDelegateForFunctionPointer<GetSyntheticDestination>(syntheticDestination),
-            Marshal.GetDelegateForFunctionPointer<ClaimSynthetic>(claimSynthetic));
+            Marshal.GetDelegateForFunctionPointer<ClaimSynthetic>(claimSynthetic),
+            Marshal.GetDelegateForFunctionPointer<InvokeEmptyRange>(invokeEmptyRange));
     }
 
     private static unsafe void ExerciseSlotLog(NativeHooks hooks)
@@ -444,6 +461,7 @@ internal static class Program
         ready.Dispose();
 
         ExerciseCompleteStoreSurfaces(hooks, workWhenSet);
+        ExerciseDependentEdges(hooks, workWhenSet);
     }
 
     private static unsafe void ExerciseCompleteStoreSurfaces(NativeHooks hooks, bool workWhenSet)
@@ -455,6 +473,7 @@ internal static class Program
         object?[] source = [new object(), new object(), new object(), new object()];
         object?[] destination = [new object(), new object(), new object(), new object()];
         object?[] overlap = [new object(), new object(), new object(), new object()];
+        object?[] empty = [];
         MixedReferences[] mixedSource =
         [
             new() { First = new object(), Scalar = 101, Second = new object() },
@@ -544,6 +563,7 @@ internal static class Program
                 }
             }
             AssertClaim(hooks, (ulong)source.Length, (ulong)source.Length, "bulk reference copy");
+            AssertRangeCalls(hooks, 1, 0, "bulk reference copy");
 
             hooks.ResetRange(destinationAddress, (nuint)destination.Length, workByte, claimBits: true);
             Array.Clear(destination);
@@ -552,6 +572,19 @@ internal static class Program
                 throw new InvalidOperationException("Array.Clear did not clear a reference array.");
             }
             AssertClaim(hooks, (ulong)destination.Length, (ulong)destination.Length, "reference Array.Clear");
+            AssertRangeCalls(hooks, 1, 1, "reference Array.Clear");
+
+            hooks.Reset(destinationAddress, workByte, claimBits: true);
+            Array.Copy(empty, empty, 0);
+            Array.Clear(empty);
+            AssertClaim(hooks, 0, 0, "empty reference ranges");
+            AssertRangeCalls(hooks, 0, 0, "empty reference ranges");
+            if (!hooks.InvokeEmptyRange(destinationAddress))
+            {
+                throw new InvalidOperationException("The selected range helper rejected an empty range.");
+            }
+            AssertClaim(hooks, 0, 0, "direct empty range");
+            AssertRangeCalls(hooks, 0, 0, "direct empty range");
 
             ref object? overlapStart = ref Unsafe.Add(ref MemoryMarshal.GetArrayDataReference(overlap), 1);
             nuint overlapAddress = (nuint)Unsafe.AsPointer(ref overlapStart);
@@ -564,6 +597,7 @@ internal static class Program
                 throw new InvalidOperationException("Overlapping reference copy violated memmove semantics.");
             }
             AssertClaim(hooks, 3, 3, "overlapping reference copy");
+            AssertRangeCalls(hooks, 1, 0, "overlapping reference copy");
 
             nuint mixedWordCount =
                 (nuint)(mixedDestination.Length * Unsafe.SizeOf<MixedReferences>() / IntPtr.Size);
@@ -582,6 +616,7 @@ internal static class Program
                 throw new InvalidOperationException("Typed mixed-struct copy produced an unexpected value.");
             }
             AssertClaim(hooks, 4, 4, "typed mixed-struct copy");
+            AssertRangeCalls(hooks, 0, 0, "typed mixed-struct copy");
 
             mixedDestination[0] =
                 new MixedReferences { First = new object(), Scalar = 707, Second = new object() };
@@ -599,6 +634,7 @@ internal static class Program
                 throw new InvalidOperationException("Array.Copy produced an unexpected mixed-struct value.");
             }
             AssertClaim(hooks, 4, 4, "mixed-struct Array.Copy");
+            AssertRangeCalls(hooks, 0, 0, "mixed-struct Array.Copy");
 
             mixedDestination[0] =
                 new MixedReferences { First = new object(), Scalar = 909, Second = new object() };
@@ -616,6 +652,7 @@ internal static class Program
                 throw new InvalidOperationException("Array.Clear did not clear a mixed-reference struct.");
             }
             AssertClaim(hooks, 4, 4, "mixed-struct Array.Clear");
+            AssertRangeCalls(hooks, 0, 0, "mixed-struct Array.Clear");
 
             ref MixedReferences mixedSpanStart = ref MemoryMarshal.GetArrayDataReference(mixedSpan);
             nuint mixedSpanAddress = (nuint)Unsafe.AsPointer(ref mixedSpanStart);
@@ -631,7 +668,9 @@ internal static class Program
                 throw new InvalidOperationException("Span.Clear did not clear a mixed-reference struct.");
             }
             AssertClaim(hooks, 4, 4, "mixed-struct Span.Clear");
+            AssertRangeCalls(hooks, 0, 0, "mixed-struct Span.Clear");
 
+            hooks.Reset(destinationAddress, workByte, claimBits: true);
             object?[] clone = (object?[])cloneSource.Clone();
             if ((clone.Length != cloneSource.Length) ||
                 !ReferenceEquals(clone[0], cloneSource[0]) ||
@@ -640,7 +679,9 @@ internal static class Program
             {
                 throw new InvalidOperationException("Reference-array clone lost header or element data.");
             }
+            AssertRangeCalls(hooks, 1, 0, "reference-array clone");
 
+            hooks.Reset(destinationAddress, workByte, claimBits: true);
             MixedReferences[] mixedClone = (MixedReferences[])mixedCloneSource.Clone();
             if ((mixedClone.Length != mixedCloneSource.Length) ||
                 !ReferenceEquals(mixedClone[0].First, mixedCloneSource[0].First) ||
@@ -652,6 +693,7 @@ internal static class Program
             {
                 throw new InvalidOperationException("Mixed-struct array clone lost header or element data.");
             }
+            AssertRangeCalls(hooks, 0, 0, "mixed-struct array clone");
 
             ref int? nullableSlot = ref MemoryMarshal.GetArrayDataReference(nullableDestination);
             nuint nullableAddress = (nuint)Unsafe.AsPointer(ref nullableSlot);
@@ -680,6 +722,61 @@ internal static class Program
                 $"{operation} produced {actualAttempts} attempts, {actualWins} wins, and {argumentErrors} argument errors.");
         }
     }
+
+    private static void AssertRangeCalls(
+        NativeHooks hooks,
+        ulong rangeCalls,
+        ulong clearRangeCalls,
+        string operation)
+    {
+        ulong actualRangeCalls = hooks.RangeCallCount();
+        ulong actualClearRangeCalls = hooks.ClearRangeCallCount();
+        if ((actualRangeCalls != rangeCalls) || (actualClearRangeCalls != clearRangeCalls))
+        {
+            throw new InvalidOperationException(
+                $"{operation} produced {actualRangeCalls} range calls and {actualClearRangeCalls} clear-range calls.");
+        }
+    }
+
+    private static void ExerciseDependentEdges(NativeHooks hooks, bool workWhenSet)
+    {
+        AssemblyName name = new($"SlotLogCollectible{Guid.NewGuid():N}");
+        AssemblyBuilder assembly = AssemblyBuilder.DefineDynamicAssembly(name, AssemblyBuilderAccess.RunAndCollect);
+        Type collectibleType = assembly
+            .DefineDynamicModule(name.Name!)
+            .DefineType("CollectibleElement", TypeAttributes.Public)
+            .CreateTypeInfo()!
+            .AsType();
+        MethodInfo allocator = typeof(Program)
+            .GetMethod(nameof(AllocatePinnedArray), BindingFlags.NonPublic | BindingFlags.Static)!
+            .MakeGenericMethod(collectibleType);
+        byte workByte = workWhenSet ? byte.MaxValue : (byte)0;
+        nuint resetDestination = hooks.SyntheticDestination(48, 0);
+
+        hooks.Reset(resetDestination, workByte, claimBits: true);
+        Array nonCollectible = AllocatePinnedArray<object>();
+        if (hooks.DependentEdgeCallCount() != 0)
+        {
+            throw new InvalidOperationException("A non-collectible UOH allocation reported a dependent edge.");
+        }
+
+        hooks.Reset(resetDestination, workByte, claimBits: true);
+        Array collectible = (Array)(allocator.Invoke(null, null)
+            ?? throw new InvalidOperationException("The collectible UOH allocation returned null."));
+        if (hooks.DependentEdgeCallCount() != 1)
+        {
+            throw new InvalidOperationException(
+                $"A collectible UOH allocation reported {hooks.DependentEdgeCallCount()} dependent edges.");
+        }
+
+        GC.KeepAlive(nonCollectible);
+        GC.KeepAlive(collectible);
+        GC.KeepAlive(collectibleType);
+        GC.KeepAlive(assembly);
+    }
+
+    [MethodImpl(MethodImplOptions.NoInlining)]
+    private static T[] AllocatePinnedArray<T>() => GC.AllocateArray<T>(1, pinned: true);
 
     private static unsafe void ExerciseInterpreterStoreSurfaces(NativeHooks hooks)
     {
@@ -829,9 +926,16 @@ internal static class Program
     [return: MarshalAs(UnmanagedType.I1)]
     private delegate bool ClaimSynthetic(nuint destination);
 
+    [UnmanagedFunctionPointer(CallingConvention.Cdecl)]
+    [return: MarshalAs(UnmanagedType.I1)]
+    private delegate bool InvokeEmptyRange(nuint destination);
+
     private sealed record NativeHooks(
         GetCallCount CallCount,
         GetClobberMask ClobberMask,
+        GetCallCount RangeCallCount,
+        GetCallCount ClearRangeCallCount,
+        GetCallCount DependentEdgeCallCount,
         ResetSlotLog Reset,
         ResetSlotLogRange ResetRange,
         GetCallCount AttemptCount,
@@ -839,7 +943,8 @@ internal static class Program
         GetCallCount ArgumentErrorCount,
         GetPointer LastDestination,
         GetSyntheticDestination SyntheticDestination,
-        ClaimSynthetic ClaimSynthetic);
+        ClaimSynthetic ClaimSynthetic,
+        InvokeEmptyRange InvokeEmptyRange);
 
     private readonly record struct ScalarState(
         Node Object0,

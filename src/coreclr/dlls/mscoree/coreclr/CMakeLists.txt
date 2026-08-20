@@ -51,6 +51,9 @@ if (NOT CLR_CMAKE_HOST_ARCH_WASM)
         target_link_options(coreclr PRIVATE
             "/EXPORT:GC_WriteBarrierTest_GetCallCount"
             "/EXPORT:GC_WriteBarrierTest_GetClobberMask"
+            "/EXPORT:GC_WriteBarrierTest_GetRangeCallCount"
+            "/EXPORT:GC_WriteBarrierTest_GetClearRangeCallCount"
+            "/EXPORT:GC_WriteBarrierTest_GetDependentEdgeCallCount"
             "/EXPORT:GC_WriteBarrierTest_Reset"
             "/EXPORT:GC_WriteBarrierTest_ResetRange"
             "/EXPORT:GC_WriteBarrierTest_GetAttemptCount"
@@ -59,6 +62,7 @@ if (NOT CLR_CMAKE_HOST_ARCH_WASM)
             "/EXPORT:GC_WriteBarrierTest_GetLastDestination"
             "/EXPORT:GC_WriteBarrierTest_GetSyntheticDestination"
             "/EXPORT:GC_WriteBarrierTest_ClaimSynthetic"
+            "/EXPORT:GC_WriteBarrierTest_InvokeEmptyRange"
         )
     endif()
 

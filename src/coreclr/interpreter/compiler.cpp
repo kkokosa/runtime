@@ -4047,7 +4047,14 @@ bool InterpCompiler::EmitNamedIntrinsicCall(NamedIntrinsic ni, bool nonVirtualCa
 
         case NI_System_Runtime_CompilerServices_RuntimeHelpers_RequiresOldValueWriteBarrier:
         {
-            AddIns(INTOP_LDC_I4_WRITE_BARRIER_REQUIRES_OLD_VALUE);
+            int32_t result =
+                (m_corJitFlags.IsSet(CORJIT_FLAGS::CORJIT_FLAG_WRITE_BARRIER_REQUIRES_OLD_VALUE) ||
+                 m_corJitFlags.IsSet(CORJIT_FLAGS::CORJIT_FLAG_USE_STANDARD_WRITE_BARRIER_ABI))
+                    ? 1
+                    : 0;
+
+            AddIns(INTOP_LDC_I4);
+            m_pLastNewIns->data[0] = result;
 
             PushInterpType(InterpTypeI4, nullptr);
             m_pLastNewIns->SetDVar(m_pStackPointer[-1].var);

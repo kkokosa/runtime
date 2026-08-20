@@ -806,7 +806,7 @@ PATCH_LABEL JIT_WriteBarrier_SlotLog64_Patch_Label_MetadataBase
         movabs  rax, 0xF0F0F0F0F0F0F0F0
         movzx   eax, byte ptr [rax + r11]
 PATCH_LABEL JIT_WriteBarrier_SlotLog64_Patch_Label_Polarity
-        xor     al, 0xF0
+        xor     al, 0xA5
         jz      LOCAL_LABEL(Store_SlotLog64)
 
         mov     r11, rdi
@@ -842,7 +842,7 @@ PATCH_LABEL JIT_WriteBarrier_WriteWatch_SlotLog64_Patch_Label_MetadataBase
         movabs  rax, 0xF0F0F0F0F0F0F0F0
         movzx   eax, byte ptr [rax + r11]
 PATCH_LABEL JIT_WriteBarrier_WriteWatch_SlotLog64_Patch_Label_Polarity
-        xor     al, 0xF0
+        xor     al, 0xA5
         jz      LOCAL_LABEL(Store_WriteWatch_SlotLog64)
 
         mov     r11, rdi

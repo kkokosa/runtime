@@ -1162,7 +1162,8 @@ void WriteBarrierManager::UpdatePatchLocations(WriteBarrierType newWriteBarrier)
             _ASSERTE_ALL_BUILDS(0xf0f0f0f0f0f0f0f0 == *(UINT64*)m_pSlotLogSlowPathTargetImmediate);
             _ASSERTE_ALL_BUILDS(0x16 == *(UINT8*)m_pSlotLogMetadataByteShift);
             _ASSERTE_ALL_BUILDS(0x16 == *(UINT8*)m_pSlotLogMetadataBitShift);
-            _ASSERTE_ALL_BUILDS(0xf0 == *(UINT8*)m_pSlotLogPolarity);
+            _ASSERTE_ALL_BUILDS(0x34 == *(m_pSlotLogPolarity - 1));
+            _ASSERTE_ALL_BUILDS(0xa5 == *m_pSlotLogPolarity);
             break;
 #endif // TARGET_AMD64
 
@@ -1291,7 +1292,8 @@ void WriteBarrierManager::UpdatePatchLocations(WriteBarrierType newWriteBarrier)
             _ASSERTE_ALL_BUILDS(0xf0f0f0f0f0f0f0f0 == *(UINT64*)m_pWriteWatchTableImmediate);
             _ASSERTE_ALL_BUILDS(0x16 == *(UINT8*)m_pSlotLogMetadataByteShift);
             _ASSERTE_ALL_BUILDS(0x16 == *(UINT8*)m_pSlotLogMetadataBitShift);
-            _ASSERTE_ALL_BUILDS(0xf0 == *(UINT8*)m_pSlotLogPolarity);
+            _ASSERTE_ALL_BUILDS(0x34 == *(m_pSlotLogPolarity - 1));
+            _ASSERTE_ALL_BUILDS(0xa5 == *m_pSlotLogPolarity);
             break;
 #endif // TARGET_AMD64
 

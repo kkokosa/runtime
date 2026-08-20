@@ -731,7 +731,7 @@ PATCH_LABEL JIT_WriteBarrier_SlotLog64_Patch_Label_MetadataBase
         mov     rax, 0F0F0F0F0F0F0F0F0h
         movzx   eax, byte ptr [rax + r11]
 PATCH_LABEL JIT_WriteBarrier_SlotLog64_Patch_Label_Polarity
-        xor     al, 0F0h
+        xor     al, 0A5h
         jz      Store
 
         mov     r11, rcx
@@ -768,7 +768,7 @@ PATCH_LABEL JIT_WriteBarrier_WriteWatch_SlotLog64_Patch_Label_MetadataBase
         mov     rax, 0F0F0F0F0F0F0F0F0h
         movzx   eax, byte ptr [rax + r11]
 PATCH_LABEL JIT_WriteBarrier_WriteWatch_SlotLog64_Patch_Label_Polarity
-        xor     al, 0F0h
+        xor     al, 0A5h
         jz      Store
 
         mov     r11, rcx

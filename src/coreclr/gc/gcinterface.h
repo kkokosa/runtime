@@ -96,7 +96,8 @@ typedef void (LOCALGC_CALLCONV *WriteBarrierSlowPath)(
 
 // Called before a contiguous range of reference fields is overwritten. The
 // helper must observe the complete source and destination ranges before any
-// destination field is changed.
+// destination field is changed. A null source means every proposed new
+// reference in the range is null.
 typedef void (LOCALGC_CALLCONV *WriteBarrierRangeSlowPath)(
     Object** destination,
     Object** source,

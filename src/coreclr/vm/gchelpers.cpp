@@ -1621,6 +1621,11 @@ bool ErectWriteBarrierRangePre(Object** dst, Object** src, size_t referenceCount
     WriteBarrierRangeSlowPath slowPath = g_SlotLogWriteBarrierRangeSlowPath;
     if (slowPath != nullptr)
     {
+        if (referenceCount == 0)
+        {
+            return true;
+        }
+
 #ifdef FEATURE_USE_SOFTWARE_WRITE_WATCH_FOR_GC_HEAP
         if (GCHeapUtilities::SoftwareWriteWatchIsEnabled())
         {
@@ -1639,6 +1644,13 @@ bool ErectWriteBarrierRangePre(Object** dst, Object** src, size_t referenceCount
 #endif // TARGET_AMD64
 }
 
+#ifdef FEATURE_WRITE_BARRIER_STANDARD_ABI_TEST
+extern "C" DLLEXPORT bool GC_WriteBarrierTest_InvokeEmptyRange(uintptr_t destination)
+{
+    return ErectWriteBarrierRangePre(reinterpret_cast<Object**>(destination), nullptr, 0);
+}
+#endif
+
 bool ErectWriteBarrierLayoutRangePre(
     void* dst, const void* src, MethodTable* type, size_t elementSize, size_t elementCount)
 {
@@ -1648,8 +1660,7 @@ bool ErectWriteBarrierLayoutRangePre(
     uint8_t* destination = reinterpret_cast<uint8_t*>(dst);
     if ((g_SlotLogWriteBarrierSlowPath == nullptr) ||
         (destination < g_lowest_address) ||
-        (destination >= g_highest_address) ||
-        (elementCount == 0))
+        (destination >= g_highest_address))
     {
         return false;
     }
@@ -1657,15 +1668,14 @@ bool ErectWriteBarrierLayoutRangePre(
     if (type == nullptr)
     {
         _ASSERTE(elementSize == sizeof(Object*));
-        for (size_t element = 0; element < elementCount; element++)
-        {
-            Object** destinationSlot = reinterpret_cast<Object**>(destination + (element * elementSize));
-            Object* newReference = (src == nullptr)
-                ? nullptr
-                : VolatileLoad(reinterpret_cast<Object* const*>(
-                      reinterpret_cast<const uint8_t*>(src) + (element * elementSize)));
-            ErectWriteBarrierPre(destinationSlot, newReference);
-        }
+        return ErectWriteBarrierRangePre(
+            reinterpret_cast<Object**>(dst),
+            reinterpret_cast<Object**>(const_cast<void*>(src)),
+            elementCount);
+    }
+
+    if (elementCount == 0)
+    {
         return true;
     }
 
@@ -1776,15 +1786,14 @@ void ErectWriteBarrierForMT(MethodTable **dst, MethodTable *ref)
     STATIC_CONTRACT_NOTHROW;
     STATIC_CONTRACT_GC_NOTRIGGER;
 
-    Object* newLoaderAllocator = nullptr;
     if (ref->Collectible())
     {
-        newLoaderAllocator = reinterpret_cast<Object*>(ref->GetLoaderAllocatorObjectForGC());
-    }
+        Object* newLoaderAllocator = reinterpret_cast<Object*>(ref->GetLoaderAllocatorObjectForGC());
 
-    // This is the first MethodTable store into a newly allocated UOH object.
-    // GC_ALLOC_ZEROING_OPTIONAL permits the slot to contain stale bytes.
-    ErectWriteBarrierDependentEdgePre(dst, nullptr, newLoaderAllocator);
+        // This is the first MethodTable store into a newly allocated UOH object.
+        // GC_ALLOC_ZEROING_OPTIONAL permits the slot to contain stale bytes.
+        ErectWriteBarrierDependentEdgePre(dst, nullptr, newLoaderAllocator);
+    }
     *dst = ref;
 
 #ifdef WRITE_BARRIER_CHECK

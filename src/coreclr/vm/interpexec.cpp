@@ -1571,15 +1571,6 @@ SWITCH_OPCODE:
                     LOCAL_VAR(ip[1], int32_t) = 0;
                     ip += 2;
                     INTOP_NEXT;
-                INTOP_CASE(INTOP_LDC_I4_WRITE_BARRIER_REQUIRES_OLD_VALUE)
-                {
-                    bool useStandardAbi;
-                    bool tracksOldValue;
-                    GCHeapUtilities::GetWriteBarrierCodegenModeForJit(&useStandardAbi, &tracksOldValue);
-                    LOCAL_VAR(ip[1], int32_t) = (useStandardAbi || tracksOldValue) ? 1 : 0;
-                    ip += 2;
-                    INTOP_NEXT;
-                }
                 INTOP_CASE(INTOP_LDC_I8_0)
                     LOCAL_VAR(ip[1], int64_t) = 0;
                     ip += 2;
