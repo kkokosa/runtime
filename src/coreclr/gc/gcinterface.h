@@ -11,9 +11,11 @@
 // The minor version of the IGCHeap interface. Non-breaking changes are required
 // to bump the minor version number. GCs and EEs with minor version number
 // mismatches can still interoperate correctly, with some care.
-#define GC_INTERFACE_MINOR_VERSION 9
+#define GC_INTERFACE_MINOR_VERSION 11
 
 #define GC_WRITE_BARRIER_SHAPE_INTERFACE_MINOR_VERSION 9
+#define GC_WRITE_BARRIER_COMPLETE_STORE_INTERFACE_MINOR_VERSION 10
+#define GC_WRITE_BARRIER_EPOCH_RESET_INTERFACE_MINOR_VERSION 11
 
 // The major version of the IGCToCLR interface. Breaking changes to this interface
 // require bumps in the major version number.
@@ -83,12 +85,31 @@ enum class WriteBarrierMetadataBitMeaning : uint8_t
     WorkWhenBitIsSet = 1,
 };
 
-// Called before the field is overwritten. The helper must not trigger a
-// garbage collection, block, switch GC mode, or throw across the callback.
+// Called before the field is overwritten. For conditional atomic writes,
+// new_reference is the proposed value and is not guaranteed to be committed.
+// The helper must not trigger a garbage collection, block, switch GC mode, or
+// throw across the callback.
 typedef void (LOCALGC_CALLCONV *WriteBarrierSlowPath)(
     Object** destination,
     Object* old_reference,
     Object* new_reference);
+
+// Called before a contiguous range of reference fields is overwritten. The
+// helper must observe the complete source and destination ranges before any
+// destination field is changed.
+typedef void (LOCALGC_CALLCONV *WriteBarrierRangeSlowPath)(
+    Object** destination,
+    Object** source,
+    size_t reference_count);
+
+// Called before a native slot changes a logical managed-object edge.
+typedef void (LOCALGC_CALLCONV *WriteBarrierDependentEdgeSlowPath)(
+    void* destination,
+    Object* old_reference,
+    Object* new_reference);
+
+// Called while mutators are suspended before they resume after a finished GC.
+typedef void (LOCALGC_CALLCONV *WriteBarrierEpochReset)();
 
 struct WriteBarrierSideMetadataParameters
 {
@@ -176,6 +197,14 @@ struct WriteBarrierParameters
 
     // Used only when write_barrier_shape is SideMetadataFieldLog.
     WriteBarrierSideMetadataParameters write_barrier_side_metadata;
+
+    // Used only when write_barrier_shape is SideMetadataFieldLog. This tail is
+    // present when the collector reports interface version 5.10 or later.
+    alignas(void*) WriteBarrierRangeSlowPath write_barrier_range_slow_path;
+    WriteBarrierDependentEdgeSlowPath write_barrier_dependent_edge_slow_path;
+
+    // Present when the collector reports interface version 5.11 or later.
+    WriteBarrierEpochReset write_barrier_epoch_reset;
 };
 
 struct FinalizerWorkItem

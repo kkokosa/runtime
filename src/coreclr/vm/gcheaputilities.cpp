@@ -63,6 +63,8 @@ GC_LOAD_STATUS g_gc_load_status = GC_LOAD_STATUS_BEFORE_START;
 // The version of the GC that we have loaded.
 VersionInfo g_gc_version_info;
 bool g_write_barrier_parameters_include_shape;
+bool g_write_barrier_parameters_include_complete_store;
+bool g_write_barrier_parameters_include_epoch_reset;
 
 // The module that contains the GC.
 PTR_VOID g_gc_module_base;
@@ -99,10 +101,13 @@ enum WriteBarrierCodegenMode : LONG
 };
 
 LONG g_write_barrier_codegen_mode;
+bool g_write_barrier_tracks_old_value;
 }
 
-bool GCHeapUtilities::TryPrepareWriteBarrierCodegenMode(bool useStandardAbi)
+bool GCHeapUtilities::TryPrepareWriteBarrierCodegenMode(bool useStandardAbi, bool tracksOldValue)
 {
+    assert(!tracksOldValue || useStandardAbi);
+
     LONG desiredMode =
         useStandardAbi ? WriteBarrierCodegenModeStandardInitializing : WriteBarrierCodegenModeSpecialized;
 
@@ -117,6 +122,11 @@ bool GCHeapUtilities::TryPrepareWriteBarrierCodegenMode(bool useStandardAbi)
                     desiredMode,
                     WriteBarrierCodegenModeUninitialized) == WriteBarrierCodegenModeUninitialized)
             {
+                if (useStandardAbi)
+                {
+                    VolatileStore(&g_write_barrier_tracks_old_value, tracksOldValue);
+                }
+
                 return true;
             }
 
@@ -151,15 +161,20 @@ void GCHeapUtilities::CompleteStandardWriteBarrierCodegenMode()
     }
 }
 
-bool GCHeapUtilities::UseStandardWriteBarrierAbiForJit()
+void GCHeapUtilities::GetWriteBarrierCodegenModeForJit(bool* useStandardAbi, bool* tracksOldValue)
 {
+    assert(useStandardAbi != nullptr);
+    assert(tracksOldValue != nullptr);
+
     while (true)
     {
         LONG currentMode = VolatileLoad(&g_write_barrier_codegen_mode);
 
         if (currentMode == WriteBarrierCodegenModeStandard)
         {
-            return true;
+            *useStandardAbi = true;
+            *tracksOldValue = VolatileLoad(&g_write_barrier_tracks_old_value);
+            return;
         }
 
         if (currentMode == WriteBarrierCodegenModeStandardInitializing)
@@ -170,7 +185,9 @@ bool GCHeapUtilities::UseStandardWriteBarrierAbiForJit()
 
         if (currentMode != WriteBarrierCodegenModeUninitialized)
         {
-            return false;
+            *useStandardAbi = false;
+            *tracksOldValue = false;
+            return;
         }
 
         if (InterlockedCompareExchange(
@@ -178,7 +195,9 @@ bool GCHeapUtilities::UseStandardWriteBarrierAbiForJit()
                 WriteBarrierCodegenModeSpecializedObserved,
                 WriteBarrierCodegenModeUninitialized) == WriteBarrierCodegenModeUninitialized)
         {
-            return false;
+            *useStandardAbi = false;
+            *tracksOldValue = false;
+            return;
         }
     }
 }
@@ -407,6 +426,12 @@ HRESULT LoadAndInitializeGC(LPCWSTR standaloneGCName, LPCWSTR standaloneGCPath)
     g_write_barrier_parameters_include_shape =
         (g_gc_version_info.MajorVersion == GC_INTERFACE_MAJOR_VERSION) &&
         (g_gc_version_info.MinorVersion >= GC_WRITE_BARRIER_SHAPE_INTERFACE_MINOR_VERSION);
+    g_write_barrier_parameters_include_complete_store =
+        (g_gc_version_info.MajorVersion == GC_INTERFACE_MAJOR_VERSION) &&
+        (g_gc_version_info.MinorVersion >= GC_WRITE_BARRIER_COMPLETE_STORE_INTERFACE_MINOR_VERSION);
+    g_write_barrier_parameters_include_epoch_reset =
+        (g_gc_version_info.MajorVersion == GC_INTERFACE_MAJOR_VERSION) &&
+        (g_gc_version_info.MinorVersion >= GC_WRITE_BARRIER_EPOCH_RESET_INTERFACE_MINOR_VERSION);
     HRESULT initResult = initFunc(gcToClr, &heap, &manager, &g_gc_dac_vars);
     if (initResult == S_OK)
     {
@@ -455,6 +480,8 @@ HRESULT InitializeDefaultGC()
     IGCHeap* heap;
     IGCHandleManager* manager;
     g_write_barrier_parameters_include_shape = true;
+    g_write_barrier_parameters_include_complete_store = true;
+    g_write_barrier_parameters_include_epoch_reset = true;
     HRESULT initResult = GC_Initialize(nullptr, &heap, &manager, &g_gc_dac_vars);
     if (initResult == S_OK)
     {

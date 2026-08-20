@@ -14,7 +14,17 @@ internal static class Program
     {
         bool expectStandardAbi = Environment.GetEnvironmentVariable("P11_EXPECT_STANDARD_ABI") == "1";
         bool expectClobber = Environment.GetEnvironmentVariable("P11_EXPECT_CLOBBER") == "1";
+        bool expectSlotLog = Environment.GetEnvironmentVariable("P12_EXPECT_SLOT_LOG") == "1";
         NativeHooks? nativeHooks = expectStandardAbi ? LoadNativeHooks() : null;
+
+        if (Environment.GetEnvironmentVariable("P12_INTERPRETER_SURFACES") == "1")
+        {
+            ExerciseInterpreterStoreSurfaces(
+                nativeHooks ?? throw new InvalidOperationException("Native hooks are required."));
+            Console.WriteLine("PASS: interpreter mixed-reference copy and clear surfaces");
+            return 0;
+        }
+
         GetCallCount? getCallCount = nativeHooks?.CallCount;
         ulong initialCallCount = getCallCount?.Invoke() ?? 0;
 
@@ -34,6 +44,17 @@ internal static class Program
         }
 
         List<string> executedState = ["field/array helpers", "integer", "object", "Vector128"];
+        if (expectSlotLog)
+        {
+            ExerciseSlotLog(nativeHooks ?? throw new InvalidOperationException("Native hooks are required."));
+            executedState.Add("slot-log fast/slow/contention");
+            ExerciseReferenceCountWidths();
+            executedState.Add("2/4/8-bit RC saturation");
+            ExerciseEpochReset(nativeHooks);
+            executedState.Add("GC epoch reset");
+            ExerciseFaultMapping();
+            executedState.Add("write-barrier fault mapping");
+        }
         if (Vector256.IsHardwareAccelerated)
         {
             executedState.Add("Vector256");
@@ -273,9 +294,513 @@ internal static class Program
         nint library = NativeLibrary.Load(libraryPath);
         nint callCount = NativeLibrary.GetExport(library, "GC_WriteBarrierTest_GetCallCount");
         nint clobberMask = NativeLibrary.GetExport(library, "GC_WriteBarrierTest_GetClobberMask");
+        nint reset = NativeLibrary.GetExport(library, "GC_WriteBarrierTest_Reset");
+        nint resetRange = NativeLibrary.GetExport(library, "GC_WriteBarrierTest_ResetRange");
+        nint attemptCount = NativeLibrary.GetExport(library, "GC_WriteBarrierTest_GetAttemptCount");
+        nint winCount = NativeLibrary.GetExport(library, "GC_WriteBarrierTest_GetWinCount");
+        nint argumentErrorCount = NativeLibrary.GetExport(library, "GC_WriteBarrierTest_GetArgumentErrorCount");
+        nint lastDestination = NativeLibrary.GetExport(library, "GC_WriteBarrierTest_GetLastDestination");
+        nint syntheticDestination = NativeLibrary.GetExport(library, "GC_WriteBarrierTest_GetSyntheticDestination");
+        nint claimSynthetic = NativeLibrary.GetExport(library, "GC_WriteBarrierTest_ClaimSynthetic");
         return new NativeHooks(
             Marshal.GetDelegateForFunctionPointer<GetCallCount>(callCount),
-            Marshal.GetDelegateForFunctionPointer<GetClobberMask>(clobberMask));
+            Marshal.GetDelegateForFunctionPointer<GetClobberMask>(clobberMask),
+            Marshal.GetDelegateForFunctionPointer<ResetSlotLog>(reset),
+            Marshal.GetDelegateForFunctionPointer<ResetSlotLogRange>(resetRange),
+            Marshal.GetDelegateForFunctionPointer<GetCallCount>(attemptCount),
+            Marshal.GetDelegateForFunctionPointer<GetCallCount>(winCount),
+            Marshal.GetDelegateForFunctionPointer<GetCallCount>(argumentErrorCount),
+            Marshal.GetDelegateForFunctionPointer<GetPointer>(lastDestination),
+            Marshal.GetDelegateForFunctionPointer<GetSyntheticDestination>(syntheticDestination),
+            Marshal.GetDelegateForFunctionPointer<ClaimSynthetic>(claimSynthetic));
+    }
+
+    private static unsafe void ExerciseSlotLog(NativeHooks hooks)
+    {
+        bool workWhenSet = Environment.GetEnvironmentVariable("DOTNET_GCWriteBarrierTestBitMeaning") == "1";
+        Node destination = new();
+        Node oldValue = new();
+        Node newValue = new();
+        destination.Next = oldValue;
+
+        if (!GC.TryStartNoGCRegion(1024 * 1024))
+        {
+            throw new InvalidOperationException("Unable to enter the slot-log no-GC test region.");
+        }
+
+        try
+        {
+            ref Node? slot = ref destination.Next;
+            nuint slotAddress = (nuint)Unsafe.AsPointer(ref slot);
+            uint bit = (uint)((slotAddress >> 3) & 7);
+            byte workByte = workWhenSet ? byte.MaxValue : (byte)0;
+            byte noWorkByte = workWhenSet ? (byte)0 : byte.MaxValue;
+
+            hooks.Reset(slotAddress, workByte, claimBits: true);
+            destination.Next = newValue;
+            if ((hooks.AttemptCount() != 1) ||
+                (hooks.WinCount() != 1) ||
+                (hooks.ArgumentErrorCount() != 0) ||
+                (hooks.LastDestination() != slotAddress))
+            {
+                throw new InvalidOperationException("The slot-log slow path did not claim the expected field.");
+            }
+
+            destination.Next = oldValue;
+            if ((hooks.AttemptCount() != 1) || (hooks.WinCount() != 1))
+            {
+                throw new InvalidOperationException("A claimed slot did not take the bit-level fast path.");
+            }
+
+            hooks.Reset(slotAddress, noWorkByte, claimBits: true);
+            destination.Next = newValue;
+            if (hooks.AttemptCount() != 0)
+            {
+                throw new InvalidOperationException("A no-work metadata byte did not take the byte-zero fast path.");
+            }
+
+            uint otherBit = (bit + 1) & 7;
+            byte mixedByte = workWhenSet
+                ? (byte)(1 << (int)otherBit)
+                : (byte)(1 << (int)bit);
+            hooks.Reset(slotAddress, mixedByte, claimBits: true);
+            destination.Next = oldValue;
+            if (hooks.AttemptCount() != 0)
+            {
+                throw new InvalidOperationException("The barrier tested the wrong bit in a mixed metadata byte.");
+            }
+        }
+        finally
+        {
+            GC.EndNoGCRegion();
+        }
+
+        const int ThreadCount = 32;
+        Thread[] threads = new Thread[ThreadCount];
+        ManualResetEventSlim start = new(false);
+        CountdownEvent ready = new(ThreadCount);
+        nuint sameSlot = hooks.SyntheticDestination(32, 3);
+        for (int index = 0; index < threads.Length; index++)
+        {
+            threads[index] = new Thread(() =>
+            {
+                ready.Signal();
+                start.Wait();
+                hooks.ClaimSynthetic(sameSlot);
+            });
+            threads[index].Start();
+        }
+
+        ready.Wait();
+        hooks.Reset(sameSlot, workWhenSet ? byte.MaxValue : (byte)0, claimBits: true);
+        start.Set();
+        foreach (Thread thread in threads)
+        {
+            thread.Join();
+        }
+
+        ulong sameSlotAttempts = hooks.AttemptCount();
+        ulong sameSlotWins = hooks.WinCount();
+        if ((sameSlotAttempts != ThreadCount) || (sameSlotWins != 1))
+        {
+            throw new InvalidOperationException(
+                $"Same-slot contention produced {sameSlotAttempts} attempts and {sameSlotWins} wins.");
+        }
+
+        start.Dispose();
+        ready.Dispose();
+        start = new ManualResetEventSlim(false);
+        ready = new CountdownEvent(8);
+        nuint firstBit = hooks.SyntheticDestination(33, 0);
+        for (int index = 0; index < 8; index++)
+        {
+            nuint bitDestination = hooks.SyntheticDestination(33, (uint)index);
+            threads[index] = new Thread(() =>
+            {
+                ready.Signal();
+                start.Wait();
+                hooks.ClaimSynthetic(bitDestination);
+            });
+            threads[index].Start();
+        }
+
+        ready.Wait();
+        hooks.Reset(firstBit, workWhenSet ? byte.MaxValue : (byte)0, claimBits: true);
+        start.Set();
+        for (int index = 0; index < 8; index++)
+        {
+            threads[index].Join();
+        }
+
+        ulong sameByteAttempts = hooks.AttemptCount();
+        ulong sameByteWins = hooks.WinCount();
+        if ((sameByteAttempts != 8) || (sameByteWins != 8))
+        {
+            throw new InvalidOperationException(
+                $"Same-byte contention produced {sameByteAttempts} attempts and {sameByteWins} wins.");
+        }
+
+        start.Dispose();
+        ready.Dispose();
+
+        ExerciseCompleteStoreSurfaces(hooks, workWhenSet);
+    }
+
+    private static unsafe void ExerciseCompleteStoreSurfaces(NativeHooks hooks, bool workWhenSet)
+    {
+        ObjectHolder holder = new();
+        object oldValue = new();
+        object newValue = new();
+        object comparand = new();
+        object?[] source = [new object(), new object(), new object(), new object()];
+        object?[] destination = [new object(), new object(), new object(), new object()];
+        object?[] overlap = [new object(), new object(), new object(), new object()];
+        MixedReferences[] mixedSource =
+        [
+            new() { First = new object(), Scalar = 101, Second = new object() },
+            new() { First = new object(), Scalar = 202, Second = new object() },
+        ];
+        MixedReferences[] mixedDestination =
+        [
+            new() { First = new object(), Scalar = 303, Second = new object() },
+            new() { First = new object(), Scalar = 404, Second = new object() },
+        ];
+        MixedReferences[] mixedSpan =
+        [
+            new() { First = new object(), Scalar = 505, Second = new object() },
+            new() { First = new object(), Scalar = 606, Second = new object() },
+        ];
+        object?[] cloneSource = [new object(), new object(), new object()];
+        MixedReferences[] mixedCloneSource =
+        [
+            new() { First = new object(), Scalar = 1_111, Second = new object() },
+            new() { First = new object(), Scalar = 1_212, Second = new object() },
+        ];
+        int?[] nullableDestination = [42];
+        object uninitializedNullable = RuntimeHelpers.GetUninitializedObject(typeof(int?));
+        object overlap0 = overlap[0]!;
+        object overlap1 = overlap[1]!;
+        object overlap2 = overlap[2]!;
+        var valueField = typeof(ObjectHolder).GetField(nameof(ObjectHolder.Value))
+            ?? throw new InvalidOperationException("Unable to find the VM store test field.");
+        byte workByte = workWhenSet ? byte.MaxValue : (byte)0;
+
+        if (!GC.TryStartNoGCRegion(4 * 1024 * 1024))
+        {
+            throw new InvalidOperationException("Unable to enter the complete-store no-GC test region.");
+        }
+
+        try
+        {
+            ref object? holderSlot = ref holder.Value;
+            nuint holderAddress = (nuint)Unsafe.AsPointer(ref holderSlot);
+
+            holder.Value = oldValue;
+            hooks.Reset(holderAddress, workByte, claimBits: true);
+            holder.Value = null;
+            AssertClaim(hooks, 1, 1, "null field store");
+
+            holder.Value = oldValue;
+            hooks.Reset(holderAddress, workByte, claimBits: true);
+            holder.Value = "slot-log-frozen";
+            AssertClaim(hooks, 1, 1, "frozen-reference field store");
+
+            holder.Value = oldValue;
+            hooks.Reset(holderAddress, workByte, claimBits: true);
+            object? exchanged = Interlocked.Exchange(ref holder.Value, newValue);
+            if (!ReferenceEquals(exchanged, oldValue) || !ReferenceEquals(holder.Value, newValue))
+            {
+                throw new InvalidOperationException("Atomic exchange produced an unexpected value.");
+            }
+            AssertClaim(hooks, 1, 1, "atomic exchange");
+
+            holder.Value = oldValue;
+            hooks.Reset(holderAddress, workByte, claimBits: true);
+            object? observed = Interlocked.CompareExchange(ref holder.Value, newValue, comparand);
+            if (!ReferenceEquals(observed, oldValue) || !ReferenceEquals(holder.Value, oldValue))
+            {
+                throw new InvalidOperationException("Failed compare-exchange modified the field.");
+            }
+            AssertClaim(hooks, 1, 1, "failed compare-exchange pre-barrier");
+
+            holder.Value = oldValue;
+            hooks.Reset(holderAddress, workByte, claimBits: true);
+            valueField.SetValue(holder, newValue);
+            if (!ReferenceEquals(holder.Value, newValue))
+            {
+                throw new InvalidOperationException("Reflection field store failed.");
+            }
+            AssertClaim(hooks, 1, 1, "reflection field store");
+
+            ref object? destinationStart = ref MemoryMarshal.GetArrayDataReference(destination);
+            nuint destinationAddress = (nuint)Unsafe.AsPointer(ref destinationStart);
+            hooks.ResetRange(destinationAddress, (nuint)source.Length, workByte, claimBits: true);
+            Array.Copy(source, destination, source.Length);
+            for (int index = 0; index < source.Length; index++)
+            {
+                if (!ReferenceEquals(source[index], destination[index]))
+                {
+                    throw new InvalidOperationException("Bulk reference copy produced an unexpected value.");
+                }
+            }
+            AssertClaim(hooks, (ulong)source.Length, (ulong)source.Length, "bulk reference copy");
+
+            hooks.ResetRange(destinationAddress, (nuint)destination.Length, workByte, claimBits: true);
+            Array.Clear(destination);
+            if (Array.Exists(destination, static item => item is not null))
+            {
+                throw new InvalidOperationException("Array.Clear did not clear a reference array.");
+            }
+            AssertClaim(hooks, (ulong)destination.Length, (ulong)destination.Length, "reference Array.Clear");
+
+            ref object? overlapStart = ref Unsafe.Add(ref MemoryMarshal.GetArrayDataReference(overlap), 1);
+            nuint overlapAddress = (nuint)Unsafe.AsPointer(ref overlapStart);
+            hooks.ResetRange(overlapAddress, 3, workByte, claimBits: true);
+            Array.Copy(overlap, 0, overlap, 1, 3);
+            if (!ReferenceEquals(overlap[1], overlap0) ||
+                !ReferenceEquals(overlap[2], overlap1) ||
+                !ReferenceEquals(overlap[3], overlap2))
+            {
+                throw new InvalidOperationException("Overlapping reference copy violated memmove semantics.");
+            }
+            AssertClaim(hooks, 3, 3, "overlapping reference copy");
+
+            nuint mixedWordCount =
+                (nuint)(mixedDestination.Length * Unsafe.SizeOf<MixedReferences>() / IntPtr.Size);
+            ref MixedReferences mixedDestinationStart =
+                ref MemoryMarshal.GetArrayDataReference(mixedDestination);
+            nuint mixedDestinationAddress = (nuint)Unsafe.AsPointer(ref mixedDestinationStart);
+            hooks.ResetRange(mixedDestinationAddress, mixedWordCount, workByte, claimBits: true);
+            mixedSource.AsSpan().CopyTo(mixedDestination);
+            if (!ReferenceEquals(mixedDestination[0].First, mixedSource[0].First) ||
+                !ReferenceEquals(mixedDestination[0].Second, mixedSource[0].Second) ||
+                (mixedDestination[0].Scalar != mixedSource[0].Scalar) ||
+                !ReferenceEquals(mixedDestination[1].First, mixedSource[1].First) ||
+                !ReferenceEquals(mixedDestination[1].Second, mixedSource[1].Second) ||
+                (mixedDestination[1].Scalar != mixedSource[1].Scalar))
+            {
+                throw new InvalidOperationException("Typed mixed-struct copy produced an unexpected value.");
+            }
+            AssertClaim(hooks, 4, 4, "typed mixed-struct copy");
+
+            mixedDestination[0] =
+                new MixedReferences { First = new object(), Scalar = 707, Second = new object() };
+            mixedDestination[1] =
+                new MixedReferences { First = new object(), Scalar = 808, Second = new object() };
+            hooks.ResetRange(mixedDestinationAddress, mixedWordCount, workByte, claimBits: true);
+            Array.Copy(mixedSource, mixedDestination, mixedSource.Length);
+            if (!ReferenceEquals(mixedDestination[0].First, mixedSource[0].First) ||
+                !ReferenceEquals(mixedDestination[0].Second, mixedSource[0].Second) ||
+                (mixedDestination[0].Scalar != mixedSource[0].Scalar) ||
+                !ReferenceEquals(mixedDestination[1].First, mixedSource[1].First) ||
+                !ReferenceEquals(mixedDestination[1].Second, mixedSource[1].Second) ||
+                (mixedDestination[1].Scalar != mixedSource[1].Scalar))
+            {
+                throw new InvalidOperationException("Array.Copy produced an unexpected mixed-struct value.");
+            }
+            AssertClaim(hooks, 4, 4, "mixed-struct Array.Copy");
+
+            mixedDestination[0] =
+                new MixedReferences { First = new object(), Scalar = 909, Second = new object() };
+            mixedDestination[1] =
+                new MixedReferences { First = new object(), Scalar = 1_010, Second = new object() };
+            hooks.ResetRange(mixedDestinationAddress, mixedWordCount, workByte, claimBits: true);
+            Array.Clear(mixedDestination);
+            if ((mixedDestination[0].First is not null) ||
+                (mixedDestination[0].Second is not null) ||
+                (mixedDestination[0].Scalar != 0) ||
+                (mixedDestination[1].First is not null) ||
+                (mixedDestination[1].Second is not null) ||
+                (mixedDestination[1].Scalar != 0))
+            {
+                throw new InvalidOperationException("Array.Clear did not clear a mixed-reference struct.");
+            }
+            AssertClaim(hooks, 4, 4, "mixed-struct Array.Clear");
+
+            ref MixedReferences mixedSpanStart = ref MemoryMarshal.GetArrayDataReference(mixedSpan);
+            nuint mixedSpanAddress = (nuint)Unsafe.AsPointer(ref mixedSpanStart);
+            hooks.ResetRange(mixedSpanAddress, mixedWordCount, workByte, claimBits: true);
+            mixedSpan.AsSpan().Clear();
+            if ((mixedSpan[0].First is not null) ||
+                (mixedSpan[0].Second is not null) ||
+                (mixedSpan[0].Scalar != 0) ||
+                (mixedSpan[1].First is not null) ||
+                (mixedSpan[1].Second is not null) ||
+                (mixedSpan[1].Scalar != 0))
+            {
+                throw new InvalidOperationException("Span.Clear did not clear a mixed-reference struct.");
+            }
+            AssertClaim(hooks, 4, 4, "mixed-struct Span.Clear");
+
+            object?[] clone = (object?[])cloneSource.Clone();
+            if ((clone.Length != cloneSource.Length) ||
+                !ReferenceEquals(clone[0], cloneSource[0]) ||
+                !ReferenceEquals(clone[1], cloneSource[1]) ||
+                !ReferenceEquals(clone[2], cloneSource[2]))
+            {
+                throw new InvalidOperationException("Reference-array clone lost header or element data.");
+            }
+
+            MixedReferences[] mixedClone = (MixedReferences[])mixedCloneSource.Clone();
+            if ((mixedClone.Length != mixedCloneSource.Length) ||
+                !ReferenceEquals(mixedClone[0].First, mixedCloneSource[0].First) ||
+                !ReferenceEquals(mixedClone[0].Second, mixedCloneSource[0].Second) ||
+                (mixedClone[0].Scalar != mixedCloneSource[0].Scalar) ||
+                !ReferenceEquals(mixedClone[1].First, mixedCloneSource[1].First) ||
+                !ReferenceEquals(mixedClone[1].Second, mixedCloneSource[1].Second) ||
+                (mixedClone[1].Scalar != mixedCloneSource[1].Scalar))
+            {
+                throw new InvalidOperationException("Mixed-struct array clone lost header or element data.");
+            }
+
+            ref int? nullableSlot = ref MemoryMarshal.GetArrayDataReference(nullableDestination);
+            nuint nullableAddress = (nuint)Unsafe.AsPointer(ref nullableSlot);
+            hooks.ResetRange(nullableAddress, 1, workByte, claimBits: true);
+            nullableDestination.SetValue(uninitializedNullable, 0);
+            if (nullableDestination[0].GetValueOrDefault() != 0)
+            {
+                throw new InvalidOperationException("Uninitialized nullable SetValue produced unexpected data.");
+            }
+            AssertClaim(hooks, 0, 0, "pointer-free nullable SetValue");
+        }
+        finally
+        {
+            GC.EndNoGCRegion();
+        }
+    }
+
+    private static void AssertClaim(NativeHooks hooks, ulong attempts, ulong wins, string operation)
+    {
+        ulong actualAttempts = hooks.AttemptCount();
+        ulong actualWins = hooks.WinCount();
+        ulong argumentErrors = hooks.ArgumentErrorCount();
+        if ((actualAttempts != attempts) || (actualWins != wins) || (argumentErrors != 0))
+        {
+            throw new InvalidOperationException(
+                $"{operation} produced {actualAttempts} attempts, {actualWins} wins, and {argumentErrors} argument errors.");
+        }
+    }
+
+    private static unsafe void ExerciseInterpreterStoreSurfaces(NativeHooks hooks)
+    {
+        bool workWhenSet = Environment.GetEnvironmentVariable("DOTNET_GCWriteBarrierTestBitMeaning") == "1";
+        byte workByte = workWhenSet ? byte.MaxValue : (byte)0;
+        MixedReferences[] source =
+        [
+            new() { First = new object(), Scalar = 111, Second = new object() },
+            new() { First = new object(), Scalar = 222, Second = new object() },
+        ];
+        MixedReferences[] destination =
+        [
+            new() { First = new object(), Scalar = 333, Second = new object() },
+            new() { First = new object(), Scalar = 444, Second = new object() },
+        ];
+        nuint wordCount = (nuint)(destination.Length * Unsafe.SizeOf<MixedReferences>() / IntPtr.Size);
+
+        if (!GC.TryStartNoGCRegion(1024 * 1024))
+        {
+            throw new InvalidOperationException("Unable to enter the interpreter no-GC test region.");
+        }
+
+        try
+        {
+            ref MixedReferences destinationStart = ref MemoryMarshal.GetArrayDataReference(destination);
+            nuint destinationAddress = (nuint)Unsafe.AsPointer(ref destinationStart);
+            hooks.ResetRange(destinationAddress, wordCount, workByte, claimBits: true);
+            Array.Copy(source, destination, source.Length);
+            AssertClaim(hooks, 4, 4, "interpreter mixed-struct copy");
+
+            hooks.ResetRange(destinationAddress, wordCount, workByte, claimBits: true);
+            destination.AsSpan().Clear();
+            if ((destination[0].First is not null) ||
+                (destination[0].Second is not null) ||
+                (destination[0].Scalar != 0) ||
+                (destination[1].First is not null) ||
+                (destination[1].Second is not null) ||
+                (destination[1].Scalar != 0))
+            {
+                throw new InvalidOperationException("Interpreter Span.Clear did not clear a mixed-reference struct.");
+            }
+            AssertClaim(hooks, 4, 4, "interpreter mixed-struct clear");
+        }
+        finally
+        {
+            GC.EndNoGCRegion();
+        }
+
+    }
+
+    private static void ExerciseReferenceCountWidths()
+    {
+        foreach (int bits in new[] { 2, 4, 8 })
+        {
+            int maximum = (1 << bits) - 1;
+            for (int count = 0; count <= maximum; count++)
+            {
+                int incremented = count == maximum ? maximum : count + 1;
+                int decremented = (count == 0) || (count == maximum) ? count : count - 1;
+                if ((incremented < count) ||
+                    (incremented > maximum) ||
+                    (decremented < 0) ||
+                    (count == maximum && decremented != maximum))
+                {
+                    throw new InvalidOperationException($"Invalid {bits}-bit reference-count saturation.");
+                }
+            }
+        }
+    }
+
+    private static unsafe void ExerciseEpochReset(NativeHooks hooks)
+    {
+        object?[] slots = new object?[20_000];
+        object oldValue = new();
+        object newValue = new();
+        slots[0] = oldValue;
+        ref object? slot = ref MemoryMarshal.GetArrayDataReference(slots);
+        nuint slotAddress = (nuint)Unsafe.AsPointer(ref slot);
+        bool workWhenSet =
+            Environment.GetEnvironmentVariable("DOTNET_GCWriteBarrierTestBitMeaning") == "1";
+        hooks.Reset(slotAddress, workWhenSet ? byte.MaxValue : (byte)0, claimBits: true);
+        slots[0] = newValue;
+        ulong winsBeforeGc = hooks.WinCount();
+        if (winsBeforeGc != 1)
+        {
+            throw new InvalidOperationException("The epoch-reset test did not claim its initial slot.");
+        }
+
+        GC.Collect(2, GCCollectionMode.Forced, blocking: true, compacting: false);
+        ref object? slotAfterGc = ref MemoryMarshal.GetArrayDataReference(slots);
+        nuint slotAddressAfterGc = (nuint)Unsafe.AsPointer(ref slotAfterGc);
+        if (slotAddressAfterGc != slotAddress)
+        {
+            throw new InvalidOperationException("The non-compacting LOH epoch-test slot moved.");
+        }
+
+        slots[0] = oldValue;
+        if ((hooks.WinCount() <= winsBeforeGc) || (hooks.ArgumentErrorCount() != 0))
+        {
+            throw new InvalidOperationException("The slot was not claimable after a finished GC.");
+        }
+    }
+
+    [MethodImpl(MethodImplOptions.NoInlining)]
+    private static void ExerciseFaultMapping()
+    {
+        try
+        {
+            StoreThroughNull(new Node());
+            throw new InvalidOperationException("A null write-barrier destination did not fault.");
+        }
+        catch (NullReferenceException)
+        {
+        }
+    }
+
+    [MethodImpl(MethodImplOptions.NoInlining)]
+    private static void StoreThroughNull(Node value)
+    {
+        Node? destination = null;
+        destination!.Next = value;
     }
 
     [UnmanagedFunctionPointer(CallingConvention.Cdecl)]
@@ -284,7 +809,37 @@ internal static class Program
     [UnmanagedFunctionPointer(CallingConvention.Cdecl)]
     private delegate uint GetClobberMask();
 
-    private sealed record NativeHooks(GetCallCount CallCount, GetClobberMask ClobberMask);
+    [UnmanagedFunctionPointer(CallingConvention.Cdecl)]
+    private delegate void ResetSlotLog(nuint destination, byte metadataByte, [MarshalAs(UnmanagedType.I1)] bool claimBits);
+
+    [UnmanagedFunctionPointer(CallingConvention.Cdecl)]
+    private delegate void ResetSlotLogRange(
+        nuint destination,
+        nuint referenceCount,
+        byte metadataByte,
+        [MarshalAs(UnmanagedType.I1)] bool claimBits);
+
+    [UnmanagedFunctionPointer(CallingConvention.Cdecl)]
+    private delegate nuint GetPointer();
+
+    [UnmanagedFunctionPointer(CallingConvention.Cdecl)]
+    private delegate nuint GetSyntheticDestination(uint metadataByte, uint bit);
+
+    [UnmanagedFunctionPointer(CallingConvention.Cdecl)]
+    [return: MarshalAs(UnmanagedType.I1)]
+    private delegate bool ClaimSynthetic(nuint destination);
+
+    private sealed record NativeHooks(
+        GetCallCount CallCount,
+        GetClobberMask ClobberMask,
+        ResetSlotLog Reset,
+        ResetSlotLogRange ResetRange,
+        GetCallCount AttemptCount,
+        GetCallCount WinCount,
+        GetCallCount ArgumentErrorCount,
+        GetPointer LastDestination,
+        GetSyntheticDestination SyntheticDestination,
+        ClaimSynthetic ClaimSynthetic);
 
     private readonly record struct ScalarState(
         Node Object0,
@@ -322,4 +877,16 @@ internal static class Program
 internal sealed class Node
 {
     public Node? Next;
+}
+
+internal sealed class ObjectHolder
+{
+    public object? Value;
+}
+
+internal struct MixedReferences
+{
+    public object? First;
+    public nuint Scalar;
+    public object? Second;
 }

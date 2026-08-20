@@ -12529,6 +12529,14 @@ void Lowering::LowerBlockStoreCommon(GenTreeBlk* blkNode)
 
     if (blkNode->OperIsInitBlkOp())
     {
+        const bool requiresOldValue =
+            m_compiler->opts.jitFlags->IsSet(JitFlags::JIT_FLAG_WRITE_BARRIER_REQUIRES_OLD_VALUE) ||
+            m_compiler->opts.jitFlags->IsSet(JitFlags::JIT_FLAG_USE_STANDARD_WRITE_BARRIER_ABI);
+        if (requiresOldValue && blkNode->IsOnHeapAndContainsReferences() && TryDecomposeInitBlockStoreAsIndirs(blkNode))
+        {
+            return;
+        }
+
         LowerInitBlockStore(blkNode);
     }
     else
@@ -12563,8 +12571,13 @@ bool Lowering::TryDecomposeBlockStoreAsIndirs(GenTreeBlk* blkNode)
     assert((layout->GetSize() == (layout->GetSlotCount() * TARGET_POINTER_SIZE)));
     assert(src->OperIs(GT_IND, GT_LCL_VAR, GT_LCL_FLD));
 
-    // Always decompose for volatile blocks as the bulk helper doesn't support those.
-    if (!(blkNode->IsVolatile() || (src->OperIs(GT_IND) && src->AsIndir()->IsVolatile())))
+    const bool requiresOldValue =
+        m_compiler->opts.jitFlags->IsSet(JitFlags::JIT_FLAG_WRITE_BARRIER_REQUIRES_OLD_VALUE) ||
+        m_compiler->opts.jitFlags->IsSet(JitFlags::JIT_FLAG_USE_STANDARD_WRITE_BARRIER_ABI);
+
+    // Always decompose for volatile blocks as the bulk helper doesn't support those. Old-value
+    // barriers also require the exact GC layout rather than a raw range of pointer-sized words.
+    if (!requiresOldValue && !(blkNode->IsVolatile() || (src->OperIs(GT_IND) && src->AsIndir()->IsVolatile())))
     {
         // More than 3 GC pointers, use the bulk copy helper.
         // TODO-CQ: find a better heuristic here.
@@ -12683,6 +12696,58 @@ bool Lowering::TryDecomposeBlockStoreAsIndirs(GenTreeBlk* blkNode)
         BlockRange().Remove(src->AsIndir()->Addr());
     }
     BlockRange().Remove(src);
+    blkNode->gtBashToNOP();
+    return true;
+}
+
+//------------------------------------------------------------------------
+// TryDecomposeInitBlockStoreAsIndirs: lower a zero-initialization of a
+//   GC-containing heap struct as exact pointer-sized stores.
+//
+// Arguments:
+//   blkNode - the GT_STORE_BLK to decompose.
+//
+// Return value:
+//   true after decomposing the node.
+//
+bool Lowering::TryDecomposeInitBlockStoreAsIndirs(GenTreeBlk* blkNode)
+{
+    assert(blkNode->OperIs(GT_STORE_BLK));
+    assert(blkNode->OperIsInitBlkOp());
+    assert(blkNode->GetLayout()->HasGCPtr());
+    assert(blkNode->Data()->IsIntegralConst(0));
+
+    ClassLayout* layout = blkNode->GetLayout();
+    assert(layout->GetSize() == (layout->GetSlotCount() * TARGET_POINTER_SIZE));
+
+    LIR::Use           dstAddrUse(BlockRange(), &blkNode->Addr(), blkNode);
+    const var_types    dstAddrType   = blkNode->Addr()->TypeGet();
+    const unsigned     dstAddrLclNum = dstAddrUse.ReplaceWithLclVar(m_compiler);
+    const GenTreeFlags dstIndFlags   = blkNode->gtFlags & GTF_IND_FLAGS;
+
+    for (unsigned slot = 0; slot < layout->GetSlotCount(); slot++)
+    {
+        GenTree* addr = m_compiler->gtNewLclvNode(dstAddrLclNum, dstAddrType);
+        if (slot != 0)
+        {
+            addr = m_compiler->gtNewOperNode(GT_ADD, varTypeIsGC(dstAddrType) ? TYP_BYREF : TYP_I_IMPL, addr,
+                                             m_compiler->gtNewIconNode(static_cast<ssize_t>(slot * TARGET_POINTER_SIZE),
+                                                                       TYP_I_IMPL));
+        }
+
+        const var_types storeType = layout->IsGCPtr(slot) ? layout->GetGCPtrType(slot) : TYP_I_IMPL;
+        GenTree*        zero      = m_compiler->gtNewZeroConNode(storeType);
+        GenTree*        store     = m_compiler->gtNewStoreValueNode(storeType, addr, zero, dstIndFlags);
+
+        LIR::Range range = LIR::SeqTree(m_compiler, store);
+        GenTree*   first = range.FirstNode();
+        GenTree*   last  = range.LastNode();
+        BlockRange().InsertBefore(blkNode, std::move(range));
+        LowerRange(first, last);
+    }
+
+    BlockRange().Remove(blkNode->Addr());
+    BlockRange().Remove(blkNode->Data());
     blkNode->gtBashToNOP();
     return true;
 }

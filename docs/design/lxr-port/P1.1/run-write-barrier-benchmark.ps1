@@ -93,20 +93,27 @@ function Capture-Codegen(
     [string]$Name,
     [string]$Runtime,
     [bool]$UseStandardAbi,
-    [bool]$UseUncountedCallback
+    [bool]$UseUncountedCallback,
+    [bool]$ClaimBits
 ) {
     if ($UseStandardAbi) {
-        $env:DOTNET_GCPath = $ValidationStandaloneGC
+        if ($ClaimBits) {
+            Remove-Item Env:\DOTNET_GCPath -ErrorAction SilentlyContinue
+        } else {
+            $env:DOTNET_GCPath = $ValidationStandaloneGC
+        }
         $env:DOTNET_GCWriteBarrierTestClobber = '0'
         if ($UseUncountedCallback) {
             $env:DOTNET_GCWriteBarrierTestUncounted = '1'
         } else {
             $env:DOTNET_GCWriteBarrierTestUncounted = '0'
         }
+        $env:DOTNET_GCWriteBarrierTestClaimBits = if ($ClaimBits) { '1' } else { '0' }
     } else {
         Remove-Item Env:\DOTNET_GCPath -ErrorAction SilentlyContinue
         Remove-Item Env:\DOTNET_GCWriteBarrierTestClobber -ErrorAction SilentlyContinue
         Remove-Item Env:\DOTNET_GCWriteBarrierTestUncounted -ErrorAction SilentlyContinue
+        Remove-Item Env:\DOTNET_GCWriteBarrierTestClaimBits -ErrorAction SilentlyContinue
     }
 
     $env:DOTNET_JitDisasm = 'P11.WriteBarrierBenchmarks.WriteBarrierBenchmark:*'
@@ -121,6 +128,7 @@ try {
     $env:DOTNET_ReadyToRun = '0'
     $env:DOTNET_TieredCompilation = '0'
     $env:DOTNET_gcServer = '0'
+    $env:DOTNET_gcConcurrent = '0'
     Remove-Item Env:\DOTNET_GCPath -ErrorAction SilentlyContinue
     Remove-Item Env:\DOTNET_GCWriteBarrierTestClobber -ErrorAction SilentlyContinue
     Remove-Item Env:\DOTNET_GCWriteBarrierTestUncounted -ErrorAction SilentlyContinue
@@ -129,27 +137,37 @@ try {
     Run-Benchmark 'standard-empty' $validationRuntime @(
         "DOTNET_GCPath:$ValidationStandaloneGC",
         'DOTNET_GCWriteBarrierTestClobber:0',
-        'DOTNET_GCWriteBarrierTestUncounted:1'
+        'DOTNET_GCWriteBarrierTestUncounted:1',
+        'DOTNET_GCWriteBarrierTestClaimBits:0'
     )
     Run-Benchmark 'standard-counting' $validationRuntime @(
         "DOTNET_GCPath:$ValidationStandaloneGC",
         'DOTNET_GCWriteBarrierTestClobber:0',
-        'DOTNET_GCWriteBarrierTestUncounted:0'
+        'DOTNET_GCWriteBarrierTestUncounted:0',
+        'DOTNET_GCWriteBarrierTestClaimBits:0'
+    )
+    Run-Benchmark 'slot-fast' $validationRuntime @(
+        'DOTNET_GCWriteBarrierTestClobber:0',
+        'DOTNET_GCWriteBarrierTestUncounted:0',
+        'DOTNET_GCWriteBarrierTestClaimBits:1'
     )
 
-    Capture-Codegen 'stock' $productionRuntime $false $false
-    Capture-Codegen 'standard-empty' $validationRuntime $true $true
-    Capture-Codegen 'standard-counting' $validationRuntime $true $false
+    Capture-Codegen 'stock' $productionRuntime $false $false $false
+    Capture-Codegen 'standard-empty' $validationRuntime $true $true $false
+    Capture-Codegen 'standard-counting' $validationRuntime $true $false $false
+    Capture-Codegen 'slot-fast' $validationRuntime $true $false $true
 }
 finally {
     Remove-Item Env:\DOTNET_GCPath -ErrorAction SilentlyContinue
     Remove-Item Env:\DOTNET_GCWriteBarrierTestClobber -ErrorAction SilentlyContinue
     Remove-Item Env:\DOTNET_GCWriteBarrierTestUncounted -ErrorAction SilentlyContinue
+    Remove-Item Env:\DOTNET_GCWriteBarrierTestClaimBits -ErrorAction SilentlyContinue
     Remove-Item Env:\DOTNET_JitDisasm -ErrorAction SilentlyContinue
     Remove-Item Env:\DOTNET_JitStdOutFile -ErrorAction SilentlyContinue
     Remove-Item Env:\DOTNET_ReadyToRun -ErrorAction SilentlyContinue
     Remove-Item Env:\DOTNET_TieredCompilation -ErrorAction SilentlyContinue
     Remove-Item Env:\DOTNET_gcServer -ErrorAction SilentlyContinue
+    Remove-Item Env:\DOTNET_gcConcurrent -ErrorAction SilentlyContinue
 }
 
-Write-Host '3/3 write-barrier benchmark configurations passed'
+Write-Host '4/4 write-barrier benchmark configurations passed'

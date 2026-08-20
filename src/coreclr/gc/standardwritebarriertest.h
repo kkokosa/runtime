@@ -6,8 +6,11 @@
 
 #ifdef FEATURE_WRITE_BARRIER_STANDARD_ABI_TEST
 
-uint8_t* GetWriteBarrierTestMetadataBase();
+uint8_t* GetWriteBarrierTestMetadataBase(uint8_t* lowestAddress, uint8_t* highestAddress, uint8_t granularityShift);
 WriteBarrierSlowPath GetWriteBarrierTestSlowPath();
+WriteBarrierRangeSlowPath GetWriteBarrierTestRangeSlowPath();
+WriteBarrierDependentEdgeSlowPath GetWriteBarrierTestDependentEdgeSlowPath();
+WriteBarrierEpochReset GetWriteBarrierTestEpochReset();
 
 #endif
 
