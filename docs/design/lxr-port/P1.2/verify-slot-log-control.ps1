@@ -17,6 +17,18 @@ $archive = Join-Path $temporaryRoot 'tip.tar'
 $original = Join-Path $temporaryRoot 'original'
 $perturbed = Join-Path $temporaryRoot 'perturbed'
 
+function Assert-LiteralCount(
+    [string]$Text,
+    [string]$Value,
+    [int]$ExpectedCount,
+    [string]$Description
+) {
+    $actualCount = [regex]::Matches($Text, [regex]::Escape($Value)).Count
+    if ($actualCount -ne $ExpectedCount) {
+        throw "$Description matched $actualCount sites; expected $ExpectedCount."
+    }
+}
+
 try {
     New-Item -ItemType Directory -Path $original -Force | Out-Null
     git -C $RepositoryRoot archive --format=tar --output=$archive HEAD
@@ -50,8 +62,12 @@ try {
     Copy-Item -LiteralPath (
         Join-Path $original 'docs\design\lxr-port\P1.2\raw\end-to-end-summary.csv') -Destination $summary
     $gasBarrier = Join-Path $perturbed 'src\coreclr\vm\amd64\jithelpers_fastwritebarriers.S'
-    (Get-Content -LiteralPath $gasBarrier -Raw).Replace('xor     al, 0xA5', 'xor     al, 0xF0') |
-        Set-Content -LiteralPath $gasBarrier -NoNewline
+    $gasBarrierText = Get-Content -LiteralPath $gasBarrier -Raw
+    Assert-LiteralCount $gasBarrierText 'xor     al, 0xA5' 2 'Polarity sentinel'
+    $gasBarrierText = $gasBarrierText.Replace('xor     al, 0xA5', 'xor     al, 0xF0')
+    Assert-LiteralCount $gasBarrierText 'xor     al, 0xA5' 0 'Original polarity sentinel after perturbation'
+    Assert-LiteralCount $gasBarrierText 'xor     al, 0xF0' 2 'Perturbed polarity sentinel'
+    Set-Content -LiteralPath $gasBarrier -Value $gasBarrierText -NoNewline
     & pwsh -NoProfile -File $perturbedVerifier -RepositoryRoot $perturbed *> $null
     if ($LASTEXITCODE -eq 0) {
         throw 'Verifier accepted a perturbed polarity sentinel.'
@@ -60,9 +76,13 @@ try {
     Copy-Item -LiteralPath (
         Join-Path $original 'src\coreclr\vm\amd64\jithelpers_fastwritebarriers.S') -Destination $gasBarrier
     $rangeCallback = Join-Path $perturbed 'src\coreclr\gc\standardwritebarriertest.cpp'
-    (Get-Content -LiteralPath $rangeCallback -Raw).Replace(
-        '(source == nullptr) ? nullptr : source[index]',
-        'source[index]') | Set-Content -LiteralPath $rangeCallback -NoNewline
+    $rangeCallbackText = Get-Content -LiteralPath $rangeCallback -Raw
+    $nullSourceExpression = '(source == nullptr) ? nullptr : source[index]'
+    Assert-LiteralCount $rangeCallbackText $nullSourceExpression 1 'Null-source range expression'
+    $rangeCallbackText = $rangeCallbackText.Replace($nullSourceExpression, 'source[index]')
+    Assert-LiteralCount $rangeCallbackText $nullSourceExpression 0 (
+        'Null-source range expression after perturbation')
+    Set-Content -LiteralPath $rangeCallback -Value $rangeCallbackText -NoNewline
     & pwsh -NoProfile -File $perturbedVerifier -RepositoryRoot $perturbed *> $null
     if ($LASTEXITCODE -eq 0) {
         throw 'Verifier accepted a null-source range dereference.'
@@ -72,11 +92,20 @@ try {
         Join-Path $original 'src\coreclr\gc\standardwritebarriertest.cpp') -Destination $rangeCallback
     $gcHelpers = Join-Path $perturbed 'src\coreclr\vm\gchelpers.cpp'
     $gcHelpersText = Get-Content -LiteralPath $gcHelpers -Raw
-    $gcHelpersText = [regex]::Replace(
-        $gcHelpersText,
+    $dependentEdgeRegex = [regex]::new(
         'if \(ref->Collectible\(\)\)\s*\{\s*Object\* newLoaderAllocator',
+        [Text.RegularExpressions.RegexOptions]::CultureInvariant)
+    $dependentEdgeMatches = $dependentEdgeRegex.Matches($gcHelpersText).Count
+    if ($dependentEdgeMatches -ne 1) {
+        throw "Collectible dependent-edge gate matched $dependentEdgeMatches sites; expected 1."
+    }
+    $gcHelpersText = $dependentEdgeRegex.Replace(
+        $gcHelpersText,
         "if (true)`n    {`n        Object* newLoaderAllocator",
         1)
+    if ($dependentEdgeRegex.IsMatch($gcHelpersText)) {
+        throw 'Collectible dependent-edge gate remained after one-site perturbation.'
+    }
     Set-Content -LiteralPath $gcHelpers -Value $gcHelpersText -NoNewline
     & pwsh -NoProfile -File $perturbedVerifier -RepositoryRoot $perturbed *> $null
     if ($LASTEXITCODE -eq 0) {
