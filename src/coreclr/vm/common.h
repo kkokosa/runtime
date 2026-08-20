@@ -299,6 +299,7 @@ void* GetClrModuleBase();
 
 // use this when you want to memcpy something that contains GC refs
 void memmoveGCRefs(void *dest, const void *src, size_t len);
+void memmoveGCRefsWithLayout(void* dest, const void* src, size_t len, MethodTable* type);
 
 // Struct often used as a parameter to callbacks.
 typedef struct
@@ -346,5 +347,4 @@ extern DummyGlobalContract ___contract;
 void LogErrorToHost(const char* format, ...);
 
 #endif // !_common_h_
-
 

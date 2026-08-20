@@ -645,7 +645,7 @@ extern "C" void QCALLTYPE RuntimeMethodHandle_InvokeMethod(
         // Copy the return value from the return buffer to the object
         if (retTH.GetMethodTable()->ContainsGCPointers())
         {
-            memmoveGCRefs(gc.retVal->GetData(), pLocalRetBuf, retTH.GetSize());
+            memmoveGCRefsWithLayout(gc.retVal->GetData(), pLocalRetBuf, retTH.GetSize(), retTH.GetMethodTable());
         }
         else
         {

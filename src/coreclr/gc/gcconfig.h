@@ -66,7 +66,9 @@ public:
 #define WRITE_BARRIER_STANDARD_ABI_TEST_CONFIG \
     BOOL_CONFIG  (WriteBarrierTestClobber,   "GCWriteBarrierTestClobber",   NULL, true,  "Clobber ABI-volatile state in the write-barrier validation callback") \
     BOOL_CONFIG  (WriteBarrierTestUncounted, "GCWriteBarrierTestUncounted", NULL, false, "Use an empty write-barrier validation callback for benchmarking") \
+    BOOL_CONFIG  (WriteBarrierTestClaimBits, "GCWriteBarrierTestClaimBits", NULL, false, "Atomically claim side-metadata bits in the write-barrier validation callback") \
     INT_CONFIG   (WriteBarrierTestShape,     "GCWriteBarrierTestShape",     NULL, 1,     "Override the requested write-barrier shape for validation") \
+    INT_CONFIG   (WriteBarrierTestBitMeaning,"GCWriteBarrierTestBitMeaning",NULL, 0,     "Select the side-metadata work-bit polarity for validation") \
     INT_CONFIG   (WriteBarrierTestMalformed, "GCWriteBarrierTestMalformed", NULL, 0,     "Request malformed side-metadata parameters for validation")
 
 #else

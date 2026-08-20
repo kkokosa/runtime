@@ -16,6 +16,7 @@
 #include "eetwain.h"
 #include "eeconfig.h"
 #include "gcheaputilities.h"
+#include "writebarriermanager.h"
 #include "corhost.h"
 #include "threads.h"
 #include "fieldmarshaler.h"
@@ -1585,6 +1586,161 @@ HCIMPLEND_RAW
 //    that could occur if multiple threads were trying to set different bits in the same card.
 
 #include <optsmallperfcritical.h>
+
+bool ErectWriteBarrierPre(Object** dst, Object* ref)
+{
+    LIMITED_METHOD_CONTRACT;
+
+#ifdef TARGET_AMD64
+    WriteBarrierSlowPath slowPath = g_SlotLogWriteBarrierSlowPath;
+    uint8_t* address = reinterpret_cast<uint8_t*>(dst);
+    if ((slowPath != nullptr) && (address >= g_lowest_address) && (address < g_highest_address))
+    {
+#ifdef FEATURE_USE_SOFTWARE_WRITE_WATCH_FOR_GC_HEAP
+        if (GCHeapUtilities::SoftwareWriteWatchIsEnabled())
+        {
+            GCHeapUtilities::SoftwareWriteWatchSetDirty(dst, sizeof(*dst));
+        }
+#endif // FEATURE_USE_SOFTWARE_WRITE_WATCH_FOR_GC_HEAP
+        slowPath(dst, VolatileLoad(dst), ref);
+        return true;
+    }
+    return false;
+#else
+    UNREFERENCED_PARAMETER(dst);
+    UNREFERENCED_PARAMETER(ref);
+    return false;
+#endif // TARGET_AMD64
+}
+
+bool ErectWriteBarrierRangePre(Object** dst, Object** src, size_t referenceCount)
+{
+    LIMITED_METHOD_CONTRACT;
+
+#ifdef TARGET_AMD64
+    WriteBarrierRangeSlowPath slowPath = g_SlotLogWriteBarrierRangeSlowPath;
+    if (slowPath != nullptr)
+    {
+        if (referenceCount == 0)
+        {
+            return true;
+        }
+
+#ifdef FEATURE_USE_SOFTWARE_WRITE_WATCH_FOR_GC_HEAP
+        if (GCHeapUtilities::SoftwareWriteWatchIsEnabled())
+        {
+            GCHeapUtilities::SoftwareWriteWatchSetDirtyRegion(dst, referenceCount * sizeof(Object*));
+        }
+#endif // FEATURE_USE_SOFTWARE_WRITE_WATCH_FOR_GC_HEAP
+        slowPath(dst, src, referenceCount);
+        return true;
+    }
+    return false;
+#else
+    UNREFERENCED_PARAMETER(dst);
+    UNREFERENCED_PARAMETER(src);
+    UNREFERENCED_PARAMETER(referenceCount);
+    return false;
+#endif // TARGET_AMD64
+}
+
+#ifdef FEATURE_WRITE_BARRIER_STANDARD_ABI_TEST
+extern "C" DLLEXPORT bool GC_WriteBarrierTest_InvokeEmptyRange(uintptr_t destination)
+{
+    return ErectWriteBarrierRangePre(reinterpret_cast<Object**>(destination), nullptr, 0);
+}
+#endif
+
+bool ErectWriteBarrierLayoutRangePre(
+    void* dst, const void* src, MethodTable* type, size_t elementSize, size_t elementCount)
+{
+    LIMITED_METHOD_CONTRACT;
+
+#ifdef TARGET_AMD64
+    uint8_t* destination = reinterpret_cast<uint8_t*>(dst);
+    if ((g_SlotLogWriteBarrierSlowPath == nullptr) ||
+        (destination < g_lowest_address) ||
+        (destination >= g_highest_address))
+    {
+        return false;
+    }
+
+    if (type == nullptr)
+    {
+        _ASSERTE(elementSize == sizeof(Object*));
+        return ErectWriteBarrierRangePre(
+            reinterpret_cast<Object**>(dst),
+            reinterpret_cast<Object**>(const_cast<void*>(src)),
+            elementCount);
+    }
+
+    if (elementCount == 0)
+    {
+        return true;
+    }
+
+    _ASSERTE(type->ContainsGCPointers());
+    _ASSERTE(IS_ALIGNED(elementSize, sizeof(Object*)));
+
+    CGCDesc* map = CGCDesc::GetCGCDescFromMT(type);
+    const ptrdiff_t seriesCount = static_cast<ptrdiff_t>(map->GetNumSeries());
+    _ASSERTE(seriesCount > 0);
+
+    for (size_t element = 0; element < elementCount; element++)
+    {
+        uint8_t* destinationElement = destination + (element * elementSize);
+        const uint8_t* sourceElement =
+            (src == nullptr) ? nullptr : reinterpret_cast<const uint8_t*>(src) + (element * elementSize);
+        CGCDescSeries* series = map->GetLowestSeries();
+
+        for (ptrdiff_t seriesIndex = 0; seriesIndex < seriesCount; seriesIndex++, series++)
+        {
+            const size_t seriesOffset = series->GetSeriesOffset() - OBJECT_SIZE;
+            const size_t seriesSize = series->GetSeriesSize() + type->GetBaseSize();
+            _ASSERTE(IS_ALIGNED(seriesOffset, sizeof(Object*)));
+            _ASSERTE(IS_ALIGNED(seriesSize, sizeof(Object*)));
+            _ASSERTE((seriesOffset + seriesSize) <= elementSize);
+
+            for (size_t offset = 0; offset < seriesSize; offset += sizeof(Object*))
+            {
+                Object** destinationSlot =
+                    reinterpret_cast<Object**>(destinationElement + seriesOffset + offset);
+                Object* newReference = (sourceElement == nullptr)
+                    ? nullptr
+                    : VolatileLoad(reinterpret_cast<Object* const*>(sourceElement + seriesOffset + offset));
+                ErectWriteBarrierPre(destinationSlot, newReference);
+            }
+        }
+    }
+
+    return true;
+#else
+    UNREFERENCED_PARAMETER(dst);
+    UNREFERENCED_PARAMETER(src);
+    UNREFERENCED_PARAMETER(type);
+    UNREFERENCED_PARAMETER(elementSize);
+    UNREFERENCED_PARAMETER(elementCount);
+    return false;
+#endif // TARGET_AMD64
+}
+
+void ErectWriteBarrierDependentEdgePre(void* dst, Object* oldRef, Object* newRef)
+{
+    LIMITED_METHOD_CONTRACT;
+
+#ifdef TARGET_AMD64
+    WriteBarrierDependentEdgeSlowPath slowPath = g_SlotLogWriteBarrierDependentEdgeSlowPath;
+    if (slowPath != nullptr)
+    {
+        slowPath(dst, oldRef, newRef);
+    }
+#else
+    UNREFERENCED_PARAMETER(dst);
+    UNREFERENCED_PARAMETER(oldRef);
+    UNREFERENCED_PARAMETER(newRef);
+#endif // TARGET_AMD64
+}
+
 void ErectWriteBarrier(OBJECTREF *dst, OBJECTREF ref)
 {
     STATIC_CONTRACT_MODE_COOPERATIVE;
@@ -1630,6 +1786,14 @@ void ErectWriteBarrierForMT(MethodTable **dst, MethodTable *ref)
     STATIC_CONTRACT_NOTHROW;
     STATIC_CONTRACT_GC_NOTRIGGER;
 
+    if (ref->Collectible())
+    {
+        Object* newLoaderAllocator = reinterpret_cast<Object*>(ref->GetLoaderAllocatorObjectForGC());
+
+        // This is the first MethodTable store into a newly allocated UOH object.
+        // GC_ALLOC_ZEROING_OPTIONAL permits the slot to contain stale bytes.
+        ErectWriteBarrierDependentEdgePre(dst, nullptr, newLoaderAllocator);
+    }
     *dst = ref;
 
 #ifdef WRITE_BARRIER_CHECK

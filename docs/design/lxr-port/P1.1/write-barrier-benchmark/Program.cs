@@ -18,7 +18,14 @@ public static class Program
             benchmark.Setup();
             object fieldValue = benchmark.FieldStores();
             object arrayValue = benchmark.ArrayStores();
-            Console.WriteLine(ReferenceEquals(fieldValue, arrayValue) ? "PASS" : "FAIL");
+            object copyValue = benchmark.ReferenceArrayCopy();
+            int clearLength = benchmark.ReferenceArrayClear();
+            Console.WriteLine(
+                ReferenceEquals(fieldValue, arrayValue) &&
+                ReferenceEquals(arrayValue, copyValue) &&
+                (clearLength == 16)
+                    ? "PASS"
+                    : "FAIL");
             return;
         }
 
@@ -34,12 +41,16 @@ public class WriteBarrierBenchmark
 {
     private readonly Fields _fields = new();
     private readonly object[] _array = new object[16];
+    private readonly object[] _copySource = new object[16];
+    private readonly object[] _copyDestination = new object[16];
     private object _value = null!;
 
     [GlobalSetup]
     public void Setup()
     {
         _value = new object();
+        Array.Fill(_copySource, _value);
+        Array.Fill(_copyDestination, _value);
     }
 
     [Benchmark(OperationsPerInvoke = 16)]
@@ -88,6 +99,22 @@ public class WriteBarrierBenchmark
         _array[15] = _value;
 
         return _array[15];
+    }
+
+    [Benchmark(OperationsPerInvoke = 16)]
+    [MethodImpl(MethodImplOptions.NoInlining)]
+    public object ReferenceArrayCopy()
+    {
+        Array.Copy(_copySource, _copyDestination, _copySource.Length);
+        return _copyDestination[^1];
+    }
+
+    [Benchmark(OperationsPerInvoke = 16)]
+    [MethodImpl(MethodImplOptions.NoInlining)]
+    public int ReferenceArrayClear()
+    {
+        Array.Clear(_copyDestination);
+        return _copyDestination.Length;
     }
 
     private sealed class Fields

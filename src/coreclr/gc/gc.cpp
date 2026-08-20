@@ -31,6 +31,18 @@ static uint8_t s_write_barrier_test_metadata;
 static void write_barrier_test_slow_path(Object**, Object*, Object*)
 {
 }
+
+static void write_barrier_test_range_slow_path(Object**, Object**, size_t)
+{
+}
+
+static void write_barrier_test_dependent_edge_slow_path(void*, Object*, Object*)
+{
+}
+
+static void write_barrier_test_epoch_reset()
+{
+}
 #endif
 
 uint64_t gc_rand::x = 0;
@@ -643,14 +655,28 @@ HRESULT stomp_write_barrier_initialize(uint8_t* ephemeral_low, uint8_t* ephemera
 #ifdef FEATURE_WRITE_BARRIER_STANDARD_ABI_TEST
     args.write_barrier_shape = static_cast<WriteBarrierShape>(GCConfig::GetWriteBarrierTestShape());
 #ifdef FEATURE_NATIVEAOT
-    args.write_barrier_side_metadata.metadata_base = &s_write_barrier_test_metadata;
+    constexpr uint8_t writeBarrierTestGranularityShift = 40;
+    args.write_barrier_side_metadata.metadata_base = reinterpret_cast<uint8_t*>(
+        reinterpret_cast<uintptr_t>(&s_write_barrier_test_metadata) -
+        (reinterpret_cast<uintptr_t>(g_gc_lowest_address) >> (writeBarrierTestGranularityShift + 3)));
     args.write_barrier_side_metadata.slow_path = write_barrier_test_slow_path;
+    args.write_barrier_range_slow_path = write_barrier_test_range_slow_path;
+    args.write_barrier_dependent_edge_slow_path = write_barrier_test_dependent_edge_slow_path;
+    args.write_barrier_epoch_reset = write_barrier_test_epoch_reset;
 #else
-    args.write_barrier_side_metadata.metadata_base = GetWriteBarrierTestMetadataBase();
+    constexpr uint8_t writeBarrierTestGranularityShift = 3;
+    args.write_barrier_side_metadata.metadata_base = GetWriteBarrierTestMetadataBase(
+        g_gc_lowest_address,
+        g_gc_highest_address,
+        writeBarrierTestGranularityShift);
     args.write_barrier_side_metadata.slow_path = GetWriteBarrierTestSlowPath();
+    args.write_barrier_range_slow_path = GetWriteBarrierTestRangeSlowPath();
+    args.write_barrier_dependent_edge_slow_path = GetWriteBarrierTestDependentEdgeSlowPath();
+    args.write_barrier_epoch_reset = GetWriteBarrierTestEpochReset();
 #endif
-    args.write_barrier_side_metadata.granularity_shift = 3;
-    args.write_barrier_side_metadata.bit_meaning = WriteBarrierMetadataBitMeaning::WorkWhenBitIsClear;
+    args.write_barrier_side_metadata.granularity_shift = writeBarrierTestGranularityShift;
+    args.write_barrier_side_metadata.bit_meaning =
+        static_cast<WriteBarrierMetadataBitMeaning>(GCConfig::GetWriteBarrierTestBitMeaning());
 
     switch (GCConfig::GetWriteBarrierTestMalformed())
     {

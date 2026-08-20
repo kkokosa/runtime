@@ -17,6 +17,10 @@ static_assert(static_cast<uint8_t>(WriteBarrierMetadataBitMeaning::WorkWhenBitIs
 static_assert(static_cast<uint8_t>(WriteBarrierMetadataBitMeaning::WorkWhenBitIsSet) == 1);
 static_assert(std::is_standard_layout_v<WriteBarrierParameters>);
 static_assert(std::is_standard_layout_v<WriteBarrierSideMetadataParameters>);
+static_assert(GC_WRITE_BARRIER_SHAPE_INTERFACE_MINOR_VERSION == 9);
+static_assert(GC_WRITE_BARRIER_COMPLETE_STORE_INTERFACE_MINOR_VERSION == 10);
+static_assert(GC_WRITE_BARRIER_EPOCH_RESET_INTERFACE_MINOR_VERSION == 11);
+static_assert(GC_INTERFACE_MINOR_VERSION >= GC_WRITE_BARRIER_EPOCH_RESET_INTERFACE_MINOR_VERSION);
 
 struct LegacyWriteBarrierParameters
 {
@@ -46,7 +50,19 @@ static_assert(
     offsetof(WriteBarrierParameters, write_barrier_side_metadata) ==
     (sizeof(void*) == 8 ? 88 : 52));
 static_assert(sizeof(WriteBarrierSideMetadataParameters) == (sizeof(void*) == 8 ? 24 : 12));
-static_assert(sizeof(WriteBarrierParameters) == (sizeof(void*) == 8 ? 112 : 64));
+static_assert(
+    offsetof(WriteBarrierParameters, write_barrier_range_slow_path) ==
+    (sizeof(void*) == 8 ? 112 : 64));
+static_assert(
+    offsetof(WriteBarrierParameters, write_barrier_dependent_edge_slow_path) ==
+    (sizeof(void*) == 8 ? 120 : 68));
+static_assert(
+    offsetof(WriteBarrierParameters, write_barrier_epoch_reset) ==
+    (sizeof(void*) == 8 ? 128 : 72));
+static_assert(
+    offsetof(WriteBarrierParameters, write_barrier_epoch_reset) ==
+    offsetof(WriteBarrierParameters, write_barrier_dependent_edge_slow_path) + sizeof(void*));
+static_assert(sizeof(WriteBarrierParameters) == (sizeof(void*) == 8 ? 136 : 76));
 
 namespace
 {
@@ -82,6 +98,12 @@ int main()
     Expect("zero initialization selects clear-bit polarity",
         defaults.write_barrier_side_metadata.bit_meaning ==
         WriteBarrierMetadataBitMeaning::WorkWhenBitIsClear);
+    Expect("zero initialization clears range helper",
+        defaults.write_barrier_range_slow_path == nullptr);
+    Expect("zero initialization clears dependent-edge helper",
+        defaults.write_barrier_dependent_edge_slow_path == nullptr);
+    Expect("zero initialization clears epoch reset",
+        defaults.write_barrier_epoch_reset == nullptr);
 
     uint8_t metadata = 0;
     defaults.write_barrier_shape = WriteBarrierShape::SideMetadataFieldLog;

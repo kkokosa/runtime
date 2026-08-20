@@ -126,9 +126,14 @@ set(GC_WKS_SVR_SOURCES
   regions_segments.cpp)
 
 if(CLR_CMAKE_ENABLE_WRITE_BARRIER_STANDARD_ABI_TEST)
+  if(CLR_CMAKE_TARGET_WIN32)
+    set(WRITE_BARRIER_STANDARD_ABI_TEST_ASM amd64/standardwritebarriertest.asm)
+  else()
+    set(WRITE_BARRIER_STANDARD_ABI_TEST_ASM amd64/standardwritebarriertest.S)
+  endif()
   list(APPEND GC_SOURCES
     standardwritebarriertest.cpp
-    amd64/standardwritebarriertest.asm)
+    ${WRITE_BARRIER_STANDARD_ABI_TEST_ASM})
 endif()
 
 if(FEATURE_STANDALONE_GC)

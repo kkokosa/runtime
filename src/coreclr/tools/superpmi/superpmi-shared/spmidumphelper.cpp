@@ -260,6 +260,7 @@ std::string SpmiDumpHelper::DumpJitFlags(unsigned long long flags)
 
     AddFlag(USE_DISPATCH_HELPERS);
     AddFlag(USE_STANDARD_WRITE_BARRIER_ABI);
+    AddFlag(WRITE_BARRIER_REQUIRES_OLD_VALUE);
 
     // "Extra jit flag" support
     //

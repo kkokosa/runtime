@@ -17,9 +17,15 @@ set (DEF_SOURCES
   mscorwks_ntdef.src
 )
 else()
-set (DEF_SOURCES
-  mscorwks_unixexports.src
-)
+if(CLR_CMAKE_ENABLE_WRITE_BARRIER_STANDARD_ABI_TEST)
+  set (DEF_SOURCES
+    mscorwks_writebarriertest_unixexports.src
+  )
+else()
+  set (DEF_SOURCES
+    mscorwks_unixexports.src
+  )
+endif()
 if(FEATURE_GDBJIT)
   list(APPEND DEF_SOURCES
     gdbjit_unixexports.src
