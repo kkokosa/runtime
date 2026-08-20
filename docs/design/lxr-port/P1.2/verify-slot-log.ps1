@@ -31,14 +31,44 @@ function Require-Pattern([string]$relativePath, [string]$pattern) {
     }
 }
 
+function Require-PatternCount([string]$relativePath, [string]$pattern, [int]$expectedCount) {
+    $path = Join-Path $RepositoryRoot $relativePath
+    Confirm (Test-Path -LiteralPath $path -PathType Leaf) "Missing $relativePath"
+    if (Test-Path -LiteralPath $path -PathType Leaf) {
+        $actualCount = @(Select-String -LiteralPath $path -SimpleMatch $pattern).Count
+        Confirm ($actualCount -eq $expectedCount) (
+            "$relativePath contains '$pattern' $actualCount times; expected $expectedCount.")
+    }
+}
+
+function Forbid-Pattern([string]$relativePath, [string]$pattern) {
+    $path = Join-Path $RepositoryRoot $relativePath
+    Confirm (Test-Path -LiteralPath $path -PathType Leaf) "Missing $relativePath"
+    if (Test-Path -LiteralPath $path -PathType Leaf) {
+        Confirm (-not [bool](Select-String -LiteralPath $path -SimpleMatch $pattern -Quiet)) (
+            "$relativePath unexpectedly contains '$pattern'")
+    }
+}
+
 $document = Join-Path $RepositoryRoot 'docs\design\lxr-port\P1.2-x64-slot-log-barrier.md'
 $microPath = Join-Path $scriptRoot 'raw\microbenchmark.csv'
 $endToEndPath = Join-Path $scriptRoot 'raw\end-to-end-summary.csv'
 $fastPath = Join-Path $scriptRoot 'raw\lowalloc-fast-summary.csv'
 $churnFastPath = Join-Path $scriptRoot 'raw\churn-fast-summary.csv'
 $pairedPath = Join-Path $scriptRoot 'raw\paired-ratio-summary.csv'
+$rangeFollowupPath = Join-Path $scriptRoot 'raw\range-followup.csv'
+$interpreterFoldingPath = Join-Path $scriptRoot 'raw\interpreter-folding.txt'
 
-foreach ($path in @($document, $microPath, $endToEndPath, $fastPath, $churnFastPath, $pairedPath)) {
+foreach ($path in @(
+    $document,
+    $microPath,
+    $endToEndPath,
+    $fastPath,
+    $churnFastPath,
+    $pairedPath,
+    $rangeFollowupPath,
+    $interpreterFoldingPath
+)) {
     Confirm (Test-Path -LiteralPath $path -PathType Leaf) "Missing shipped artifact $path"
 }
 
@@ -47,10 +77,17 @@ Require-Pattern 'src\coreclr\gc\gcinterface.h' 'GC_WRITE_BARRIER_EPOCH_RESET_INT
 Require-Pattern 'src\coreclr\gc\gcinterface.h' 'write_barrier_epoch_reset'
 Require-Pattern 'src\coreclr\vm\amd64\JitHelpers_FastWriteBarriers.asm' 'JIT_WriteBarrier_SlotLog64'
 Require-Pattern 'src\coreclr\vm\amd64\jithelpers_fastwritebarriers.S' 'JIT_WriteBarrier_SlotLog64'
+Require-PatternCount 'src\coreclr\vm\amd64\JitHelpers_FastWriteBarriers.asm' 'xor     al, 0A5h' 2
+Require-PatternCount 'src\coreclr\vm\amd64\jithelpers_fastwritebarriers.S' 'xor     al, 0xA5' 2
+Require-PatternCount 'src\coreclr\vm\writebarriermanager.cpp' '0x34 == *(m_pSlotLogPolarity - 1)' 2
+Require-PatternCount 'src\coreclr\vm\writebarriermanager.cpp' '0xa5 == *m_pSlotLogPolarity' 2
 Require-Pattern 'src\coreclr\vm\amd64\SlotLogWriteBarrier.asm' 'JIT_WriteBarrier_SlotLog_Slow'
 Require-Pattern 'src\coreclr\vm\amd64\slotlogwritebarrier.S' 'JIT_WriteBarrier_SlotLog_Slow'
 Require-Pattern 'src\coreclr\jit\assertionprop.cpp' 'JIT_FLAG_WRITE_BARRIER_REQUIRES_OLD_VALUE'
 Require-Pattern 'src\coreclr\interpreter\compiler.cpp' 'RequiresOldValueWriteBarrier'
+Require-Pattern 'src\coreclr\interpreter\compiler.cpp' 'CORJIT_FLAG_WRITE_BARRIER_REQUIRES_OLD_VALUE'
+Forbid-Pattern 'src\coreclr\interpreter\inc\intops.def' 'INTOP_LDC_I4_WRITE_BARRIER_REQUIRES_OLD_VALUE'
+Forbid-Pattern 'src\coreclr\vm\interpexec.cpp' 'INTOP_LDC_I4_WRITE_BARRIER_REQUIRES_OLD_VALUE'
 Require-Pattern 'src\coreclr\jit\lower.cpp' 'TryDecomposeInitBlockStoreAsIndirs'
 Require-Pattern 'src\coreclr\System.Private.CoreLib\src\System\Buffer.CoreCLR.cs' 'ClearWithOldValueWriteBarrier'
 Require-Pattern 'src\coreclr\System.Private.CoreLib\src\System\Object.CoreCLR.cs' 'dataOffset'
@@ -59,8 +96,24 @@ Require-Pattern 'src\coreclr\vm\arraynative.inl' 'ErectWriteBarrierRangePre'
 Require-Pattern 'src\coreclr\vm\comutilnative.cpp' 'ErectWriteBarrierPre'
 Require-Pattern 'src\coreclr\vm\gchelpers.cpp' 'SoftwareWriteWatchSetDirtyRegion'
 Require-Pattern 'src\coreclr\vm\gchelpers.cpp' 'ErectWriteBarrierLayoutRangePre'
+Require-Pattern 'src\coreclr\vm\gchelpers.cpp' 'return ErectWriteBarrierRangePre('
+Require-Pattern 'src\coreclr\vm\gchelpers.cpp' 'GC_WriteBarrierTest_InvokeEmptyRange'
+Require-Pattern 'src\coreclr\gc\standardwritebarriertest.cpp' '(source == nullptr) ? nullptr : source[index]'
+Require-Pattern 'src\coreclr\gc\standardwritebarriertest.cpp' 'g_write_barrier_test_dependent_edge_call_count'
 Require-Pattern 'src\coreclr\vm\interpexec.cpp' 'liveLocalsIntervals'
 Require-Pattern 'src\coreclr\vm\interpexec.cpp' 'map->GetHighestSeries()'
+
+$gcHelpersPath = Join-Path $RepositoryRoot 'src\coreclr\vm\gchelpers.cpp'
+if (Test-Path -LiteralPath $gcHelpersPath) {
+    $gcHelpersText = Get-Content -LiteralPath $gcHelpersPath -Raw
+    Confirm ($gcHelpersText -match (
+        '(?s)void ErectWriteBarrierForMT\(MethodTable \*\*dst, MethodTable \*ref\).*?' +
+        'if \(ref->Collectible\(\)\)\s*\{\s*' +
+        'Object\* newLoaderAllocator.*?' +
+        'ErectWriteBarrierDependentEdgePre\(dst, nullptr, newLoaderAllocator\);\s*\}\s*' +
+        '\*dst = ref;')) (
+        'ErectWriteBarrierForMT does not gate its dependent edge on a collectible MethodTable.')
+}
 
 if (Test-Path -LiteralPath $microPath) {
     $micro = @(Import-Csv -LiteralPath $microPath)
@@ -137,6 +190,24 @@ if (Test-Path -LiteralPath $pairedPath) {
             ([double]$row.MeanRatio -le [double]$row.Max)
         ) "Paired ratio bounds do not contain the mean for '$key'."
     }
+}
+
+if (Test-Path -LiteralPath $rangeFollowupPath) {
+    foreach ($row in @(Import-Csv -LiteralPath $rangeFollowupPath)) {
+        $ratio = [double]$row.CorrectedMeanNs / [double]$row.PreFixMeanNs
+        Confirm ([Math]::Abs($ratio - [double]$row.CorrectedOverPreFix) -lt 0.0001) (
+            "Range follow-up ratio does not rederive for $($row.Method).")
+    }
+}
+
+if (Test-Path -LiteralPath $interpreterFoldingPath) {
+    $interpreterFolding = Get-Content -LiteralPath $interpreterFoldingPath -Raw
+    Confirm ($interpreterFolding -match '(?s)CardTable unoptimized IR:.*IL_002d: ldc\.i4.*?, 0') (
+        'Interpreter evidence omits the CardTable constant-zero fold.')
+    Confirm ($interpreterFolding -match '(?s)SlotLog unoptimized IR:.*IL_002d: ldc\.i4.*?, 1') (
+        'Interpreter evidence omits the slot-log constant-one fold.')
+    Confirm ($interpreterFolding -match 'There is no execution-time write-barrier-mode opcode') (
+        'Interpreter evidence does not state the execution-time opcode result.')
 }
 
 if (Test-Path -LiteralPath $document) {

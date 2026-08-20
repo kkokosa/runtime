@@ -47,12 +47,50 @@ try {
         throw 'Verifier accepted a perturbed published ratio.'
     }
 
+    Copy-Item -LiteralPath (
+        Join-Path $original 'docs\design\lxr-port\P1.2\raw\end-to-end-summary.csv') -Destination $summary
+    $gasBarrier = Join-Path $perturbed 'src\coreclr\vm\amd64\jithelpers_fastwritebarriers.S'
+    (Get-Content -LiteralPath $gasBarrier -Raw).Replace('xor     al, 0xA5', 'xor     al, 0xF0') |
+        Set-Content -LiteralPath $gasBarrier -NoNewline
+    & pwsh -NoProfile -File $perturbedVerifier -RepositoryRoot $perturbed *> $null
+    if ($LASTEXITCODE -eq 0) {
+        throw 'Verifier accepted a perturbed polarity sentinel.'
+    }
+
+    Copy-Item -LiteralPath (
+        Join-Path $original 'src\coreclr\vm\amd64\jithelpers_fastwritebarriers.S') -Destination $gasBarrier
+    $rangeCallback = Join-Path $perturbed 'src\coreclr\gc\standardwritebarriertest.cpp'
+    (Get-Content -LiteralPath $rangeCallback -Raw).Replace(
+        '(source == nullptr) ? nullptr : source[index]',
+        'source[index]') | Set-Content -LiteralPath $rangeCallback -NoNewline
+    & pwsh -NoProfile -File $perturbedVerifier -RepositoryRoot $perturbed *> $null
+    if ($LASTEXITCODE -eq 0) {
+        throw 'Verifier accepted a null-source range dereference.'
+    }
+
+    Copy-Item -LiteralPath (
+        Join-Path $original 'src\coreclr\gc\standardwritebarriertest.cpp') -Destination $rangeCallback
+    $gcHelpers = Join-Path $perturbed 'src\coreclr\vm\gchelpers.cpp'
+    $gcHelpersText = Get-Content -LiteralPath $gcHelpers -Raw
+    $gcHelpersText = [regex]::Replace(
+        $gcHelpersText,
+        'if \(ref->Collectible\(\)\)\s*\{\s*Object\* newLoaderAllocator',
+        "if (true)`n    {`n        Object* newLoaderAllocator",
+        1)
+    Set-Content -LiteralPath $gcHelpers -Value $gcHelpersText -NoNewline
+    & pwsh -NoProfile -File $perturbedVerifier -RepositoryRoot $perturbed *> $null
+    if ($LASTEXITCODE -eq 0) {
+        throw 'Verifier accepted an unconditional dependent edge.'
+    }
+
     & pwsh -NoProfile -File $verifier -RepositoryRoot $original
     if ($LASTEXITCODE -ne 0) {
         throw 'Verifier did not pass again on the untouched archive.'
     }
 
-    Write-Host 'RESULT: PASS (archive pass, perturbation fail, archive re-pass)'
+    Write-Host (
+        'RESULT: PASS (archive pass, ratio/sentinel/null-source/dependent-edge perturbations fail, ' +
+        'archive re-pass)')
 } finally {
     if (Test-Path -LiteralPath $temporaryRoot) {
         Remove-Item -LiteralPath $temporaryRoot -Recurse -Force
