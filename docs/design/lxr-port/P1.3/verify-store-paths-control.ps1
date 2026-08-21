@@ -15,6 +15,7 @@ if (-not $RepositoryRoot) {
 $temporaryRoot = Join-Path ([IO.Path]::GetTempPath()) "p13-store-paths-$([Guid]::NewGuid())"
 $archive = Join-Path $temporaryRoot 'tip.tar'
 $archiveRoot = Join-Path $temporaryRoot 'original'
+$perturbedRoot = Join-Path $temporaryRoot 'perturbed'
 
 function Assert-LiteralCount(
     [string]$Text,
@@ -34,20 +35,24 @@ function Invoke-Perturbation(
     [string]$ReplacementText,
     [string]$Description
 ) {
-    $perturbed = Join-Path $temporaryRoot ([Guid]::NewGuid().ToString('N'))
-    Copy-Item -LiteralPath $archiveRoot -Destination $perturbed -Recurse
-    $path = Join-Path $perturbed $RelativePath
-    $text = Get-Content -LiteralPath $path -Raw
-    Assert-LiteralCount $text $OriginalText 1 "$Description original"
-    $text = $text.Replace($OriginalText, $ReplacementText)
-    Assert-LiteralCount $text $OriginalText 0 "$Description original after perturbation"
-    Assert-LiteralCount $text $ReplacementText 1 "$Description replacement"
-    Set-Content -LiteralPath $path -Value $text -NoNewline
+    $sourcePath = Join-Path $archiveRoot $RelativePath
+    $path = Join-Path $perturbedRoot $RelativePath
+    Copy-Item -LiteralPath $sourcePath -Destination $path -Force
+    try {
+        $text = Get-Content -LiteralPath $path -Raw
+        Assert-LiteralCount $text $OriginalText 1 "$Description original"
+        $text = $text.Replace($OriginalText, $ReplacementText)
+        Assert-LiteralCount $text $OriginalText 0 "$Description original after perturbation"
+        Assert-LiteralCount $text $ReplacementText 1 "$Description replacement"
+        Set-Content -LiteralPath $path -Value $text -NoNewline
 
-    $verifier = Join-Path $perturbed 'docs\design\lxr-port\P1.3\verify-store-paths.ps1'
-    & pwsh -NoProfile -File $verifier -RepositoryRoot $perturbed *> $null
-    if ($LASTEXITCODE -eq 0) {
-        throw "Verifier accepted perturbation: $Description"
+        $verifier = Join-Path $perturbedRoot 'docs\design\lxr-port\P1.3\verify-store-paths.ps1'
+        & pwsh -NoProfile -File $verifier -RepositoryRoot $perturbedRoot *> $null
+        if ($LASTEXITCODE -eq 0) {
+            throw "Verifier accepted perturbation: $Description"
+        }
+    } finally {
+        Copy-Item -LiteralPath $sourcePath -Destination $path -Force
     }
 }
 
@@ -67,6 +72,7 @@ try {
     if ($LASTEXITCODE -ne 0) {
         throw 'Verifier rejected the exact committed archive.'
     }
+    Copy-Item -LiteralPath $archiveRoot -Destination $perturbedRoot -Recurse
 
     Invoke-Perturbation `
         'src\coreclr\gc\gcinterface.h' `
