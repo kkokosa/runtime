@@ -29,4 +29,4 @@ Microbenchmarks,three runtimes and six P1.3 methods,PASS
 Multi-thread throughput,20 paired runs with committed per-invocation rows,PASS
 Throughput configuration evidence,Observed ServerGC concurrent GC collector confirmation and requested-unverified claim/R2R/tiering fields,PASS
 Exact product archive,Linux x64 build 0 warnings/errors and five execution arms,PASS
-Exact eligibility archive,Linux x64 99101ef069e build 0 warnings/errors large both polarities stack reference-class async 1/1 and standalone GCStress,PASS
+Exact shared-descriptor archive,Linux x64 7fd9523ea45 build 0 warnings/errors large both polarities stack reference-class MemberwiseClone async 1/1 and standalone GCStress,PASS
