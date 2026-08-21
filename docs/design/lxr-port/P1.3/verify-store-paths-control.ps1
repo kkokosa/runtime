@@ -117,6 +117,11 @@ try {
         'value-class helper eligibility'
     Invoke-Perturbation `
         'src\coreclr\vm\gchelpers.cpp' `
+        '_ASSERTE(!type->IsArray());' `
+        '_ASSERTE(type->IsArray());' `
+        'shared chunk descriptor contract'
+    Invoke-Perturbation `
+        'src\coreclr\vm\gchelpers.cpp' `
         'lowestOffsetSeries[-middle]' `
         'lowestOffsetSeries[middle]' `
         'chunk descriptor search direction'

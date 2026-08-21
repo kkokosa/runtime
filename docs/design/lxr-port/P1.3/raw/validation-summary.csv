@@ -20,7 +20,7 @@ Interpreter mixed stores,Windows x64,PASS
 Runtime async captured objects,Windows x64 1/1,PASS
 Runtime async custom GC slice,49160-byte value and offset-aware 119387-to-689-byte clear path 1/1,PASS
 Runtime async custom GC slice stress,Windows x64 standalone GCStress=0xC 1/1,PASS
-Stack reference-class eligibility,128 references Release no helper and Checked no assertion,PASS
+Stack reference-class eligibility,128 references Release no helper plus Checked stack and 48KB MemberwiseClone no assertion,PASS
 JIT register stress,Workstation and Server,PASS
 GC stress 0xC,standalone scalar/copy/clear/fill/layout and 48 KB tracked-byref surfaces,PASS
 NativeAOT fail closed,side family rejected and CardTable returned 100,PASS

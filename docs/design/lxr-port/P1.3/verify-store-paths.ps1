@@ -124,7 +124,7 @@ Require-Pattern 'src\coreclr\System.Private.CoreLib\src\System\Buffer.CoreCLR.cs
     'ClearValueClassWithOldValueWriteBarrier(')
 Require-Pattern 'src\coreclr\System.Private.CoreLib\src\System\Buffer.CoreCLR.cs' 'Thread.FastPollGC();'
 Require-Pattern 'src\coreclr\vm\gchelpers.cpp' 'ErectWriteBarrierLayoutChunkPre'
-Require-Pattern 'src\coreclr\vm\gchelpers.cpp' '_ASSERTE(type->IsValueType());'
+Require-Pattern 'src\coreclr\vm\gchelpers.cpp' '_ASSERTE(!type->IsArray());'
 Require-Pattern 'src\coreclr\vm\gchelpers.cpp' 'lowestOffsetSeries[-middle]'
 Require-PatternCount 'src\coreclr\inc\corinfo.h' 'CORINFO_HELP_BULK_WRITEBARRIER_WITH_LAYOUT,' 1
 Require-PatternCount 'src\coreclr\inc\corinfo.h' 'CORINFO_HELP_BULK_WRITEBARRIER_CLEAR_WITH_LAYOUT,' 1
@@ -136,6 +136,7 @@ Require-Pattern 'docs\design\lxr-port\P1.1\runtime-smoke\Program.cs' 'mixed-refe
 Require-Pattern 'docs\design\lxr-port\P1.1\runtime-smoke\Program.cs' 'very-large backward-overlap Span.CopyTo'
 Require-Pattern 'docs\design\lxr-port\P1.1\runtime-smoke\Program.cs' 'very-large volatile mixed-layout copy'
 Require-Pattern 'docs\design\lxr-port\P1.1\runtime-smoke\Program.cs' 'stack-allocated reference-class layout'
+Require-Pattern 'docs\design\lxr-port\P1.1\runtime-smoke\Program.cs' 'A very-large MemberwiseClone lost a reference.'
 Require-Pattern 'src\tests\async\objects-captured\objects-captured.cs' 'ValidateVeryLargeResult'
 Require-Pattern 'src\tests\async\objects-captured\objects-captured.cs' '[InlineArray(2048)]'
 Forbid-Pattern 'src\coreclr\inc\corinfo.h' 'CORINFO_HELP_ASSIGN_BYREF'
