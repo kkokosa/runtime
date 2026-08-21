@@ -118,7 +118,7 @@ try {
     Invoke-Perturbation `
         'src\coreclr\jit\layout.cpp' `
         'm_gcLayoutOffset + offset' `
-        'offset' `
+        'm_gcLayoutOffset + 0xDEAD' `
         'custom-slice descriptor offset'
     Invoke-Perturbation `
         'docs\design\lxr-port\P1.3\raw\bulk-throughput-invocations.csv' `
