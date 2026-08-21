@@ -110,7 +110,7 @@ Require-Pattern 'src\libraries\System.Private.CoreLib\src\System\SpanHelpers.T.c
 Require-Pattern 'src\coreclr\jit\lower.cpp' 'CORINFO_HELP_BULK_WRITEBARRIER_WITH_LAYOUT'
 Require-Pattern 'src\coreclr\jit\lower.cpp' 'CORINFO_HELP_BULK_WRITEBARRIER_CLEAR_WITH_LAYOUT'
 Require-Pattern 'src\coreclr\jit\lower.cpp' 'ShouldUseLayoutBulkHelper'
-Require-Pattern 'src\coreclr\jit\lower.cpp' '!layout->IsValueClass()'
+Require-PatternCount 'src\coreclr\jit\lower.cpp' '!layout->IsValueClass()' 1
 Require-Pattern 'src\coreclr\jit\lower.cpp' 'layout->GetSize() > MaxUnrolledLayoutBytes'
 Require-Pattern 'src\coreclr\jit\lower.cpp' 'GetGcLayoutClassHandle()'
 Require-Pattern 'src\coreclr\jit\lower.cpp' 'GetGcLayoutOffset()'
@@ -137,6 +137,8 @@ Require-Pattern 'docs\design\lxr-port\P1.1\runtime-smoke\Program.cs' 'very-large
 Require-Pattern 'docs\design\lxr-port\P1.1\runtime-smoke\Program.cs' 'very-large volatile mixed-layout copy'
 Require-Pattern 'docs\design\lxr-port\P1.1\runtime-smoke\Program.cs' 'stack-allocated reference-class layout'
 Require-Pattern 'docs\design\lxr-port\P1.1\runtime-smoke\Program.cs' 'A very-large MemberwiseClone lost a reference.'
+Require-Pattern 'docs\design\lxr-port\P1.3-store-path-coverage-and-bulk-barrier.md' (
+    'It is not behavioral proof of the')
 Require-Pattern 'src\tests\async\objects-captured\objects-captured.cs' 'ValidateVeryLargeResult'
 Require-Pattern 'src\tests\async\objects-captured\objects-captured.cs' '[InlineArray(2048)]'
 Forbid-Pattern 'src\coreclr\inc\corinfo.h' 'CORINFO_HELP_ASSIGN_BYREF'
@@ -524,25 +526,56 @@ if (Test-Path -LiteralPath $customLayoutCodegen) {
 
 if (Test-Path -LiteralPath $referenceClassCodegen) {
     $rows = @(Import-Csv -LiteralPath $referenceClassCodegen)
-    Confirm ($rows.Count -eq 1) 'Reference-class codegen evidence must contain exactly one final row.'
-    if ($rows.Count -eq 1) {
-        $row = $rows[0]
-        Confirm (($row.Case -eq 'stack-reference-class-final') -and
+    Confirm ($rows.Count -eq 4) (
+        'Reference-class evidence must contain one stack execution row and three MemberwiseClone rows.')
+    $stackRows = @($rows | Where-Object Case -eq 'stack-reference-class-execution')
+    Confirm ($stackRows.Count -eq 1) 'Stack reference-class evidence must contain exactly one row.'
+    if ($stackRows.Count -eq 1) {
+        $row = $stackRows[0]
+        Confirm (($row.ProofKind -eq 'execution-codegen-not-eligibility') -and
             ($row.Method -eq 'Program:ExerciseStackAllocatedReferenceClass') -and
             ($row.LayoutKind -eq 'reference-class') -and
             ($row.ReferenceSlots -eq '128') -and
-            ($row.ReleaseRuntimeResult -eq 'PASS') -and
-            ($row.CheckedRuntimeResult -eq 'PASS')) (
-            'Reference-class negative control has inconsistent identity or configuration.')
+            ($row.RuntimeResult -eq 'PASS')) (
+            'Stack reference-class execution row has inconsistent identity or configuration.')
         Confirm (([int]$row.StackFrameBytes -ge 1024) -and
             ([int]$row.NewObjectHelperCalls -eq 0) -and
             ([int]$row.LayoutHelperCalls -eq 0) -and
             ([int]$row.CodeBytes -lt 1024)) (
-            'Reference-class codegen does not prove stack allocation without a layout helper.')
+            'Stack reference-class codegen does not confirm stack allocation and helper absence.')
         Confirm (($row.CoreClrSha256 -match '^[0-9A-F]{64}$') -and
             ($row.ClrJitSha256 -match '^[0-9A-F]{64}$') -and
             ($row.DisassemblySha256 -match '^[0-9A-F]{64}$')) (
-            'Reference-class codegen omits exact binary/disassembly identities.')
+            'Stack reference-class codegen omits exact binary/disassembly identities.')
+    }
+
+    $cloneRows = @($rows | Where-Object Case -eq 'memberwise-clone-shared-helper')
+    Confirm ($cloneRows.Count -eq 3) 'MemberwiseClone evidence must contain exactly three configurations.'
+    $expectedCloneConfigurations = @(
+        'linux-x64-debug',
+        'windows-x64-checked',
+        'windows-x64-release-nopgo'
+    )
+    Confirm ((@($cloneRows.Configuration | Sort-Object) -join ',') -eq
+        ($expectedCloneConfigurations -join ',')) (
+        'MemberwiseClone evidence omits an expected configuration.')
+    foreach ($row in $cloneRows) {
+        $expectedChunkBytes = if ($row.Configuration -eq 'linux-x64-debug') { '1024' } else { '16384' }
+        Confirm (($row.ProofKind -eq 'behavioral-shared-helper') -and
+            ($row.Method -eq 'VeryLargeReferenceHolder:Clone') -and
+            ($row.LayoutKind -eq 'reference-class') -and
+            ($row.ReferenceSlots -eq '4096') -and
+            ($row.InstanceBytes -eq '49152') -and
+            ($row.ChunkBytes -eq $expectedChunkBytes) -and
+            ($row.SharedChunkPath -eq
+                'Object.MemberwiseClone>Buffer.BulkMoveWithOldValueWriteBarrier>BulkMoveValueClassWithOldValueWriteBarrier') -and
+            ($row.RuntimeResult -eq 'PASS') -and
+            ($row.ProductCommit -eq '85cf4419220') -and
+            ($row.EvidenceTip -eq '7fd9523ea45')) (
+            "MemberwiseClone row '$($row.Configuration)' has inconsistent path or configuration.")
+        Confirm (($row.CoreClrSha256 -match '^[0-9A-F]{64}$') -and
+            ($row.ClrJitSha256 -match '^[0-9A-F]{64}$')) (
+            "MemberwiseClone row '$($row.Configuration)' omits exact runtime identity.")
     }
 }
 

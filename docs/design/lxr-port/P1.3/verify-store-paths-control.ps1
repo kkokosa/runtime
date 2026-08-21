@@ -114,7 +114,7 @@ try {
         'src\coreclr\jit\lower.cpp' `
         '!layout->IsValueClass() ||' `
         'false ||' `
-        'value-class helper eligibility'
+        'structural value-class helper eligibility contract'
     Invoke-Perturbation `
         'src\coreclr\vm\gchelpers.cpp' `
         '_ASSERTE(!type->IsArray());' `
@@ -160,6 +160,16 @@ try {
         ',bounded-helper,49,1,PASS,' `
         ',bounded-helper,49000,1,PASS,' `
         'bounded large-layout code size'
+    Invoke-Perturbation `
+        'docs\design\lxr-port\P1.3\raw\reference-class-codegen.csv' `
+        'execution-codegen-not-eligibility' `
+        'behavioral-gate-proof' `
+        'stack evidence scope'
+    Invoke-Perturbation `
+        'docs\design\lxr-port\P1.3\raw\reference-class-codegen.csv' `
+        'linux-x64-debug,1024,Object.MemberwiseClone' `
+        'linux-x64-debug,2048,Object.MemberwiseClone' `
+        'MemberwiseClone Debug chunk size'
     Invoke-Perturbation `
         'docs\design\lxr-port\P1.3-store-path-coverage-and-bulk-barrier.md' `
         'code-size comparison: 106,418 to 49 bytes for' `

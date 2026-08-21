@@ -28,6 +28,12 @@ offset propagation. The bounded body is 689 bytes and emits one clear helper
 with descriptor offset 8 and slice size 0xBFF8. Exact identities are in
 custom-layout-codegen.csv.
 
-The 128-reference stack-allocated reference-class control uses a 1128-byte
-frame and produces 414 bytes with zero new-object helpers and zero value-class
-layout helpers. Exact identities are in reference-class-codegen.csv.
+The 128-reference stack-allocated reference-class execution control uses a
+1128-byte frame and produces 414 bytes with zero new-object helpers and zero
+layout helpers. This confirms stack execution, not the structural
+value-class-eligibility gate.
+
+Separate reference-class-codegen.csv rows record the genuine 49152-byte
+MemberwiseClone shared-helper path: 1024-byte exact Linux Debug chunks and
+16384-byte Windows Release/Checked chunks, all passing with exact runtime
+identities.
