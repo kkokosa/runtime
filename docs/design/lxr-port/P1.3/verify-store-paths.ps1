@@ -65,6 +65,7 @@ $throughputInvocations = Join-Path $scriptRoot 'raw\bulk-throughput-invocations.
 $layoutHelperPilots = Join-Path $scriptRoot 'raw\layout-helper-pilots.csv'
 $largeLayoutBenchmark = Join-Path $scriptRoot 'raw\large-layout-benchmark.csv'
 $layoutHelperCodegen = Join-Path $scriptRoot 'raw\layout-helper-codegen.csv'
+$customLayoutCodegen = Join-Path $scriptRoot 'raw\custom-layout-codegen.csv'
 $stockFillCodegen = Join-Path $scriptRoot 'raw\stock-fill-codegen.csv'
 $stockFillDisassembly = Join-Path $scriptRoot 'raw\stock-fill-codegen.txt'
 
@@ -80,6 +81,7 @@ foreach ($path in @(
     $layoutHelperPilots,
     $largeLayoutBenchmark,
     $layoutHelperCodegen,
+    $customLayoutCodegen,
     $stockFillCodegen,
     $stockFillDisassembly
 )) {
@@ -107,6 +109,10 @@ Require-Pattern 'src\coreclr\jit\lower.cpp' 'CORINFO_HELP_BULK_WRITEBARRIER_WITH
 Require-Pattern 'src\coreclr\jit\lower.cpp' 'CORINFO_HELP_BULK_WRITEBARRIER_CLEAR_WITH_LAYOUT'
 Require-Pattern 'src\coreclr\jit\lower.cpp' 'ShouldUseLayoutBulkHelper'
 Require-Pattern 'src\coreclr\jit\lower.cpp' 'layout->GetSize() > MaxUnrolledLayoutBytes'
+Require-Pattern 'src\coreclr\jit\lower.cpp' 'GetGcLayoutClassHandle()'
+Require-Pattern 'src\coreclr\jit\lower.cpp' 'GetGcLayoutOffset()'
+Require-Pattern 'src\coreclr\jit\layout.cpp' 'm_gcLayoutOffset + offset'
+Require-Pattern 'src\coreclr\vm\gchelpers.cpp' 'chunkLayoutOffset = gcLayoutOffset + chunkOffset'
 Require-Pattern 'src\coreclr\System.Private.CoreLib\src\System\Buffer.CoreCLR.cs' (
     'BulkMoveValueClassWithOldValueWriteBarrier(')
 Require-Pattern 'src\coreclr\System.Private.CoreLib\src\System\Buffer.CoreCLR.cs' (
@@ -123,8 +129,11 @@ Require-Pattern 'docs\design\lxr-port\P1.1\runtime-smoke\Program.cs' 'layout-awa
 Require-Pattern 'docs\design\lxr-port\P1.1\runtime-smoke\Program.cs' 'mixed-reference Span.Fill'
 Require-Pattern 'docs\design\lxr-port\P1.1\runtime-smoke\Program.cs' 'very-large backward-overlap Span.CopyTo'
 Require-Pattern 'docs\design\lxr-port\P1.1\runtime-smoke\Program.cs' 'very-large volatile mixed-layout copy'
+Require-Pattern 'src\tests\async\objects-captured\objects-captured.cs' 'ValidateVeryLargeResult'
+Require-Pattern 'src\tests\async\objects-captured\objects-captured.cs' '[InlineArray(2048)]'
 Forbid-Pattern 'src\coreclr\inc\corinfo.h' 'CORINFO_HELP_ASSIGN_BYREF'
 Forbid-Pattern 'src\coreclr\inc\corinfo.h' 'CORINFO_HELP_ASSIGN_REF_ENSURE_NONHEAP'
+Forbid-Pattern 'src\coreclr\jit\lower.cpp' 'assert(!blk->IsOnHeapAndContainsReferences())'
 
 if (Test-Path -LiteralPath $validation) {
     $rows = @(Import-Csv -LiteralPath $validation)
@@ -378,6 +387,35 @@ if (Test-Path -LiteralPath $layoutHelperCodegen) {
             Confirm (([int]$row.HelperCalls -eq 1) -and ([int]$row.CodeBytes -lt 128)) (
                 "$mode codegen is not bounded to one helper for '$($row.Method)'.")
         }
+    }
+}
+
+if (Test-Path -LiteralPath $customLayoutCodegen) {
+    $rows = @(Import-Csv -LiteralPath $customLayoutCodegen)
+    $prefix = @($rows | Where-Object Case -eq 'runtime-async-slice-prefix')
+    $final = @($rows | Where-Object Case -eq 'runtime-async-slice-final')
+    Confirm (($prefix.Count -eq 1) -and ($final.Count -eq 1)) (
+        'Runtime-async custom-slice codegen must contain prefix and final rows.')
+    if (($prefix.Count -eq 1) -and ($final.Count -eq 1)) {
+        foreach ($row in @($prefix[0], $final[0])) {
+            Confirm (($row.Method -eq 'Async2ObjectsWithYields:ValidateVeryLargeResult') -and
+                ($row.ValueBytes -eq '49160') -and
+                ($row.SliceOffset -eq '8') -and
+                ($row.SliceBytes -eq '49144') -and
+                ($row.References -eq '4096') -and
+                ($row.Result -eq 'PASS')) (
+                "Runtime-async custom-slice row '$($row.Case)' has inconsistent configuration.")
+            Confirm (($row.CoreClrSha256 -match '^[0-9A-F]{64}$') -and
+                ($row.ClrJitSha256 -match '^[0-9A-F]{64}$') -and
+                ($row.DisassemblySha256 -match '^[0-9A-F]{64}$')) (
+                "Runtime-async custom-slice row '$($row.Case)' omits exact identities.")
+        }
+        Confirm (([int]$prefix[0].CodeBytes -gt 100000) -and
+            ([int]$prefix[0].ClearHelperCalls -eq 0)) (
+            'Pre-fix runtime-async slice does not demonstrate unbounded expansion.')
+        Confirm (([int]$final[0].CodeBytes -lt 1024) -and
+            ([int]$final[0].ClearHelperCalls -eq 1)) (
+            'Final runtime-async slice is not bounded to one clear helper.')
     }
 }
 

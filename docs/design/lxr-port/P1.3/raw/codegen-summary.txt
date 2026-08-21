@@ -18,7 +18,12 @@ bodies, sizes, and SHA-256 hashes are in stock-fill-codegen.txt and
 stock-fill-codegen.csv.
 
 The 48 KB / 4096-reference negative control generated 106418 bytes for copy
-and 75742 bytes for clear before the bound. Product commit b79cf85133d
-generates one helper call and 43/41 bytes; minopts, cold, and volatile forms
+and 75742 bytes for clear before the bound. The offset-aware helper generates
+one helper call and 49/44 bytes; minopts, cold, and volatile forms
 also contain exactly one helper call. Exact identities are in
 layout-helper-codegen.csv.
+
+The runtime-async custom GC slice generated 119387 bytes before descriptor
+offset propagation. The bounded body is 690 bytes and emits one clear helper
+with descriptor offset 8 and slice size 0xBFF8. Exact identities are in
+custom-layout-codegen.csv.

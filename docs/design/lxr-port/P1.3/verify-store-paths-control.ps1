@@ -116,6 +116,11 @@ try {
         'lowestOffsetSeries[middle]' `
         'chunk descriptor search direction'
     Invoke-Perturbation `
+        'src\coreclr\jit\layout.cpp' `
+        'm_gcLayoutOffset + offset' `
+        'offset' `
+        'custom-slice descriptor offset'
+    Invoke-Perturbation `
         'docs\design\lxr-port\P1.3\raw\bulk-throughput-invocations.csv' `
         '"2689546.041091"' `
         '"1.000000"' `
@@ -127,8 +132,8 @@ try {
         'stock Fill identity hash'
     Invoke-Perturbation `
         'docs\design\lxr-port\P1.3\raw\layout-helper-codegen.csv' `
-        ',bounded-helper,43,1,PASS,' `
-        ',bounded-helper,43000,1,PASS,' `
+        ',bounded-helper,49,1,PASS,' `
+        ',bounded-helper,49000,1,PASS,' `
         'bounded large-layout code size'
 
     & pwsh -NoProfile -File $verifier -RepositoryRoot $archiveRoot
