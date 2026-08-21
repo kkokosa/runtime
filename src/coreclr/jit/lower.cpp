@@ -10538,12 +10538,11 @@ bool Lowering::ShouldUseLayoutBulkHelper(GenTreeBlk* blk)
     assert(blk->OperIs(GT_STORE_BLK));
     assert(blk->GetLayout()->HasGCPtr());
 
-    ClassLayout* layout = blk->GetLayout();
-    GenTree*     source = blk->Data();
+    ClassLayout*   layout             = blk->GetLayout();
+    GenTree*       source             = blk->Data();
     const unsigned MaxLayoutBulkBytes = 16 * 1024;
     if ((layout->GetClassHandle() == NO_CLASS_HANDLE) || layout->IsCustomLayout() || blk->IsVolatile() ||
-        (layout->GetSize() > MaxLayoutBulkBytes) ||
-        (source->OperIs(GT_IND) && source->AsIndir()->IsVolatile()))
+        (layout->GetSize() > MaxLayoutBulkBytes) || (source->OperIs(GT_IND) && source->AsIndir()->IsVolatile()))
     {
         return false;
     }
