@@ -10347,13 +10347,13 @@ void Lowering::LowerBlockStoreAsGcBulkCopyCall(GenTreeBlk* blk)
     assert(blk->OperIs(GT_STORE_BLK));
     assert(blk->GetLayout()->HasGCPtr());
     assert(!blk->OperIsInitBlkOp());
-    assert(!blk->IsVolatile());
-    assert(!blk->Data()->OperIs(GT_IND) || !blk->Data()->AsIndir()->IsVolatile());
 
     // Capture whether the original block store could throw (e.g. NRE from a null address).
 
     GenTree* dest = blk->Addr();
     GenTree* data = blk->Data();
+    const bool isVolatile =
+        blk->IsVolatile() || (data->OperIs(GT_IND) && data->AsIndir()->IsVolatile());
 
     bool destMayFault = blk->IndirMayFault(m_compiler);
     bool dataMayFault;
@@ -10438,6 +10438,16 @@ void Lowering::LowerBlockStoreAsGcBulkCopyCall(GenTreeBlk* blk)
     BlockRange().Remove(sizePlaceholder);
     BlockRange().Remove(dataPlaceholder);
 
+    if (isVolatile)
+    {
+        GenTree* firstBarrier  = m_compiler->gtNewMemoryBarrier(BARRIER_STORE_ONLY);
+        GenTree* secondBarrier = m_compiler->gtNewMemoryBarrier(BARRIER_LOAD_ONLY);
+        BlockRange().InsertBefore(call, firstBarrier);
+        BlockRange().InsertAfter(call, secondBarrier);
+        LowerNode(firstBarrier);
+        LowerNode(secondBarrier);
+    }
+
     // Add implicit nullchecks for dest and data if needed:
     //
     auto wrapWithNullcheck = [&](GenTree* node) {
@@ -10479,6 +10489,7 @@ void Lowering::LowerBlockStoreAsGcBulkClearCall(GenTreeBlk* blk)
 
     GenTree* dest         = blk->Addr();
     GenTree* data         = blk->Data();
+    bool     isVolatile   = blk->IsVolatile();
     bool     destMayFault = blk->IndirMayFault(m_compiler);
     GenTree* size         = m_compiler->gtNewIconNode(static_cast<ssize_t>(blk->GetLayout()->GetSize()), TYP_I_IMPL);
     BlockRange().InsertBefore(data, size);
@@ -10512,6 +10523,16 @@ void Lowering::LowerBlockStoreAsGcBulkClearCall(GenTreeBlk* blk)
     BlockRange().Remove(sizePlaceholder);
     BlockRange().Remove(data);
 
+    if (isVolatile)
+    {
+        GenTree* firstBarrier  = m_compiler->gtNewMemoryBarrier(BARRIER_STORE_ONLY);
+        GenTree* secondBarrier = m_compiler->gtNewMemoryBarrier(BARRIER_LOAD_ONLY);
+        BlockRange().InsertBefore(call, firstBarrier);
+        BlockRange().InsertAfter(call, secondBarrier);
+        LowerNode(firstBarrier);
+        LowerNode(secondBarrier);
+    }
+
     if (destMayFault && m_compiler->fgAddrCouldBeNull(dest))
     {
         LIR::Use destUse;
@@ -10538,11 +10559,21 @@ bool Lowering::ShouldUseLayoutBulkHelper(GenTreeBlk* blk)
     assert(blk->OperIs(GT_STORE_BLK));
     assert(blk->GetLayout()->HasGCPtr());
 
-    ClassLayout*   layout             = blk->GetLayout();
-    GenTree*       source             = blk->Data();
-    const unsigned MaxLayoutBulkBytes = 16 * 1024;
-    if ((layout->GetClassHandle() == NO_CLASS_HANDLE) || layout->IsCustomLayout() || blk->IsVolatile() ||
-        (layout->GetSize() > MaxLayoutBulkBytes) || (source->OperIs(GT_IND) && source->AsIndir()->IsVolatile()))
+    ClassLayout*   layout                 = blk->GetLayout();
+    GenTree*       source                 = blk->Data();
+    const unsigned MaxUnrolledLayoutBytes = 16 * 1024;
+    if (layout->GetClassHandle() == NO_CLASS_HANDLE)
+    {
+        assert(!blk->IsOnHeapAndContainsReferences());
+        return false;
+    }
+
+    if (layout->GetSize() > MaxUnrolledLayoutBytes)
+    {
+        return true;
+    }
+
+    if (blk->IsVolatile() || (source->OperIs(GT_IND) && source->AsIndir()->IsVolatile()))
     {
         return false;
     }

@@ -1867,6 +1867,113 @@ bool ErectWriteBarrierLayoutFillPre(
         dst, value, type, elementSize, elementCount, true);
 }
 
+bool ErectWriteBarrierLayoutChunkPre(
+    void* dst,
+    const void* src,
+    MethodTable* type,
+    size_t elementSize,
+    size_t chunkOffset,
+    size_t chunkSize)
+{
+    LIMITED_METHOD_CONTRACT;
+
+#ifdef TARGET_AMD64
+    _ASSERTE(type != nullptr);
+    _ASSERTE(type->ContainsGCPointers());
+    _ASSERTE(chunkSize != 0);
+    _ASSERTE(chunkOffset <= elementSize);
+    _ASSERTE(chunkSize <= (elementSize - chunkOffset));
+    _ASSERTE(IS_ALIGNED(elementSize, sizeof(Object*)));
+    _ASSERTE(IS_ALIGNED(chunkOffset, sizeof(Object*)));
+    _ASSERTE(IS_ALIGNED(chunkSize, sizeof(Object*)));
+
+    WriteBarrierBulkAction action = ClassifyWriteBarrierBulk(dst, chunkSize);
+    if (action == WriteBarrierBulkAction::CardTable)
+    {
+        return false;
+    }
+    if (action == WriteBarrierBulkAction::AllClaimed)
+    {
+        return true;
+    }
+
+    size_t chunkEnd = chunkOffset + chunkSize;
+    CGCDesc* map = CGCDesc::GetCGCDescFromMT(type);
+    const ptrdiff_t seriesCount = static_cast<ptrdiff_t>(map->GetNumSeries());
+    _ASSERTE(seriesCount > 0);
+    CGCDescSeries* lowestOffsetSeries = map->GetHighestSeries();
+
+    // GC series are sorted by descending offset in memory. Search through them
+    // in ascending-offset order so one native chunk never scans the full layout.
+    ptrdiff_t low = 0;
+    ptrdiff_t high = seriesCount;
+    while (low < high)
+    {
+        ptrdiff_t middle = low + ((high - low) / 2);
+        size_t middleOffset = lowestOffsetSeries[-middle].GetSeriesOffset() - OBJECT_SIZE;
+        if (middleOffset < chunkOffset)
+        {
+            low = middle + 1;
+        }
+        else
+        {
+            high = middle;
+        }
+    }
+
+    ptrdiff_t seriesIndex = low;
+    if (seriesIndex > 0)
+    {
+        CGCDescSeries* previous = lowestOffsetSeries - (seriesIndex - 1);
+        size_t previousOffset = previous->GetSeriesOffset() - OBJECT_SIZE;
+        size_t previousSize = previous->GetSeriesSize() + type->GetBaseSize();
+        if ((previousOffset + previousSize) > chunkOffset)
+        {
+            seriesIndex--;
+        }
+    }
+
+    for (; seriesIndex < seriesCount; seriesIndex++)
+    {
+        CGCDescSeries* series = lowestOffsetSeries - seriesIndex;
+        const size_t seriesOffset = series->GetSeriesOffset() - OBJECT_SIZE;
+        const size_t seriesSize = series->GetSeriesSize() + type->GetBaseSize();
+        _ASSERTE(IS_ALIGNED(seriesOffset, sizeof(Object*)));
+        _ASSERTE(IS_ALIGNED(seriesSize, sizeof(Object*)));
+        _ASSERTE((seriesOffset + seriesSize) <= elementSize);
+        if (seriesOffset >= chunkEnd)
+        {
+            break;
+        }
+
+        size_t start = (seriesOffset > chunkOffset) ? seriesOffset : chunkOffset;
+        size_t seriesEnd = seriesOffset + seriesSize;
+        size_t end = (seriesEnd < chunkEnd) ? seriesEnd : chunkEnd;
+        for (size_t offset = start; offset < end; offset += sizeof(Object*))
+        {
+            size_t chunkRelativeOffset = offset - chunkOffset;
+            Object** destinationSlot =
+                reinterpret_cast<Object**>(reinterpret_cast<uint8_t*>(dst) + chunkRelativeOffset);
+            Object* newReference = (src == nullptr)
+                ? nullptr
+                : VolatileLoad(reinterpret_cast<Object* const*>(
+                      reinterpret_cast<const uint8_t*>(src) + chunkRelativeOffset));
+            ErectWriteBarrierPre(destinationSlot, newReference);
+        }
+    }
+
+    return true;
+#else
+    UNREFERENCED_PARAMETER(dst);
+    UNREFERENCED_PARAMETER(src);
+    UNREFERENCED_PARAMETER(type);
+    UNREFERENCED_PARAMETER(elementSize);
+    UNREFERENCED_PARAMETER(chunkOffset);
+    UNREFERENCED_PARAMETER(chunkSize);
+    return false;
+#endif // TARGET_AMD64
+}
+
 void ErectWriteBarrierDependentEdgePre(void* dst, Object* oldRef, Object* newRef)
 {
     LIMITED_METHOD_CONTRACT;

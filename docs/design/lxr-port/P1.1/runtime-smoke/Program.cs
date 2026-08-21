@@ -34,6 +34,22 @@ internal static class Program
             return 0;
         }
 
+        if (Environment.GetEnvironmentVariable("P13_FILL_CODEGEN_ONLY") == "1")
+        {
+            ExerciseFillCodegenSurfaces();
+            Console.WriteLine("PASS: reference and mixed-reference fill codegen surfaces");
+            return 0;
+        }
+
+        if (Environment.GetEnvironmentVariable("P13_LARGE_LAYOUT_ONLY") == "1")
+        {
+            ExerciseVeryLargeLayout(
+                nativeHooks ?? throw new InvalidOperationException("Native hooks are required."),
+                Environment.GetEnvironmentVariable("DOTNET_GCWriteBarrierTestBitMeaning") == "1");
+            Console.WriteLine("PASS: very-large mixed-layout copy, clear, and self-copy");
+            return 0;
+        }
+
         GetCallCount? getCallCount = nativeHooks?.CallCount;
         ulong initialCallCount = getCallCount?.Invoke() ?? 0;
 
@@ -218,6 +234,7 @@ internal static class Program
         };
         StoreLargeValue(largeHolder, largeValue);
         ClearLargeValue(largeHolder);
+        ExerciseVeryLargeGcStressSurface(value);
         GC.Collect();
 
         if (!ReferenceEquals(holder.Value, value) ||
@@ -227,6 +244,57 @@ internal static class Program
             (largeHolder.Value.Fourth is not null))
         {
             throw new InvalidOperationException("A GC-stress store surface produced an unexpected value.");
+        }
+    }
+
+    private static void ExerciseVeryLargeGcStressSurface(object value)
+    {
+        VeryLargeMixedLayout source = default;
+        for (int index = 0; index < 2048; index++)
+        {
+            source[index] = new MixedReferences
+            {
+                First = value,
+                Scalar = (nuint)index,
+                Second = value,
+            };
+        }
+
+        VeryLargeReferenceHolder holder = new();
+        StoreVeryLargeValue(holder, in source);
+        if (!ReferenceEquals(holder.Value[0].First, value) ||
+            !ReferenceEquals(holder.Value[2047].Second, value))
+        {
+            throw new InvalidOperationException("A very-large GC-stress copy lost a reference.");
+        }
+
+        ClearVeryLargeValue(holder);
+        if ((holder.Value[0].First is not null) ||
+            (holder.Value[2047].Second is not null))
+        {
+            throw new InvalidOperationException("A very-large GC-stress clear retained a reference.");
+        }
+    }
+
+    private static void ExerciseFillCodegenSurfaces()
+    {
+        object value = new();
+        object?[] references = new object?[16];
+        if (!ReferenceEquals(FillReferences(references, value), value))
+        {
+            throw new InvalidOperationException("Reference fill produced an unexpected value.");
+        }
+
+        MixedReferences mixedValue = new()
+        {
+            First = value,
+            Scalar = 42,
+            Second = value,
+        };
+        MixedReferences[] mixed = new MixedReferences[4];
+        if (!ReferenceEquals(FillMixedReferences(mixed, mixedValue), value))
+        {
+            throw new InvalidOperationException("Mixed-reference fill produced an unexpected value.");
         }
     }
 
@@ -506,6 +574,7 @@ internal static class Program
 
         ExerciseCompleteStoreSurfaces(hooks, workWhenSet);
         ExerciseDependentEdges(hooks, workWhenSet);
+        ExerciseVeryLargeLayout(hooks, workWhenSet);
     }
 
     private static unsafe void ExerciseCompleteStoreSurfaces(NativeHooks hooks, bool workWhenSet)
@@ -690,7 +759,7 @@ internal static class Program
             ref object? fillStart = ref MemoryMarshal.GetArrayDataReference(fillDestination);
             nuint fillAddress = (nuint)Unsafe.AsPointer(ref fillStart);
             hooks.ResetRange(fillAddress, (nuint)fillDestination.Length, workByte, claimBits: true);
-            fillDestination.AsSpan().Fill(newValue);
+            FillReferences(fillDestination, newValue);
             foreach (object? item in fillDestination)
             {
                 if (!ReferenceEquals(item, newValue))
@@ -702,7 +771,7 @@ internal static class Program
             AssertRangeCalls(hooks, 0, 0, "reference Span.Fill");
 
             hooks.ResetRange(fillAddress, (nuint)fillDestination.Length, noWorkByte, claimBits: true);
-            fillDestination.AsSpan().Fill(oldValue);
+            FillReferences(fillDestination, oldValue);
             AssertClaim(hooks, 0, 0, "all-claimed reference Span.Fill");
             AssertRangeCalls(hooks, 0, 0, "all-claimed reference Span.Fill");
 
@@ -755,7 +824,7 @@ internal static class Program
             nuint mixedFillWordCount =
                 (nuint)(mixedFill.Length * Unsafe.SizeOf<MixedReferences>() / IntPtr.Size);
             hooks.ResetRange(mixedFillAddress, mixedFillWordCount, workByte, claimBits: true);
-            mixedFill.AsSpan().Fill(mixedFillValue);
+            FillMixedReferences(mixedFill, mixedFillValue);
             foreach (MixedReferences item in mixedFill)
             {
                 if (!ReferenceEquals(item.First, mixedFillValue.First) ||
@@ -769,7 +838,7 @@ internal static class Program
             AssertRangeCalls(hooks, 0, 0, "mixed-reference Span.Fill");
 
             hooks.ResetRange(mixedFillAddress, mixedFillWordCount, noWorkByte, claimBits: true);
-            mixedFill.AsSpan().Fill(mixedFillValue);
+            FillMixedReferences(mixedFill, mixedFillValue);
             AssertClaim(hooks, 0, 0, "all-claimed mixed-reference Span.Fill");
 
             StoreLargeValue(largeHolder, largeValue);
@@ -914,6 +983,30 @@ internal static class Program
     private static void ClearLargeValue(LargeReferenceHolder holder) =>
         holder.Value = default;
 
+    [MethodImpl(MethodImplOptions.NoInlining)]
+    private static void StoreVeryLargeValue(
+        VeryLargeReferenceHolder holder,
+        in VeryLargeMixedLayout value) =>
+        holder.Value = value;
+
+    [MethodImpl(MethodImplOptions.NoInlining)]
+    private static void ClearVeryLargeValue(VeryLargeReferenceHolder holder) =>
+        holder.Value = default;
+
+    [MethodImpl(MethodImplOptions.NoInlining)]
+    private static object FillReferences(object?[] destination, object value)
+    {
+        destination.AsSpan().Fill(value);
+        return destination[^1]!;
+    }
+
+    [MethodImpl(MethodImplOptions.NoInlining)]
+    private static object FillMixedReferences(MixedReferences[] destination, MixedReferences value)
+    {
+        destination.AsSpan().Fill(value);
+        return destination[^1].Second!;
+    }
+
     private static void AssertRangeCalls(
         NativeHooks hooks,
         ulong rangeCalls,
@@ -964,6 +1057,156 @@ internal static class Program
         GC.KeepAlive(collectible);
         GC.KeepAlive(collectibleType);
         GC.KeepAlive(assembly);
+    }
+
+    private static unsafe void ExerciseVeryLargeLayout(NativeHooks hooks, bool workWhenSet)
+    {
+        object first = new();
+        object second = new();
+        VeryLargeMixedLayout source = default;
+        source[0] = new MixedReferences { First = first, Scalar = 101, Second = second };
+        source[2047] = new MixedReferences { First = second, Scalar = 202, Second = first };
+        VeryLargeReferenceHolder holder = new();
+        StoreVeryLargeValue(holder, in source);
+
+        ref object? destinationStart = ref holder.Value[0].First;
+        nuint destinationAddress = (nuint)Unsafe.AsPointer(ref destinationStart);
+        nuint destinationWordCount =
+            (nuint)(Unsafe.SizeOf<VeryLargeMixedLayout>() / IntPtr.Size);
+        byte workByte = workWhenSet ? byte.MaxValue : (byte)0;
+
+        hooks.ResetRange(destinationAddress, destinationWordCount, workByte, claimBits: true);
+        StoreVeryLargeValue(holder, in source);
+        AssertClaim(hooks, 4_096, 4_096, "very-large mixed-layout copy");
+        if (!ReferenceEquals(holder.Value[0].First, first) ||
+            !ReferenceEquals(holder.Value[2047].Second, first))
+        {
+            throw new InvalidOperationException("Very-large mixed-layout copy produced an unexpected value.");
+        }
+
+        hooks.ResetRange(destinationAddress, destinationWordCount, workByte, claimBits: true);
+        ClearVeryLargeValue(holder);
+        AssertClaim(hooks, 4_096, 4_096, "very-large mixed-layout clear");
+        if ((holder.Value[0].First is not null) ||
+            (holder.Value[2047].Second is not null))
+        {
+            throw new InvalidOperationException("Very-large mixed-layout clear retained references.");
+        }
+
+        StoreVeryLargeValue(holder, in source);
+        hooks.ResetRange(destinationAddress, destinationWordCount, workByte, claimBits: true);
+        StoreVeryLargeValue(holder, in holder.Value);
+        AssertClaim(hooks, 0, 0, "very-large identical source/destination no-op");
+        if (!ReferenceEquals(holder.Value[0].First, first) ||
+            !ReferenceEquals(holder.Value[2047].Second, first))
+        {
+            throw new InvalidOperationException("Very-large identical source/destination copy changed the value.");
+        }
+
+        VeryLargeMixedLayout[] sourceArray = [source];
+        VeryLargeMixedLayout[] destinationArray = new VeryLargeMixedLayout[1];
+        ref object? arrayDestinationStart = ref destinationArray[0][0].First;
+        nuint arrayDestinationAddress = (nuint)Unsafe.AsPointer(ref arrayDestinationStart);
+
+        hooks.ResetRange(arrayDestinationAddress, destinationWordCount, workByte, claimBits: true);
+        sourceArray.AsSpan().CopyTo(destinationArray);
+        AssertClaim(hooks, 4_096, 4_096, "very-large mixed-layout Span.CopyTo");
+        if (!ReferenceEquals(destinationArray[0][0].First, first) ||
+            !ReferenceEquals(destinationArray[0][2047].Second, first))
+        {
+            throw new InvalidOperationException("Very-large Span.CopyTo produced an unexpected value.");
+        }
+
+        hooks.ResetRange(arrayDestinationAddress, destinationWordCount, workByte, claimBits: true);
+        destinationArray.AsSpan().Fill(source);
+        AssertClaim(hooks, 4_096, 4_096, "very-large mixed-layout Span.Fill");
+        if (!ReferenceEquals(destinationArray[0][0].First, first) ||
+            !ReferenceEquals(destinationArray[0][2047].Second, first))
+        {
+            throw new InvalidOperationException("Very-large Span.Fill produced an unexpected value.");
+        }
+
+        hooks.ResetRange(arrayDestinationAddress, destinationWordCount, workByte, claimBits: true);
+        destinationArray.AsSpan().Clear();
+        AssertClaim(hooks, 4_096, 4_096, "very-large mixed-layout Span.Clear");
+        if ((destinationArray[0][0].First is not null) ||
+            (destinationArray[0][2047].Second is not null))
+        {
+            throw new InvalidOperationException("Very-large Span.Clear retained references.");
+        }
+
+        DynamicMethod volatileCopyMethod = new(
+            "VolatileVeryLargeCopy",
+            typeof(void),
+            [typeof(VeryLargeMixedLayout).MakeByRefType(), typeof(VeryLargeMixedLayout).MakeByRefType()],
+            typeof(Program).Module,
+            skipVisibility: true);
+        ILGenerator il = volatileCopyMethod.GetILGenerator();
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Ldarg_1);
+        il.Emit(OpCodes.Volatile);
+        il.Emit(OpCodes.Ldobj, typeof(VeryLargeMixedLayout));
+        il.Emit(OpCodes.Volatile);
+        il.Emit(OpCodes.Stobj, typeof(VeryLargeMixedLayout));
+        il.Emit(OpCodes.Ret);
+        VeryLargeCopy volatileCopy =
+            (VeryLargeCopy)volatileCopyMethod.CreateDelegate(typeof(VeryLargeCopy));
+        hooks.ResetRange(arrayDestinationAddress, destinationWordCount, workByte, claimBits: true);
+        volatileCopy(ref destinationArray[0], ref sourceArray[0]);
+        AssertClaim(hooks, 4_096, 4_096, "very-large volatile mixed-layout copy");
+        if (!ReferenceEquals(destinationArray[0][0].First, first) ||
+            !ReferenceEquals(destinationArray[0][2047].Second, first))
+        {
+            throw new InvalidOperationException("Very-large volatile copy produced an unexpected value.");
+        }
+
+        object alternateFirst = new();
+        object alternateSecond = new();
+        VeryLargeMixedLayout alternate = default;
+        alternate[0] = new MixedReferences
+        {
+            First = alternateFirst,
+            Scalar = 303,
+            Second = alternateSecond,
+        };
+        alternate[2047] = new MixedReferences
+        {
+            First = alternateSecond,
+            Scalar = 404,
+            Second = alternateFirst,
+        };
+        VeryLargeMixedLayout[] overlap = [source, alternate, default];
+        ref object? backwardDestinationStart = ref overlap[1][0].First;
+        nuint backwardDestinationAddress = (nuint)Unsafe.AsPointer(ref backwardDestinationStart);
+        hooks.ResetRange(
+            backwardDestinationAddress,
+            destinationWordCount * 2,
+            workByte,
+            claimBits: true);
+        overlap.AsSpan(0, 2).CopyTo(overlap.AsSpan(1, 2));
+        AssertClaim(hooks, 8_192, 8_192, "very-large backward-overlap Span.CopyTo");
+        if (!ReferenceEquals(overlap[1][0].First, first) ||
+            !ReferenceEquals(overlap[2][0].First, alternateFirst) ||
+            !ReferenceEquals(overlap[2][2047].Second, alternateFirst))
+        {
+            throw new InvalidOperationException("Very-large backward-overlap copy violated memmove semantics.");
+        }
+
+        ref object? forwardDestinationStart = ref overlap[0][0].First;
+        nuint forwardDestinationAddress = (nuint)Unsafe.AsPointer(ref forwardDestinationStart);
+        hooks.ResetRange(
+            forwardDestinationAddress,
+            destinationWordCount * 2,
+            workByte,
+            claimBits: true);
+        overlap.AsSpan(1, 2).CopyTo(overlap.AsSpan(0, 2));
+        AssertClaim(hooks, 8_192, 8_192, "very-large forward-overlap Span.CopyTo");
+        if (!ReferenceEquals(overlap[0][0].First, first) ||
+            !ReferenceEquals(overlap[1][0].First, alternateFirst) ||
+            !ReferenceEquals(overlap[1][2047].Second, alternateFirst))
+        {
+            throw new InvalidOperationException("Very-large forward-overlap copy violated memmove semantics.");
+        }
     }
 
     [MethodImpl(MethodImplOptions.NoInlining)]
@@ -1149,6 +1392,10 @@ internal static class Program
     [return: MarshalAs(UnmanagedType.I1)]
     private delegate bool InvokeEmptyRange(nuint destination);
 
+    private delegate void VeryLargeCopy(
+        ref VeryLargeMixedLayout destination,
+        ref VeryLargeMixedLayout source);
+
     private sealed record NativeHooks(
         GetCallCount CallCount,
         GetClobberMask ClobberMask,
@@ -1214,6 +1461,11 @@ internal sealed class LargeReferenceHolder
     public LargeMixedReferences Value;
 }
 
+internal sealed class VeryLargeReferenceHolder
+{
+    public VeryLargeMixedLayout Value;
+}
+
 internal struct MixedReferences
 {
     public object? First;
@@ -1255,4 +1507,10 @@ internal struct LargeMixedReferences
     public nuint Scalar14;
     public object? Sixteenth;
     public nuint Scalar15;
+}
+
+[InlineArray(2048)]
+internal struct VeryLargeMixedLayout
+{
+    private MixedReferences _element0;
 }

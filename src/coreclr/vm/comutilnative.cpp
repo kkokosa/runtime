@@ -526,18 +526,45 @@ FCIMPL5(
 }
 FCIMPLEND
 
-FCIMPL4(
+FCIMPL6(
     VOID,
     Buffer::BulkMoveValueClassWithOldValueWriteBarrier,
     void* dst,
     void* src,
     MethodTable* type,
-    size_t elementSize)
+    size_t elementSize,
+    size_t chunkOffset,
+    size_t chunkSize)
 {
     FCALL_CONTRACT;
 
-    BulkMoveWithOldValueWriteBarrierCore(
-        dst, src, type, elementSize, 1);
+    _ASSERTE(dst != nullptr);
+    _ASSERTE(src != nullptr);
+    _ASSERTE(dst != src);
+    _ASSERTE(chunkSize != 0);
+    _ASSERTE(chunkOffset <= elementSize);
+    _ASSERTE(chunkSize <= (elementSize - chunkOffset));
+    _ASSERTE(IS_ALIGNED(dst, sizeof(size_t)));
+    _ASSERTE(IS_ALIGNED(src, sizeof(size_t)));
+    _ASSERTE(IS_ALIGNED(chunkOffset, sizeof(size_t)));
+    _ASSERTE(IS_ALIGNED(chunkSize, sizeof(size_t)));
+
+    if (ErectWriteBarrierLayoutChunkPre(
+            dst, src, type, elementSize, chunkOffset, chunkSize))
+    {
+        if (reinterpret_cast<size_t>(dst) - reinterpret_cast<size_t>(src) >= chunkSize)
+        {
+            InlinedForwardGCSafeCopyHelper(dst, src, chunkSize);
+        }
+        else
+        {
+            InlinedBackwardGCSafeCopyHelper(dst, src, chunkSize);
+        }
+    }
+    else
+    {
+        InlinedMemmoveGCRefsHelper(dst, src, chunkSize);
+    }
 }
 FCIMPLEND
 
@@ -621,17 +648,33 @@ FCIMPL4(
 }
 FCIMPLEND
 
-FCIMPL3(
+FCIMPL5(
     VOID,
     Buffer::ClearValueClassWithOldValueWriteBarrier,
     void* dst,
     MethodTable* type,
-    size_t elementSize)
+    size_t elementSize,
+    size_t chunkOffset,
+    size_t chunkSize)
 {
     FCALL_CONTRACT;
 
-    ClearWithOldValueWriteBarrierCore(
-        dst, type, elementSize, 1);
+    _ASSERTE(dst != nullptr);
+    _ASSERTE(chunkSize != 0);
+    _ASSERTE(chunkOffset <= elementSize);
+    _ASSERTE(chunkSize <= (elementSize - chunkOffset));
+    _ASSERTE(IS_ALIGNED(dst, sizeof(size_t)));
+    _ASSERTE(IS_ALIGNED(chunkOffset, sizeof(size_t)));
+    _ASSERTE(IS_ALIGNED(chunkSize, sizeof(size_t)));
+
+    ErectWriteBarrierLayoutChunkPre(
+        dst, nullptr, type, elementSize, chunkOffset, chunkSize);
+    for (size_t offset = 0; offset < chunkSize; offset += sizeof(size_t))
+    {
+        VolatileStore(
+            reinterpret_cast<size_t*>(reinterpret_cast<uint8_t*>(dst) + offset),
+            static_cast<size_t>(0));
+    }
 }
 FCIMPLEND
 

@@ -22,12 +22,16 @@ public static class Program
             int clearLength = benchmark.ReferenceArrayClear();
             object fillValue = benchmark.ReferenceSpanFill();
             object structValue = benchmark.MixedStructCopy();
+            object veryLargeStructValue = benchmark.VeryLargeMixedStructCopy();
+            int veryLargeClearCount = benchmark.VeryLargeMixedStructClear();
             Console.WriteLine(
                 ReferenceEquals(fieldValue, arrayValue) &&
                 ReferenceEquals(arrayValue, copyValue) &&
                 ReferenceEquals(copyValue, fillValue) &&
                 ReferenceEquals(fillValue, structValue) &&
-                (clearLength == 16)
+                ReferenceEquals(structValue, veryLargeStructValue) &&
+                (clearLength == 16) &&
+                (veryLargeClearCount == 4096)
                     ? "PASS"
                     : "FAIL");
             return;
@@ -48,8 +52,10 @@ public class WriteBarrierBenchmark
     private readonly object[] _copySource = new object[16];
     private readonly object[] _copyDestination = new object[16];
     private readonly MixedHolder _mixedDestination = new();
+    private readonly VeryLargeMixedHolder _veryLargeMixedDestination = new();
     private object _value = null!;
     private MixedValue _mixedSource;
+    private VeryLargeMixedValue _veryLargeMixedSource;
 
     [GlobalSetup]
     public void Setup()
@@ -87,6 +93,17 @@ public class WriteBarrierBenchmark
             C14 = chunk,
             C15 = chunk,
         };
+
+        VeryLargeMixedElement veryLargeElement = new()
+        {
+            First = _value,
+            Scalar = 42,
+            Second = _value,
+        };
+        for (int index = 0; index < 2048; index++)
+        {
+            _veryLargeMixedSource[index] = veryLargeElement;
+        }
     }
 
     [Benchmark(OperationsPerInvoke = 16)]
@@ -169,6 +186,25 @@ public class WriteBarrierBenchmark
         return _mixedDestination.Value.C15.F3!;
     }
 
+    [Benchmark(OperationsPerInvoke = 4096)]
+    [MethodImpl(MethodImplOptions.NoInlining)]
+    public object VeryLargeMixedStructCopy()
+    {
+        _veryLargeMixedDestination.Value = _veryLargeMixedSource;
+        return _veryLargeMixedDestination.Value[2047].Second!;
+    }
+
+    [Benchmark(OperationsPerInvoke = 4096)]
+    [MethodImpl(MethodImplOptions.NoInlining)]
+    public int VeryLargeMixedStructClear()
+    {
+        _veryLargeMixedDestination.Value = default;
+        return (_veryLargeMixedDestination.Value[0].First is null) &&
+            (_veryLargeMixedDestination.Value[2047].Second is null)
+                ? 4096
+                : 0;
+    }
+
     private sealed class Fields
     {
         public object F00 = null!;
@@ -192,6 +228,11 @@ public class WriteBarrierBenchmark
     private sealed class MixedHolder
     {
         public MixedValue Value;
+    }
+
+    private sealed class VeryLargeMixedHolder
+    {
+        public VeryLargeMixedValue Value;
     }
 
     private struct MixedValue
@@ -224,5 +265,18 @@ public class WriteBarrierBenchmark
         public nuint S2;
         public object? F3;
         public nuint S3;
+    }
+
+    private struct VeryLargeMixedElement
+    {
+        public object? First;
+        public nuint Scalar;
+        public object? Second;
+    }
+
+    [InlineArray(2048)]
+    private struct VeryLargeMixedValue
+    {
+        private VeryLargeMixedElement _element0;
     }
 }
