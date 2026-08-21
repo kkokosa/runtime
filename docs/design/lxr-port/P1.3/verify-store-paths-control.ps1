@@ -102,8 +102,8 @@ try {
         'JIT layout clear helper'
     Invoke-Perturbation `
         'docs\design\lxr-port\P1.3\raw\benchmark-summary.csv' `
-        ',1.8734,' `
-        ',9.9999,' `
+        ',1.8734,ratio-of-means,0.1701,,,1.8734,' `
+        ',9.9999,ratio-of-means,0.1701,,,1.8734,' `
         'published benchmark ratio'
     Invoke-Perturbation `
         'src\coreclr\jit\lower.cpp' `
