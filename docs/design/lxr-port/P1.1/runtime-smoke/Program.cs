@@ -1006,7 +1006,8 @@ internal static class Program
     [MethodImpl(MethodImplOptions.NoInlining)]
     private static void StoreVeryLargeValueCold(
         VeryLargeReferenceHolder holder,
-        in VeryLargeMixedLayout value)
+        in VeryLargeMixedLayout value,
+        Action beforeStore)
     {
         try
         {
@@ -1014,12 +1015,15 @@ internal static class Program
         }
         catch (InvalidOperationException)
         {
+            beforeStore();
             holder.Value = value;
         }
     }
 
     [MethodImpl(MethodImplOptions.NoInlining)]
-    private static void ClearVeryLargeValueCold(VeryLargeReferenceHolder holder)
+    private static void ClearVeryLargeValueCold(
+        VeryLargeReferenceHolder holder,
+        Action beforeStore)
     {
         try
         {
@@ -1027,6 +1031,7 @@ internal static class Program
         }
         catch (InvalidOperationException)
         {
+            beforeStore();
             holder.Value = default;
         }
     }
@@ -1142,11 +1147,11 @@ internal static class Program
         ClearVeryLargeValueMinOpts(holder);
         AssertClaim(hooks, 4_096, 4_096, "very-large minopts mixed-layout clear");
 
-        hooks.ResetRange(destinationAddress, destinationWordCount, workByte, claimBits: true);
-        StoreVeryLargeValueCold(holder, in source);
+        Action resetColdRange = () =>
+            hooks.ResetRange(destinationAddress, destinationWordCount, workByte, claimBits: true);
+        StoreVeryLargeValueCold(holder, in source, resetColdRange);
         AssertClaim(hooks, 4_096, 4_096, "very-large cold mixed-layout copy");
-        hooks.ResetRange(destinationAddress, destinationWordCount, workByte, claimBits: true);
-        ClearVeryLargeValueCold(holder);
+        ClearVeryLargeValueCold(holder, resetColdRange);
         AssertClaim(hooks, 4_096, 4_096, "very-large cold mixed-layout clear");
 
         StoreVeryLargeValue(holder, in source);
