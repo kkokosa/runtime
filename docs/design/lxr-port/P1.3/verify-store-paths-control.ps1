@@ -167,8 +167,8 @@ try {
         'stack evidence scope'
     Invoke-Perturbation `
         'docs\design\lxr-port\P1.3\raw\reference-class-codegen.csv' `
-        'linux-x64-debug,1024,Object.MemberwiseClone' `
-        'linux-x64-debug,2048,Object.MemberwiseClone' `
+        'linux-x64-debug,Debug,D0E6886EAB3C637EB34129350C5668D2F4FA3F8C108BF2413AE3A22A9B5E8991,1024,Object.MemberwiseClone' `
+        'linux-x64-debug,Debug,D0E6886EAB3C637EB34129350C5668D2F4FA3F8C108BF2413AE3A22A9B5E8991,2048,Object.MemberwiseClone' `
         'MemberwiseClone Debug chunk size'
     Invoke-Perturbation `
         'docs\design\lxr-port\P1.3\raw\reference-class-codegen.csv' `
