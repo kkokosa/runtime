@@ -64,6 +64,7 @@ namespace System
                             ref Unsafe.AddByteOffset(ref destination, byteOffset),
                             ref Unsafe.AddByteOffset(ref source, byteOffset),
                             type,
+                            0,
                             elementSize);
                     }
                 }
@@ -76,6 +77,7 @@ namespace System
                             ref Unsafe.AddByteOffset(ref destination, byteOffset),
                             ref Unsafe.AddByteOffset(ref source, byteOffset),
                             type,
+                            0,
                             elementSize);
                     }
                 }
@@ -127,6 +129,7 @@ namespace System
             ref byte destination,
             ref byte source,
             MethodTable* type,
+            nuint gcLayoutOffset,
             nuint elementSize,
             nuint chunkOffset,
             nuint chunkSize);
@@ -135,6 +138,7 @@ namespace System
         private static extern unsafe void ClearValueClassWithOldValueWriteBarrierInternal(
             ref byte destination,
             MethodTable* type,
+            nuint gcLayoutOffset,
             nuint elementSize,
             nuint chunkOffset,
             nuint chunkSize);
@@ -143,6 +147,7 @@ namespace System
             ref byte destination,
             ref byte source,
             MethodTable* type,
+            nuint gcLayoutOffset,
             nuint elementSize)
         {
             Debug.Assert(elementSize != 0);
@@ -161,6 +166,7 @@ namespace System
                         ref Unsafe.AddByteOffset(ref destination, processed),
                         ref Unsafe.AddByteOffset(ref source, processed),
                         type,
+                        gcLayoutOffset,
                         elementSize,
                         processed,
                         chunkSize);
@@ -179,6 +185,7 @@ namespace System
                         ref Unsafe.AddByteOffset(ref destination, remaining),
                         ref Unsafe.AddByteOffset(ref source, remaining),
                         type,
+                        gcLayoutOffset,
                         elementSize,
                         remaining,
                         chunkSize);
@@ -190,6 +197,7 @@ namespace System
         internal static unsafe void ClearValueClassWithOldValueWriteBarrier(
             ref byte destination,
             MethodTable* type,
+            nuint gcLayoutOffset,
             nuint elementSize)
         {
             Debug.Assert(elementSize != 0);
@@ -201,6 +209,7 @@ namespace System
                 ClearValueClassWithOldValueWriteBarrierInternal(
                     ref Unsafe.AddByteOffset(ref destination, processed),
                     type,
+                    gcLayoutOffset,
                     elementSize,
                     processed,
                     chunkSize);
@@ -227,6 +236,7 @@ namespace System
                         ref Unsafe.AddByteOffset(ref destination, element * elementSize),
                         ref value,
                         type,
+                        0,
                         elementSize);
                 }
 
@@ -267,6 +277,7 @@ namespace System
                     ClearValueClassWithOldValueWriteBarrier(
                         ref Unsafe.AddByteOffset(ref destination, element * elementSize),
                         type,
+                        0,
                         elementSize);
                 }
 

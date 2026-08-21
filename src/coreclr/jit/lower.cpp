@@ -10393,11 +10393,14 @@ void Lowering::LowerBlockStoreAsGcBulkCopyCall(GenTreeBlk* blk)
     GenTreeCall* call;
     if (requiresOldValue)
     {
-        CORINFO_CLASS_HANDLE classHandle = blk->GetLayout()->GetClassHandle();
+        CORINFO_CLASS_HANDLE classHandle = blk->GetLayout()->GetGcLayoutClassHandle();
         assert(classHandle != NO_CLASS_HANDLE);
         call = m_compiler->gtNewHelperCallNode(CORINFO_HELP_BULK_WRITEBARRIER_WITH_LAYOUT, TYP_VOID, destPlaceholder,
                                                dataPlaceholder, m_compiler->gtNewIconEmbClsHndNode(classHandle),
-                                               sizePlaceholder);
+                                               m_compiler->gtNewIconNode(static_cast<ssize_t>(
+                                                                             blk->GetLayout()->GetGcLayoutOffset()),
+                                                                         TYP_I_IMPL));
+        call->gtArgs.PushBack(m_compiler, NewCallArg::Primitive(sizePlaceholder));
     }
     else
     {
@@ -10496,7 +10499,10 @@ void Lowering::LowerBlockStoreAsGcBulkClearCall(GenTreeBlk* blk)
     GenTree*     sizePlaceholder = m_compiler->gtNewZeroConNode(genActualType(size));
     GenTreeCall* call =
         m_compiler->gtNewHelperCallNode(CORINFO_HELP_BULK_WRITEBARRIER_CLEAR_WITH_LAYOUT, TYP_VOID, destPlaceholder,
-                                        m_compiler->gtNewIconEmbClsHndNode(blk->GetLayout()->GetClassHandle()),
+                                        m_compiler->gtNewIconEmbClsHndNode(blk->GetLayout()->GetGcLayoutClassHandle()),
+                                        m_compiler->gtNewIconNode(static_cast<ssize_t>(
+                                                                      blk->GetLayout()->GetGcLayoutOffset()),
+                                                                  TYP_I_IMPL),
                                         sizePlaceholder);
     m_compiler->fgMorphArgs(call);
 
@@ -10561,9 +10567,8 @@ bool Lowering::ShouldUseLayoutBulkHelper(GenTreeBlk* blk)
     ClassLayout*   layout                 = blk->GetLayout();
     GenTree*       source                 = blk->Data();
     const unsigned MaxUnrolledLayoutBytes = 16 * 1024;
-    if (layout->GetClassHandle() == NO_CLASS_HANDLE)
+    if (layout->GetGcLayoutClassHandle() == NO_CLASS_HANDLE)
     {
-        assert(!blk->IsOnHeapAndContainsReferences());
         return false;
     }
 

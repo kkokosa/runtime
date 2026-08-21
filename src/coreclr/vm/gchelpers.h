@@ -106,6 +106,7 @@ bool ErectWriteBarrierLayoutChunkPre(
     void* dst,
     const void* src,
     MethodTable* type,
+    size_t gcLayoutOffset,
     size_t elementSize,
     size_t chunkOffset,
     size_t chunkSize);

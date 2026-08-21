@@ -526,12 +526,13 @@ FCIMPL5(
 }
 FCIMPLEND
 
-FCIMPL6(
+FCIMPL7(
     VOID,
     Buffer::BulkMoveValueClassWithOldValueWriteBarrier,
     void* dst,
     void* src,
     MethodTable* type,
+    size_t gcLayoutOffset,
     size_t elementSize,
     size_t chunkOffset,
     size_t chunkSize)
@@ -541,6 +542,7 @@ FCIMPL6(
     _ASSERTE(dst != nullptr);
     _ASSERTE(src != nullptr);
     _ASSERTE(dst != src);
+    _ASSERTE(IS_ALIGNED(gcLayoutOffset, sizeof(size_t)));
     _ASSERTE(chunkSize != 0);
     _ASSERTE(chunkOffset <= elementSize);
     _ASSERTE(chunkSize <= (elementSize - chunkOffset));
@@ -550,7 +552,7 @@ FCIMPL6(
     _ASSERTE(IS_ALIGNED(chunkSize, sizeof(size_t)));
 
     if (ErectWriteBarrierLayoutChunkPre(
-            dst, src, type, elementSize, chunkOffset, chunkSize))
+            dst, src, type, gcLayoutOffset, elementSize, chunkOffset, chunkSize))
     {
         if (reinterpret_cast<size_t>(dst) - reinterpret_cast<size_t>(src) >= chunkSize)
         {
@@ -648,11 +650,12 @@ FCIMPL4(
 }
 FCIMPLEND
 
-FCIMPL5(
+FCIMPL6(
     VOID,
     Buffer::ClearValueClassWithOldValueWriteBarrier,
     void* dst,
     MethodTable* type,
+    size_t gcLayoutOffset,
     size_t elementSize,
     size_t chunkOffset,
     size_t chunkSize)
@@ -660,6 +663,7 @@ FCIMPL5(
     FCALL_CONTRACT;
 
     _ASSERTE(dst != nullptr);
+    _ASSERTE(IS_ALIGNED(gcLayoutOffset, sizeof(size_t)));
     _ASSERTE(chunkSize != 0);
     _ASSERTE(chunkOffset <= elementSize);
     _ASSERTE(chunkSize <= (elementSize - chunkOffset));
@@ -668,7 +672,7 @@ FCIMPL5(
     _ASSERTE(IS_ALIGNED(chunkSize, sizeof(size_t)));
 
     ErectWriteBarrierLayoutChunkPre(
-        dst, nullptr, type, elementSize, chunkOffset, chunkSize);
+        dst, nullptr, type, gcLayoutOffset, elementSize, chunkOffset, chunkSize);
     for (size_t offset = 0; offset < chunkSize; offset += sizeof(size_t))
     {
         VolatileStore(

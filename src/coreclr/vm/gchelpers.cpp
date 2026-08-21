@@ -1871,6 +1871,7 @@ bool ErectWriteBarrierLayoutChunkPre(
     void* dst,
     const void* src,
     MethodTable* type,
+    size_t gcLayoutOffset,
     size_t elementSize,
     size_t chunkOffset,
     size_t chunkSize)
@@ -1880,6 +1881,9 @@ bool ErectWriteBarrierLayoutChunkPre(
 #ifdef TARGET_AMD64
     _ASSERTE(type != nullptr);
     _ASSERTE(type->ContainsGCPointers());
+    _ASSERTE(gcLayoutOffset <= type->GetNumInstanceFieldBytesIfContainsGCPointers());
+    _ASSERTE(elementSize <=
+        (type->GetNumInstanceFieldBytesIfContainsGCPointers() - gcLayoutOffset));
     _ASSERTE(chunkSize != 0);
     _ASSERTE(chunkOffset <= elementSize);
     _ASSERTE(chunkSize <= (elementSize - chunkOffset));
@@ -1897,7 +1901,8 @@ bool ErectWriteBarrierLayoutChunkPre(
         return true;
     }
 
-    size_t chunkEnd = chunkOffset + chunkSize;
+    size_t chunkLayoutOffset = gcLayoutOffset + chunkOffset;
+    size_t chunkEnd = chunkLayoutOffset + chunkSize;
     CGCDesc* map = CGCDesc::GetCGCDescFromMT(type);
     const ptrdiff_t seriesCount = static_cast<ptrdiff_t>(map->GetNumSeries());
     _ASSERTE(seriesCount > 0);
@@ -1911,7 +1916,7 @@ bool ErectWriteBarrierLayoutChunkPre(
     {
         ptrdiff_t middle = low + ((high - low) / 2);
         size_t middleOffset = lowestOffsetSeries[-middle].GetSeriesOffset() - OBJECT_SIZE;
-        if (middleOffset < chunkOffset)
+        if (middleOffset < chunkLayoutOffset)
         {
             low = middle + 1;
         }
@@ -1927,7 +1932,7 @@ bool ErectWriteBarrierLayoutChunkPre(
         CGCDescSeries* previous = lowestOffsetSeries - (seriesIndex - 1);
         size_t previousOffset = previous->GetSeriesOffset() - OBJECT_SIZE;
         size_t previousSize = previous->GetSeriesSize() + type->GetBaseSize();
-        if ((previousOffset + previousSize) > chunkOffset)
+        if ((previousOffset + previousSize) > chunkLayoutOffset)
         {
             seriesIndex--;
         }
@@ -1940,18 +1945,19 @@ bool ErectWriteBarrierLayoutChunkPre(
         const size_t seriesSize = series->GetSeriesSize() + type->GetBaseSize();
         _ASSERTE(IS_ALIGNED(seriesOffset, sizeof(Object*)));
         _ASSERTE(IS_ALIGNED(seriesSize, sizeof(Object*)));
-        _ASSERTE((seriesOffset + seriesSize) <= elementSize);
+        _ASSERTE((seriesOffset + seriesSize) <=
+            type->GetNumInstanceFieldBytesIfContainsGCPointers());
         if (seriesOffset >= chunkEnd)
         {
             break;
         }
 
-        size_t start = (seriesOffset > chunkOffset) ? seriesOffset : chunkOffset;
+        size_t start = (seriesOffset > chunkLayoutOffset) ? seriesOffset : chunkLayoutOffset;
         size_t seriesEnd = seriesOffset + seriesSize;
         size_t end = (seriesEnd < chunkEnd) ? seriesEnd : chunkEnd;
         for (size_t offset = start; offset < end; offset += sizeof(Object*))
         {
-            size_t chunkRelativeOffset = offset - chunkOffset;
+            size_t chunkRelativeOffset = offset - chunkLayoutOffset;
             Object** destinationSlot =
                 reinterpret_cast<Object**>(reinterpret_cast<uint8_t*>(dst) + chunkRelativeOffset);
             Object* newReference = (src == nullptr)
@@ -1967,6 +1973,7 @@ bool ErectWriteBarrierLayoutChunkPre(
     UNREFERENCED_PARAMETER(dst);
     UNREFERENCED_PARAMETER(src);
     UNREFERENCED_PARAMETER(type);
+    UNREFERENCED_PARAMETER(gcLayoutOffset);
     UNREFERENCED_PARAMETER(elementSize);
     UNREFERENCED_PARAMETER(chunkOffset);
     UNREFERENCED_PARAMETER(chunkSize);
