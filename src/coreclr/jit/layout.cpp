@@ -12,30 +12,34 @@ struct CustomLayoutKey
     const BYTE*          GCPtrTypes;
     CORINFO_CLASS_HANDLE GcLayoutClassHandle;
     unsigned             GcLayoutOffset;
+    bool                 IsValueClass;
 
     CustomLayoutKey(ClassLayout* layout)
         : Size(layout->GetSize())
         , GCPtrTypes(layout->m_gcPtrCount > 0 ? layout->GetGCPtrs() : nullptr)
         , GcLayoutClassHandle(layout->GetGcLayoutClassHandle())
         , GcLayoutOffset(layout->m_gcLayoutOffset)
+        , IsValueClass(layout->IsValueClass())
     {
         assert(layout->IsCustomLayout());
     }
 
     CustomLayoutKey(const ClassLayoutBuilder& builder,
                     CORINFO_CLASS_HANDLE      gcLayoutClassHandle,
-                    unsigned                  gcLayoutOffset)
+                    unsigned                  gcLayoutOffset,
+                    bool                      isValueClass)
         : Size(builder.m_size)
         , GCPtrTypes(builder.m_gcPtrCount > 0 ? builder.m_gcPtrs : nullptr)
         , GcLayoutClassHandle(gcLayoutClassHandle)
         , GcLayoutOffset(gcLayoutOffset)
+        , IsValueClass(isValueClass)
     {
     }
 
     static bool Equals(const CustomLayoutKey& l, const CustomLayoutKey& r)
     {
         if ((l.Size != r.Size) || (l.GcLayoutClassHandle != r.GcLayoutClassHandle) ||
-            (l.GcLayoutOffset != r.GcLayoutOffset))
+            (l.GcLayoutOffset != r.GcLayoutOffset) || (l.IsValueClass != r.IsValueClass))
         {
             return false;
         }
@@ -59,6 +63,7 @@ struct CustomLayoutKey
         hash ^= static_cast<unsigned>(reinterpret_cast<uintptr_t>(key.GcLayoutClassHandle)) + 0x9e3779b9 +
                 (hash << 19) + (hash >> 13);
         hash ^= key.GcLayoutOffset + 0x9e3779b9 + (hash << 19) + (hash >> 13);
+        hash ^= static_cast<unsigned>(key.IsValueClass) + 0x9e3779b9 + (hash << 19) + (hash >> 13);
         if (key.GCPtrTypes != nullptr)
         {
             hash ^= 0xc4cfbb2a + (hash << 19) + (hash >> 13);
@@ -148,28 +153,32 @@ public:
     ClassLayout* GetCustomLayout(Compiler*                 compiler,
                                  const ClassLayoutBuilder& builder,
                                  CORINFO_CLASS_HANDLE      gcLayoutClassHandle,
-                                 unsigned                  gcLayoutOffset)
+                                 unsigned                  gcLayoutOffset,
+                                 bool                      isValueClass)
     {
         if (builder.m_size == 0)
         {
             return &m_zeroSizedBlockLayout;
         }
 
-        return GetLayoutByIndex(GetCustomLayoutIndex(compiler, builder, gcLayoutClassHandle, gcLayoutOffset));
+        return GetLayoutByIndex(
+            GetCustomLayoutIndex(compiler, builder, gcLayoutClassHandle, gcLayoutOffset, isValueClass));
     }
 
     // Get a number that uniquely identifies a layout having the specified size but no class handle.
     unsigned GetCustomLayoutNum(Compiler*                 compiler,
                                 const ClassLayoutBuilder& builder,
                                 CORINFO_CLASS_HANDLE      gcLayoutClassHandle,
-                                unsigned                  gcLayoutOffset)
+                                unsigned                  gcLayoutOffset,
+                                bool                      isValueClass)
     {
         if (builder.m_size == 0)
         {
             return ZeroSizedBlockLayoutNum;
         }
 
-        return GetCustomLayoutIndex(compiler, builder, gcLayoutClassHandle, gcLayoutOffset) + FirstLayoutNum;
+        return GetCustomLayoutIndex(compiler, builder, gcLayoutClassHandle, gcLayoutOffset, isValueClass) +
+               FirstLayoutNum;
     }
 
     // Get the layout for the specified class handle.
@@ -235,12 +244,13 @@ private:
     unsigned GetCustomLayoutIndex(Compiler*                 compiler,
                                   const ClassLayoutBuilder& builder,
                                   CORINFO_CLASS_HANDLE      gcLayoutClassHandle,
-                                  unsigned                  gcLayoutOffset)
+                                  unsigned                  gcLayoutOffset,
+                                  bool                      isValueClass)
     {
         // The 0-sized layout has its own fast path.
         assert(builder.m_size != 0);
 
-        CustomLayoutKey key(builder, gcLayoutClassHandle, gcLayoutOffset);
+        CustomLayoutKey key(builder, gcLayoutClassHandle, gcLayoutOffset, isValueClass);
 
         if (HasSmallCapacity())
         {
@@ -262,7 +272,8 @@ private:
             }
         }
 
-        return AddCustomLayout(compiler, ClassLayout::Create(compiler, builder, gcLayoutClassHandle, gcLayoutOffset));
+        return AddCustomLayout(compiler, ClassLayout::Create(compiler, builder, gcLayoutClassHandle, gcLayoutOffset,
+                                                             isValueClass));
     }
 
     unsigned AddCustomLayout(Compiler* compiler, ClassLayout* layout)
@@ -417,16 +428,19 @@ ClassLayout* Compiler::typGetObjLayout(CORINFO_CLASS_HANDLE classHandle)
 
 unsigned Compiler::typGetCustomLayoutNum(const ClassLayoutBuilder& builder,
                                          CORINFO_CLASS_HANDLE      gcLayoutClassHandle,
-                                         unsigned                  gcLayoutOffset)
+                                         unsigned                  gcLayoutOffset,
+                                         bool                      isValueClass)
 {
-    return typGetClassLayoutTable()->GetCustomLayoutNum(this, builder, gcLayoutClassHandle, gcLayoutOffset);
+    return typGetClassLayoutTable()->GetCustomLayoutNum(this, builder, gcLayoutClassHandle, gcLayoutOffset,
+                                                        isValueClass);
 }
 
 ClassLayout* Compiler::typGetCustomLayout(const ClassLayoutBuilder& builder,
                                           CORINFO_CLASS_HANDLE      gcLayoutClassHandle,
-                                          unsigned                  gcLayoutOffset)
+                                          unsigned                  gcLayoutOffset,
+                                          bool                      isValueClass)
 {
-    return typGetClassLayoutTable()->GetCustomLayout(this, builder, gcLayoutClassHandle, gcLayoutOffset);
+    return typGetClassLayoutTable()->GetCustomLayout(this, builder, gcLayoutClassHandle, gcLayoutOffset, isValueClass);
 }
 
 unsigned Compiler::typGetBlkLayoutNum(unsigned blockSize)
@@ -561,10 +575,11 @@ ClassLayout* ClassLayout::Create(Compiler* compiler, CORINFO_CLASS_HANDLE classH
 ClassLayout* ClassLayout::Create(Compiler*                 compiler,
                                  const ClassLayoutBuilder& builder,
                                  CORINFO_CLASS_HANDLE      gcLayoutClassHandle,
-                                 unsigned                  gcLayoutOffset)
+                                 unsigned                  gcLayoutOffset,
+                                 bool                      isValueClass)
 {
     ClassLayout* newLayout =
-        new (compiler, CMK_ClassLayout) ClassLayout(builder.m_size, gcLayoutClassHandle, gcLayoutOffset);
+        new (compiler, CMK_ClassLayout) ClassLayout(builder.m_size, gcLayoutClassHandle, gcLayoutOffset, isValueClass);
     newLayout->m_gcPtrCount = builder.m_gcPtrCount;
     newLayout->m_nonPadding = builder.m_nonPadding;
 
@@ -785,7 +800,7 @@ ClassLayout* ClassLayout::SliceLayout(Compiler* compiler, unsigned offset, unsig
 
         builder.RemovePadding(SegmentList::Segment(start, end));
     }
-    return compiler->typGetCustomLayout(builder, gcLayoutClassHandle, gcLayoutOffset);
+    return compiler->typGetCustomLayout(builder, gcLayoutClassHandle, gcLayoutOffset, IsValueClass());
 }
 
 //------------------------------------------------------------------------

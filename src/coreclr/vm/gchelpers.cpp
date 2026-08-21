@@ -1880,6 +1880,7 @@ bool ErectWriteBarrierLayoutChunkPre(
 
 #ifdef TARGET_AMD64
     _ASSERTE(type != nullptr);
+    _ASSERTE(type->IsValueType());
     _ASSERTE(type->ContainsGCPointers());
     _ASSERTE(gcLayoutOffset <= type->GetNumInstanceFieldBytesIfContainsGCPointers());
     _ASSERTE(elementSize <=

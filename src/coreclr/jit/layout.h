@@ -102,10 +102,13 @@ private:
     friend class ClassLayoutBuilder;
     friend struct CustomLayoutKey;
 
-    ClassLayout(unsigned size, CORINFO_CLASS_HANDLE gcLayoutClassHandle = NO_CLASS_HANDLE, unsigned gcLayoutOffset = 0)
+    ClassLayout(unsigned             size,
+                CORINFO_CLASS_HANDLE gcLayoutClassHandle = NO_CLASS_HANDLE,
+                unsigned             gcLayoutOffset      = 0,
+                bool                 isValueClass        = false)
         : m_classHandle(gcLayoutClassHandle)
         , m_size(size)
-        , m_isValueClass(false)
+        , m_isValueClass(isValueClass)
         , m_isCustomLayout(true)
         , m_gcPtrCount(0)
         , m_gcPtrs(nullptr)
@@ -122,7 +125,8 @@ private:
     static ClassLayout* Create(Compiler*                 compiler,
                                const ClassLayoutBuilder& builder,
                                CORINFO_CLASS_HANDLE      gcLayoutClassHandle,
-                               unsigned                  gcLayoutOffset);
+                               unsigned                  gcLayoutOffset,
+                               bool                      isValueClass);
 
     ClassLayout(CORINFO_CLASS_HANDLE classHandle,
                 bool                 isValueClass,

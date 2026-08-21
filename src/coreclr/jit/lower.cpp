@@ -10567,7 +10567,7 @@ bool Lowering::ShouldUseLayoutBulkHelper(GenTreeBlk* blk)
     ClassLayout*   layout                 = blk->GetLayout();
     GenTree*       source                 = blk->Data();
     const unsigned MaxUnrolledLayoutBytes = 16 * 1024;
-    if (layout->GetGcLayoutClassHandle() == NO_CLASS_HANDLE)
+    if (!layout->IsValueClass() || (layout->GetGcLayoutClassHandle() == NO_CLASS_HANDLE))
     {
         return false;
     }

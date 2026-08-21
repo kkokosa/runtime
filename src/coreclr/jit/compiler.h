@@ -12044,10 +12044,12 @@ public:
     unsigned     typGetObjLayoutNum(CORINFO_CLASS_HANDLE classHandle);
     ClassLayout* typGetCustomLayout(const ClassLayoutBuilder& builder,
                                     CORINFO_CLASS_HANDLE      gcLayoutClassHandle = NO_CLASS_HANDLE,
-                                    unsigned                  gcLayoutOffset      = 0);
+                                    unsigned                  gcLayoutOffset      = 0,
+                                    bool                      isValueClass        = false);
     unsigned     typGetCustomLayoutNum(const ClassLayoutBuilder& builder,
                                        CORINFO_CLASS_HANDLE      gcLayoutClassHandle = NO_CLASS_HANDLE,
-                                       unsigned                  gcLayoutOffset      = 0);
+                                       unsigned                  gcLayoutOffset      = 0,
+                                       bool                      isValueClass        = false);
     // Get the layout having the specified size but no class handle.
     ClassLayout* typGetBlkLayout(unsigned blockSize);
     // Get the number of a layout having the specified size but no class handle.

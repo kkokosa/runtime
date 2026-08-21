@@ -11,6 +11,9 @@ internal static class Program
 {
     private const MethodImplOptions OptimizedNoInlining =
         MethodImplOptions.AggressiveOptimization | MethodImplOptions.NoInlining;
+    private static readonly object s_stackFirst = new();
+    private static readonly object s_stackSecond = new();
+    private static volatile int s_stackIndex = 64;
 
     private static int Main()
     {
@@ -18,6 +21,16 @@ internal static class Program
         bool expectClobber = Environment.GetEnvironmentVariable("P11_EXPECT_CLOBBER") == "1";
         bool expectSlotLog = Environment.GetEnvironmentVariable("P12_EXPECT_SLOT_LOG") == "1";
         NativeHooks? nativeHooks = expectStandardAbi ? LoadNativeHooks() : null;
+
+        if (Environment.GetEnvironmentVariable("P13_REF_CLASS_LAYOUT_ONLY") == "1")
+        {
+            if (!ExerciseStackAllocatedReferenceClass())
+            {
+                throw new InvalidOperationException("A stack-allocated reference-class layout lost a value.");
+            }
+            Console.WriteLine("PASS: stack-allocated reference-class layout");
+            return 0;
+        }
 
         if (Environment.GetEnvironmentVariable("P12_INTERPRETER_SURFACES") == "1")
         {
@@ -296,6 +309,25 @@ internal static class Program
         {
             throw new InvalidOperationException("Mixed-reference fill produced an unexpected value.");
         }
+    }
+
+    [MethodImpl(OptimizedNoInlining)]
+    private static bool ExerciseStackAllocatedReferenceClass()
+    {
+        StackReferenceLayout holder = new(s_stackFirst, s_stackSecond);
+        ref object? firstField = ref holder.F000;
+        for (int index = 1; index < 127; index++)
+        {
+            if (index != s_stackIndex)
+            {
+                Volatile.Write(ref Unsafe.Add(ref firstField, index), null);
+            }
+        }
+        GC.Collect();
+
+        return ReferenceEquals(holder.F000, s_stackFirst) &&
+            ReferenceEquals(holder.F127, s_stackSecond) &&
+            (Volatile.Read(ref Unsafe.Add(ref firstField, s_stackIndex)) is null);
     }
 
     [MethodImpl(OptimizedNoInlining)]
@@ -1526,6 +1558,146 @@ internal sealed class VeryLargeReferenceHolder
 {
     public VeryLargeMixedLayout Value;
 }
+
+#pragma warning disable CS0649
+internal sealed class StackReferenceLayout
+{
+    public object? F000;
+    public object? F001;
+    public object? F002;
+    public object? F003;
+    public object? F004;
+    public object? F005;
+    public object? F006;
+    public object? F007;
+    public object? F008;
+    public object? F009;
+    public object? F010;
+    public object? F011;
+    public object? F012;
+    public object? F013;
+    public object? F014;
+    public object? F015;
+    public object? F016;
+    public object? F017;
+    public object? F018;
+    public object? F019;
+    public object? F020;
+    public object? F021;
+    public object? F022;
+    public object? F023;
+    public object? F024;
+    public object? F025;
+    public object? F026;
+    public object? F027;
+    public object? F028;
+    public object? F029;
+    public object? F030;
+    public object? F031;
+    public object? F032;
+    public object? F033;
+    public object? F034;
+    public object? F035;
+    public object? F036;
+    public object? F037;
+    public object? F038;
+    public object? F039;
+    public object? F040;
+    public object? F041;
+    public object? F042;
+    public object? F043;
+    public object? F044;
+    public object? F045;
+    public object? F046;
+    public object? F047;
+    public object? F048;
+    public object? F049;
+    public object? F050;
+    public object? F051;
+    public object? F052;
+    public object? F053;
+    public object? F054;
+    public object? F055;
+    public object? F056;
+    public object? F057;
+    public object? F058;
+    public object? F059;
+    public object? F060;
+    public object? F061;
+    public object? F062;
+    public object? F063;
+    public object? F064;
+    public object? F065;
+    public object? F066;
+    public object? F067;
+    public object? F068;
+    public object? F069;
+    public object? F070;
+    public object? F071;
+    public object? F072;
+    public object? F073;
+    public object? F074;
+    public object? F075;
+    public object? F076;
+    public object? F077;
+    public object? F078;
+    public object? F079;
+    public object? F080;
+    public object? F081;
+    public object? F082;
+    public object? F083;
+    public object? F084;
+    public object? F085;
+    public object? F086;
+    public object? F087;
+    public object? F088;
+    public object? F089;
+    public object? F090;
+    public object? F091;
+    public object? F092;
+    public object? F093;
+    public object? F094;
+    public object? F095;
+    public object? F096;
+    public object? F097;
+    public object? F098;
+    public object? F099;
+    public object? F100;
+    public object? F101;
+    public object? F102;
+    public object? F103;
+    public object? F104;
+    public object? F105;
+    public object? F106;
+    public object? F107;
+    public object? F108;
+    public object? F109;
+    public object? F110;
+    public object? F111;
+    public object? F112;
+    public object? F113;
+    public object? F114;
+    public object? F115;
+    public object? F116;
+    public object? F117;
+    public object? F118;
+    public object? F119;
+    public object? F120;
+    public object? F121;
+    public object? F122;
+    public object? F123;
+    public object? F124;
+    public object? F125;
+    public object? F126;
+    public object? F127;
+
+    public StackReferenceLayout(object first, object second)
+    {
+        F000 = first;
+        F127 = second;
+    }
+}
+#pragma warning restore CS0649
 
 internal struct MixedReferences
 {
