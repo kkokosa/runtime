@@ -1587,22 +1587,121 @@ HCIMPLEND_RAW
 
 #include <optsmallperfcritical.h>
 
+WriteBarrierBulkAction ClassifyWriteBarrierBulk(void* destination, size_t byteCount)
+{
+    LIMITED_METHOD_CONTRACT;
+
+#ifdef TARGET_AMD64
+    if (g_SlotLogWriteBarrierSlowPath == nullptr)
+    {
+        return WriteBarrierBulkAction::CardTable;
+    }
+
+    if (byteCount == 0)
+    {
+        return WriteBarrierBulkAction::AllClaimed;
+    }
+
+    uintptr_t start = reinterpret_cast<uintptr_t>(destination);
+    uintptr_t heapStart = reinterpret_cast<uintptr_t>(g_lowest_address);
+    uintptr_t heapEnd = reinterpret_cast<uintptr_t>(g_highest_address);
+    if ((start < heapStart) || (start >= heapEnd))
+    {
+        return WriteBarrierBulkAction::CardTable;
+    }
+
+    _ASSERTE(byteCount <= (heapEnd - start));
+    if (byteCount > (heapEnd - start))
+    {
+        return WriteBarrierBulkAction::NeedsSlowPath;
+    }
+
+#ifdef FEATURE_USE_SOFTWARE_WRITE_WATCH_FOR_GC_HEAP
+    if (GCHeapUtilities::SoftwareWriteWatchIsEnabled())
+    {
+        GCHeapUtilities::SoftwareWriteWatchSetDirtyRegion(destination, byteCount);
+    }
+#endif // FEATURE_USE_SOFTWARE_WRITE_WATCH_FOR_GC_HEAP
+
+    const WriteBarrierSideMetadataParameters& metadata = g_SlotLogWriteBarrierMetadata;
+    const WriteBarrierBulkScanParameters& bulkScan = g_SlotLogWriteBarrierBulkScan;
+    const uintptr_t WordBytes = sizeof(uintptr_t);
+    const uintptr_t WordBits = WordBytes * 8;
+    const uintptr_t WordMask = WordBytes - 1;
+    uintptr_t end = start + byteCount - 1;
+    uint8_t metadataByteShift = static_cast<uint8_t>(metadata.granularity_shift + 3);
+    uintptr_t metadataBase = reinterpret_cast<uintptr_t>(metadata.metadata_base);
+    uintptr_t firstMetadataByte = metadataBase + (start >> metadataByteShift);
+    uintptr_t lastMetadataByte = metadataBase + (end >> metadataByteShift);
+    uintptr_t firstMetadataWord = firstMetadataByte & ~WordMask;
+    uintptr_t lastMetadataWord = lastMetadataByte & ~WordMask;
+    uintptr_t metadataStorageStart = reinterpret_cast<uintptr_t>(bulkScan.metadata_start);
+    uintptr_t metadataStorageEnd = metadataStorageStart + bulkScan.metadata_size;
+
+    _ASSERTE((firstMetadataWord >= metadataStorageStart) &&
+             (lastMetadataWord < metadataStorageEnd));
+    if ((firstMetadataWord < metadataStorageStart) ||
+        (lastMetadataWord >= metadataStorageEnd))
+    {
+        return WriteBarrierBulkAction::NeedsSlowPath;
+    }
+
+    uintptr_t firstBit =
+        ((firstMetadataByte & WordMask) * 8) +
+        ((start >> metadata.granularity_shift) & 7);
+    uintptr_t lastBit =
+        ((lastMetadataByte & WordMask) * 8) +
+        ((end >> metadata.granularity_shift) & 7);
+
+    for (uintptr_t metadataWord = firstMetadataWord;
+         metadataWord <= lastMetadataWord;
+         metadataWord += WordBytes)
+    {
+        uintptr_t activeMask = UINTPTR_MAX;
+        if (metadataWord == firstMetadataWord)
+        {
+            activeMask <<= firstBit;
+        }
+        if ((metadataWord == lastMetadataWord) && (lastBit != (WordBits - 1)))
+        {
+            activeMask &= (static_cast<uintptr_t>(1) << (lastBit + 1)) - 1;
+        }
+
+        uintptr_t workBits =
+            VolatileLoad(reinterpret_cast<uintptr_t const volatile*>(metadataWord));
+        if (metadata.bit_meaning == WriteBarrierMetadataBitMeaning::WorkWhenBitIsClear)
+        {
+            workBits = ~workBits;
+        }
+
+        if ((workBits & activeMask) != 0)
+        {
+            return WriteBarrierBulkAction::NeedsSlowPath;
+        }
+
+        firstBit = 0;
+    }
+
+    return WriteBarrierBulkAction::AllClaimed;
+#else
+    UNREFERENCED_PARAMETER(destination);
+    UNREFERENCED_PARAMETER(byteCount);
+    return WriteBarrierBulkAction::CardTable;
+#endif // TARGET_AMD64
+}
+
 bool ErectWriteBarrierPre(Object** dst, Object* ref)
 {
     LIMITED_METHOD_CONTRACT;
 
 #ifdef TARGET_AMD64
-    WriteBarrierSlowPath slowPath = g_SlotLogWriteBarrierSlowPath;
-    uint8_t* address = reinterpret_cast<uint8_t*>(dst);
-    if ((slowPath != nullptr) && (address >= g_lowest_address) && (address < g_highest_address))
+    WriteBarrierBulkAction action = ClassifyWriteBarrierBulk(dst, sizeof(*dst));
+    if (action != WriteBarrierBulkAction::CardTable)
     {
-#ifdef FEATURE_USE_SOFTWARE_WRITE_WATCH_FOR_GC_HEAP
-        if (GCHeapUtilities::SoftwareWriteWatchIsEnabled())
+        if (action == WriteBarrierBulkAction::NeedsSlowPath)
         {
-            GCHeapUtilities::SoftwareWriteWatchSetDirty(dst, sizeof(*dst));
+            g_SlotLogWriteBarrierSlowPath(dst, VolatileLoad(dst), ref);
         }
-#endif // FEATURE_USE_SOFTWARE_WRITE_WATCH_FOR_GC_HEAP
-        slowPath(dst, VolatileLoad(dst), ref);
         return true;
     }
     return false;
@@ -1618,21 +1717,15 @@ bool ErectWriteBarrierRangePre(Object** dst, Object** src, size_t referenceCount
     LIMITED_METHOD_CONTRACT;
 
 #ifdef TARGET_AMD64
-    WriteBarrierRangeSlowPath slowPath = g_SlotLogWriteBarrierRangeSlowPath;
-    if (slowPath != nullptr)
+    _ASSERTE(referenceCount <= (SIZE_T_MAX / sizeof(Object*)));
+    WriteBarrierBulkAction action =
+        ClassifyWriteBarrierBulk(dst, referenceCount * sizeof(Object*));
+    if (action != WriteBarrierBulkAction::CardTable)
     {
-        if (referenceCount == 0)
+        if (action == WriteBarrierBulkAction::NeedsSlowPath)
         {
-            return true;
+            g_SlotLogWriteBarrierRangeSlowPath(dst, src, referenceCount);
         }
-
-#ifdef FEATURE_USE_SOFTWARE_WRITE_WATCH_FOR_GC_HEAP
-        if (GCHeapUtilities::SoftwareWriteWatchIsEnabled())
-        {
-            GCHeapUtilities::SoftwareWriteWatchSetDirtyRegion(dst, referenceCount * sizeof(Object*));
-        }
-#endif // FEATURE_USE_SOFTWARE_WRITE_WATCH_FOR_GC_HEAP
-        slowPath(dst, src, referenceCount);
         return true;
     }
     return false;
@@ -1651,30 +1744,57 @@ extern "C" DLLEXPORT bool GC_WriteBarrierTest_InvokeEmptyRange(uintptr_t destina
 }
 #endif
 
-bool ErectWriteBarrierLayoutRangePre(
-    void* dst, const void* src, MethodTable* type, size_t elementSize, size_t elementCount)
+static bool ErectWriteBarrierLayoutRangePreCore(
+    void* dst,
+    const void* src,
+    MethodTable* type,
+    size_t elementSize,
+    size_t elementCount,
+    bool repeatSource)
 {
     LIMITED_METHOD_CONTRACT;
 
 #ifdef TARGET_AMD64
-    uint8_t* destination = reinterpret_cast<uint8_t*>(dst);
-    if ((g_SlotLogWriteBarrierSlowPath == nullptr) ||
-        (destination < g_lowest_address) ||
-        (destination >= g_highest_address))
-    {
-        return false;
-    }
+    _ASSERTE(elementSize != 0);
+    _ASSERTE(elementCount <= (SIZE_T_MAX / elementSize));
 
     if (type == nullptr)
     {
         _ASSERTE(elementSize == sizeof(Object*));
+        if (repeatSource)
+        {
+            WriteBarrierBulkAction action =
+                ClassifyWriteBarrierBulk(dst, elementSize * elementCount);
+            if (action == WriteBarrierBulkAction::CardTable)
+            {
+                return false;
+            }
+            if (action == WriteBarrierBulkAction::NeedsSlowPath)
+            {
+                Object* newReference =
+                    VolatileLoad(reinterpret_cast<Object* const*>(src));
+                Object** destination = reinterpret_cast<Object**>(dst);
+                for (size_t element = 0; element < elementCount; element++)
+                {
+                    ErectWriteBarrierPre(destination + element, newReference);
+                }
+            }
+            return true;
+        }
+
         return ErectWriteBarrierRangePre(
             reinterpret_cast<Object**>(dst),
             reinterpret_cast<Object**>(const_cast<void*>(src)),
             elementCount);
     }
 
-    if (elementCount == 0)
+    WriteBarrierBulkAction action =
+        ClassifyWriteBarrierBulk(dst, elementSize * elementCount);
+    if (action == WriteBarrierBulkAction::CardTable)
+    {
+        return false;
+    }
+    if (action == WriteBarrierBulkAction::AllClaimed)
     {
         return true;
     }
@@ -1688,9 +1808,12 @@ bool ErectWriteBarrierLayoutRangePre(
 
     for (size_t element = 0; element < elementCount; element++)
     {
-        uint8_t* destinationElement = destination + (element * elementSize);
+        uint8_t* destinationElement =
+            reinterpret_cast<uint8_t*>(dst) + (element * elementSize);
         const uint8_t* sourceElement =
-            (src == nullptr) ? nullptr : reinterpret_cast<const uint8_t*>(src) + (element * elementSize);
+            (src == nullptr)
+                ? nullptr
+                : reinterpret_cast<const uint8_t*>(src) + (repeatSource ? 0 : (element * elementSize));
         CGCDescSeries* series = map->GetLowestSeries();
 
         for (ptrdiff_t seriesIndex = 0; seriesIndex < seriesCount; seriesIndex++, series++)
@@ -1720,8 +1843,28 @@ bool ErectWriteBarrierLayoutRangePre(
     UNREFERENCED_PARAMETER(type);
     UNREFERENCED_PARAMETER(elementSize);
     UNREFERENCED_PARAMETER(elementCount);
+    UNREFERENCED_PARAMETER(repeatSource);
     return false;
 #endif // TARGET_AMD64
+}
+
+bool ErectWriteBarrierLayoutRangePre(
+    void* dst, const void* src, MethodTable* type, size_t elementSize, size_t elementCount)
+{
+    LIMITED_METHOD_CONTRACT;
+
+    return ErectWriteBarrierLayoutRangePreCore(
+        dst, src, type, elementSize, elementCount, false);
+}
+
+bool ErectWriteBarrierLayoutFillPre(
+    void* dst, const void* value, MethodTable* type, size_t elementSize, size_t elementCount)
+{
+    LIMITED_METHOD_CONTRACT;
+
+    _ASSERTE(value != nullptr);
+    return ErectWriteBarrierLayoutRangePreCore(
+        dst, value, type, elementSize, elementCount, true);
 }
 
 void ErectWriteBarrierDependentEdgePre(void* dst, Object* oldRef, Object* newRef)

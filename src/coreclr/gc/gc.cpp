@@ -673,6 +673,8 @@ HRESULT stomp_write_barrier_initialize(uint8_t* ephemeral_low, uint8_t* ephemera
     args.write_barrier_range_slow_path = GetWriteBarrierTestRangeSlowPath();
     args.write_barrier_dependent_edge_slow_path = GetWriteBarrierTestDependentEdgeSlowPath();
     args.write_barrier_epoch_reset = GetWriteBarrierTestEpochReset();
+    args.write_barrier_bulk_scan.metadata_start = GetWriteBarrierTestMetadataStart();
+    args.write_barrier_bulk_scan.metadata_size = GetWriteBarrierTestMetadataSize();
 #endif
     args.write_barrier_side_metadata.granularity_shift = writeBarrierTestGranularityShift;
     args.write_barrier_side_metadata.bit_meaning =
@@ -691,6 +693,12 @@ HRESULT stomp_write_barrier_initialize(uint8_t* ephemeral_low, uint8_t* ephemera
             break;
         case 4:
             args.write_barrier_side_metadata.bit_meaning = static_cast<WriteBarrierMetadataBitMeaning>(2);
+            break;
+        case 5:
+            args.write_barrier_bulk_scan.metadata_start = nullptr;
+            break;
+        case 6:
+            args.write_barrier_bulk_scan.metadata_size--;
             break;
     }
 #else

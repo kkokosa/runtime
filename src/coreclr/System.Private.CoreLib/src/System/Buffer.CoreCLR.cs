@@ -20,6 +20,14 @@ namespace System
             nuint elementCount);
 
         [MethodImpl(MethodImplOptions.InternalCall)]
+        private static extern unsafe void BulkFillWithOldValueWriteBarrierInternal(
+            ref byte destination,
+            ref byte value,
+            MethodTable* type,
+            nuint elementSize,
+            nuint elementCount);
+
+        [MethodImpl(MethodImplOptions.InternalCall)]
         private static extern void BulkMoveWithWriteBarrierInternal(ref byte destination, ref byte source, nuint byteCount);
 
         [MethodImpl(MethodImplOptions.InternalCall)]
@@ -84,6 +92,50 @@ namespace System
                         chunk);
                     Thread.FastPollGC();
                 }
+            }
+        }
+
+        [MethodImpl(MethodImplOptions.InternalCall)]
+        internal static extern unsafe void BulkMoveValueClassWithOldValueWriteBarrier(
+            ref byte destination,
+            ref byte source,
+            MethodTable* type,
+            nuint elementSize);
+
+        [MethodImpl(MethodImplOptions.InternalCall)]
+        internal static extern unsafe void ClearValueClassWithOldValueWriteBarrier(
+            ref byte destination,
+            MethodTable* type,
+            nuint elementSize);
+
+        internal static unsafe void BulkFillWithOldValueWriteBarrier(
+            ref byte destination,
+            ref byte value,
+            MethodTable* type,
+            nuint elementSize,
+            nuint elementCount)
+        {
+            Debug.Assert(elementSize != 0);
+            Debug.Assert(elementCount <= (nuint.MaxValue / elementSize));
+
+            nuint elementsPerChunk = BulkMoveWithWriteBarrierChunk / elementSize;
+            if (elementsPerChunk == 0)
+            {
+                elementsPerChunk = 1;
+            }
+
+            nuint processed = 0;
+            while (processed < elementCount)
+            {
+                nuint chunk = Math.Min(elementsPerChunk, elementCount - processed);
+                BulkFillWithOldValueWriteBarrierInternal(
+                    ref Unsafe.AddByteOffset(ref destination, processed * elementSize),
+                    ref value,
+                    type,
+                    elementSize,
+                    chunk);
+                processed += chunk;
+                Thread.FastPollGC();
             }
         }
 

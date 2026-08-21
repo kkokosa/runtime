@@ -11,11 +11,12 @@
 // The minor version of the IGCHeap interface. Non-breaking changes are required
 // to bump the minor version number. GCs and EEs with minor version number
 // mismatches can still interoperate correctly, with some care.
-#define GC_INTERFACE_MINOR_VERSION 11
+#define GC_INTERFACE_MINOR_VERSION 12
 
 #define GC_WRITE_BARRIER_SHAPE_INTERFACE_MINOR_VERSION 9
 #define GC_WRITE_BARRIER_COMPLETE_STORE_INTERFACE_MINOR_VERSION 10
 #define GC_WRITE_BARRIER_EPOCH_RESET_INTERFACE_MINOR_VERSION 11
+#define GC_WRITE_BARRIER_BULK_SCAN_INTERFACE_MINOR_VERSION 12
 
 // The major version of the IGCToCLR interface. Breaking changes to this interface
 // require bumps in the major version number.
@@ -127,6 +128,15 @@ struct WriteBarrierSideMetadataParameters
     WriteBarrierMetadataBitMeaning bit_meaning;
 };
 
+struct WriteBarrierBulkScanParameters
+{
+    // The native-word-aligned storage that backs metadata_base for the entire
+    // managed heap. Claims must transition atomically from work to claimed,
+    // and resets must occur only while mutators are suspended.
+    uint8_t* metadata_start;
+    size_t metadata_size;
+};
+
 // Arguments to GCToEEInterface::StompWriteBarrier
 struct WriteBarrierParameters
 {
@@ -206,6 +216,10 @@ struct WriteBarrierParameters
 
     // Present when the collector reports interface version 5.11 or later.
     WriteBarrierEpochReset write_barrier_epoch_reset;
+
+    // Used only when write_barrier_shape is SideMetadataFieldLog. This tail is
+    // present when the collector reports interface version 5.12 or later.
+    alignas(void*) WriteBarrierBulkScanParameters write_barrier_bulk_scan;
 };
 
 struct FinalizerWorkItem

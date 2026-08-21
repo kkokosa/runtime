@@ -27,6 +27,13 @@ internal static class Program
             return 0;
         }
 
+        if (Environment.GetEnvironmentVariable("P13_GCSTRESS_SURFACES") == "1")
+        {
+            ExerciseGcStressStoreSurfaces();
+            Console.WriteLine("PASS: GC stress scalar, copy, clear, fill, and layout-helper surfaces");
+            return 0;
+        }
+
         GetCallCount? getCallCount = nativeHooks?.CallCount;
         ulong initialCallCount = getCallCount?.Invoke() ?? 0;
 
@@ -189,6 +196,40 @@ internal static class Program
         }
     }
 
+    private static void ExerciseGcStressStoreSurfaces()
+    {
+        object value = new();
+        ObjectHolder holder = new() { Value = new object() };
+        holder.Value = value;
+
+        object?[] source = [value, value];
+        object?[] destination = [new object(), new object()];
+        Array.Copy(source, destination, source.Length);
+        destination.AsSpan().Fill(value);
+        Array.Clear(destination);
+
+        LargeReferenceHolder largeHolder = new();
+        LargeMixedReferences largeValue = new()
+        {
+            First = value,
+            Second = value,
+            Third = value,
+            Fourth = value,
+        };
+        StoreLargeValue(largeHolder, largeValue);
+        ClearLargeValue(largeHolder);
+        GC.Collect();
+
+        if (!ReferenceEquals(holder.Value, value) ||
+            (destination[0] is not null) ||
+            (destination[1] is not null) ||
+            (largeHolder.Value.First is not null) ||
+            (largeHolder.Value.Fourth is not null))
+        {
+            throw new InvalidOperationException("A GC-stress store surface produced an unexpected value.");
+        }
+    }
+
     [MethodImpl(OptimizedNoInlining)]
     private static ScalarState StoreScalars(
         Node destination,
@@ -302,6 +343,8 @@ internal static class Program
             NativeLibrary.GetExport(library, "GC_WriteBarrierTest_GetDependentEdgeCallCount");
         nint reset = NativeLibrary.GetExport(library, "GC_WriteBarrierTest_Reset");
         nint resetRange = NativeLibrary.GetExport(library, "GC_WriteBarrierTest_ResetRange");
+        nint setRequiresWork =
+            NativeLibrary.GetExport(library, "GC_WriteBarrierTest_SetRequiresWork");
         nint attemptCount = NativeLibrary.GetExport(library, "GC_WriteBarrierTest_GetAttemptCount");
         nint winCount = NativeLibrary.GetExport(library, "GC_WriteBarrierTest_GetWinCount");
         nint argumentErrorCount = NativeLibrary.GetExport(library, "GC_WriteBarrierTest_GetArgumentErrorCount");
@@ -323,6 +366,7 @@ internal static class Program
             Marshal.GetDelegateForFunctionPointer<GetCallCount>(dependentEdgeCallCount),
             Marshal.GetDelegateForFunctionPointer<ResetSlotLog>(reset),
             Marshal.GetDelegateForFunctionPointer<ResetSlotLogRange>(resetRange),
+            Marshal.GetDelegateForFunctionPointer<SetRequiresWork>(setRequiresWork),
             Marshal.GetDelegateForFunctionPointer<GetCallCount>(attemptCount),
             Marshal.GetDelegateForFunctionPointer<GetCallCount>(winCount),
             Marshal.GetDelegateForFunctionPointer<GetCallCount>(argumentErrorCount),
@@ -472,6 +516,7 @@ internal static class Program
         object comparand = new();
         object?[] source = [new object(), new object(), new object(), new object()];
         object?[] destination = [new object(), new object(), new object(), new object()];
+        object?[] fillDestination = [new object(), new object(), new object(), new object()];
         object?[] overlap = [new object(), new object(), new object(), new object()];
         object?[] empty = [];
         MixedReferences[] mixedSource =
@@ -489,6 +534,45 @@ internal static class Program
             new() { First = new object(), Scalar = 505, Second = new object() },
             new() { First = new object(), Scalar = 606, Second = new object() },
         ];
+        MixedReferences mixedFillValue =
+            new() { First = new object(), Scalar = 707, Second = new object() };
+        MixedReferences[] mixedFill = new MixedReferences[4];
+        LargeReferenceHolder largeHolder = new();
+        LargeMixedReferences largeValue = new()
+        {
+            First = new object(),
+            Scalar0 = 101,
+            Second = new object(),
+            Scalar1 = 202,
+            Third = new object(),
+            Scalar2 = 303,
+            Fourth = new object(),
+            Scalar3 = 404,
+            Fifth = new object(),
+            Scalar4 = 505,
+            Sixth = new object(),
+            Scalar5 = 606,
+            Seventh = new object(),
+            Scalar6 = 707,
+            Eighth = new object(),
+            Scalar7 = 808,
+            Ninth = new object(),
+            Scalar8 = 909,
+            Tenth = new object(),
+            Scalar9 = 1_010,
+            Eleventh = new object(),
+            Scalar10 = 1_111,
+            Twelfth = new object(),
+            Scalar11 = 1_212,
+            Thirteenth = new object(),
+            Scalar12 = 1_313,
+            Fourteenth = new object(),
+            Scalar13 = 1_414,
+            Fifteenth = new object(),
+            Scalar14 = 1_515,
+            Sixteenth = new object(),
+            Scalar15 = 1_616,
+        };
         object?[] cloneSource = [new object(), new object(), new object()];
         MixedReferences[] mixedCloneSource =
         [
@@ -503,6 +587,7 @@ internal static class Program
         var valueField = typeof(ObjectHolder).GetField(nameof(ObjectHolder.Value))
             ?? throw new InvalidOperationException("Unable to find the VM store test field.");
         byte workByte = workWhenSet ? byte.MaxValue : (byte)0;
+        byte noWorkByte = workWhenSet ? (byte)0 : byte.MaxValue;
 
         if (!GC.TryStartNoGCRegion(4 * 1024 * 1024))
         {
@@ -565,6 +650,29 @@ internal static class Program
             AssertClaim(hooks, (ulong)source.Length, (ulong)source.Length, "bulk reference copy");
             AssertRangeCalls(hooks, 1, 0, "bulk reference copy");
 
+            hooks.ResetRange(destinationAddress, (nuint)source.Length, noWorkByte, claimBits: true);
+            Array.Copy(source, destination, source.Length);
+            AssertClaim(hooks, 0, 0, "all-claimed bulk reference copy");
+            AssertRangeCalls(hooks, 0, 0, "all-claimed bulk reference copy");
+
+            nuint destinationBit = (destinationAddress >> 3) & 63;
+            nuint outsideDestination = destinationBit == 0
+                ? destinationAddress + ((nuint)source.Length * (nuint)IntPtr.Size)
+                : destinationAddress - (nuint)IntPtr.Size;
+            hooks.ResetRange(destinationAddress, (nuint)source.Length, noWorkByte, claimBits: true);
+            hooks.SetRequiresWork(outsideDestination, requiresWork: true);
+            Array.Copy(source, destination, source.Length);
+            AssertClaim(hooks, 0, 0, "out-of-range metadata bit");
+            AssertRangeCalls(hooks, 0, 0, "out-of-range metadata bit");
+
+            hooks.ResetRange(destinationAddress, (nuint)source.Length, noWorkByte, claimBits: true);
+            hooks.SetRequiresWork(
+                destinationAddress + (2 * (nuint)IntPtr.Size),
+                requiresWork: true);
+            Array.Copy(source, destination, source.Length);
+            AssertClaim(hooks, (ulong)source.Length, 1, "single in-range metadata bit");
+            AssertRangeCalls(hooks, 1, 0, "single in-range metadata bit");
+
             hooks.ResetRange(destinationAddress, (nuint)destination.Length, workByte, claimBits: true);
             Array.Clear(destination);
             if (Array.Exists(destination, static item => item is not null))
@@ -573,6 +681,30 @@ internal static class Program
             }
             AssertClaim(hooks, (ulong)destination.Length, (ulong)destination.Length, "reference Array.Clear");
             AssertRangeCalls(hooks, 1, 1, "reference Array.Clear");
+
+            hooks.ResetRange(destinationAddress, (nuint)destination.Length, noWorkByte, claimBits: true);
+            Array.Clear(destination);
+            AssertClaim(hooks, 0, 0, "all-claimed reference Array.Clear");
+            AssertRangeCalls(hooks, 0, 0, "all-claimed reference Array.Clear");
+
+            ref object? fillStart = ref MemoryMarshal.GetArrayDataReference(fillDestination);
+            nuint fillAddress = (nuint)Unsafe.AsPointer(ref fillStart);
+            hooks.ResetRange(fillAddress, (nuint)fillDestination.Length, workByte, claimBits: true);
+            fillDestination.AsSpan().Fill(newValue);
+            foreach (object? item in fillDestination)
+            {
+                if (!ReferenceEquals(item, newValue))
+                {
+                    throw new InvalidOperationException("Span.Fill did not fill a reference span.");
+                }
+            }
+            AssertClaim(hooks, (ulong)fillDestination.Length, (ulong)fillDestination.Length, "reference Span.Fill");
+            AssertRangeCalls(hooks, 0, 0, "reference Span.Fill");
+
+            hooks.ResetRange(fillAddress, (nuint)fillDestination.Length, noWorkByte, claimBits: true);
+            fillDestination.AsSpan().Fill(oldValue);
+            AssertClaim(hooks, 0, 0, "all-claimed reference Span.Fill");
+            AssertRangeCalls(hooks, 0, 0, "all-claimed reference Span.Fill");
 
             hooks.Reset(destinationAddress, workByte, claimBits: true);
             Array.Copy(empty, empty, 0);
@@ -617,6 +749,57 @@ internal static class Program
             }
             AssertClaim(hooks, 4, 4, "typed mixed-struct copy");
             AssertRangeCalls(hooks, 0, 0, "typed mixed-struct copy");
+
+            ref MixedReferences mixedFillStart = ref MemoryMarshal.GetArrayDataReference(mixedFill);
+            nuint mixedFillAddress = (nuint)Unsafe.AsPointer(ref mixedFillStart);
+            nuint mixedFillWordCount =
+                (nuint)(mixedFill.Length * Unsafe.SizeOf<MixedReferences>() / IntPtr.Size);
+            hooks.ResetRange(mixedFillAddress, mixedFillWordCount, workByte, claimBits: true);
+            mixedFill.AsSpan().Fill(mixedFillValue);
+            foreach (MixedReferences item in mixedFill)
+            {
+                if (!ReferenceEquals(item.First, mixedFillValue.First) ||
+                    !ReferenceEquals(item.Second, mixedFillValue.Second) ||
+                    (item.Scalar != mixedFillValue.Scalar))
+                {
+                    throw new InvalidOperationException("Span.Fill did not fill a mixed-reference span.");
+                }
+            }
+            AssertClaim(hooks, 8, 8, "mixed-reference Span.Fill");
+            AssertRangeCalls(hooks, 0, 0, "mixed-reference Span.Fill");
+
+            hooks.ResetRange(mixedFillAddress, mixedFillWordCount, noWorkByte, claimBits: true);
+            mixedFill.AsSpan().Fill(mixedFillValue);
+            AssertClaim(hooks, 0, 0, "all-claimed mixed-reference Span.Fill");
+
+            StoreLargeValue(largeHolder, largeValue);
+            ref object? largeStart = ref largeHolder.Value.First;
+            nuint largeAddress = (nuint)Unsafe.AsPointer(ref largeStart);
+            nuint largeWordCount =
+                (nuint)(Unsafe.SizeOf<LargeMixedReferences>() / IntPtr.Size);
+            hooks.ResetRange(largeAddress, largeWordCount, workByte, claimBits: true);
+            StoreLargeValue(largeHolder, largeValue);
+            AssertClaim(hooks, 16, 16, "layout-aware JIT struct copy");
+
+            hooks.ResetRange(largeAddress, largeWordCount, noWorkByte, claimBits: true);
+            StoreLargeValue(largeHolder, largeValue);
+            AssertClaim(hooks, 0, 0, "all-claimed layout-aware JIT struct copy");
+
+            hooks.ResetRange(largeAddress, largeWordCount, workByte, claimBits: true);
+            ClearLargeValue(largeHolder);
+            AssertClaim(hooks, 16, 16, "layout-aware JIT struct clear");
+            if ((largeHolder.Value.First is not null) ||
+                (largeHolder.Value.Second is not null) ||
+                (largeHolder.Value.Third is not null) ||
+                (largeHolder.Value.Fourth is not null) ||
+                (largeHolder.Value.Sixteenth is not null))
+            {
+                throw new InvalidOperationException("Layout-aware JIT struct clear retained references.");
+            }
+
+            hooks.ResetRange(largeAddress, largeWordCount, noWorkByte, claimBits: true);
+            ClearLargeValue(largeHolder);
+            AssertClaim(hooks, 0, 0, "all-claimed layout-aware JIT struct clear");
 
             mixedDestination[0] =
                 new MixedReferences { First = new object(), Scalar = 707, Second = new object() };
@@ -722,6 +905,14 @@ internal static class Program
                 $"{operation} produced {actualAttempts} attempts, {actualWins} wins, and {argumentErrors} argument errors.");
         }
     }
+
+    [MethodImpl(MethodImplOptions.NoInlining | MethodImplOptions.NoOptimization)]
+    private static void StoreLargeValue(LargeReferenceHolder holder, LargeMixedReferences value) =>
+        holder.Value = value;
+
+    [MethodImpl(MethodImplOptions.NoInlining | MethodImplOptions.NoOptimization)]
+    private static void ClearLargeValue(LargeReferenceHolder holder) =>
+        holder.Value = default;
 
     private static void AssertRangeCalls(
         NativeHooks hooks,
@@ -891,6 +1082,22 @@ internal static class Program
         catch (NullReferenceException)
         {
         }
+
+        try
+        {
+            ClearLargeThroughNull();
+            throw new InvalidOperationException("A null layout-clear destination did not fault.");
+        }
+        catch (NullReferenceException exception)
+        {
+            if (exception.StackTrace?.Contains(
+                    "ClearValueClassWithOldValueWriteBarrier",
+                    StringComparison.Ordinal) == true)
+            {
+                throw new InvalidOperationException(
+                    "The layout-clear helper leaked into the null-destination stack trace.");
+            }
+        }
     }
 
     [MethodImpl(MethodImplOptions.NoInlining)]
@@ -898,6 +1105,13 @@ internal static class Program
     {
         Node? destination = null;
         destination!.Next = value;
+    }
+
+    [MethodImpl(MethodImplOptions.NoInlining)]
+    private static void ClearLargeThroughNull()
+    {
+        LargeReferenceHolder? destination = null;
+        destination!.Value = default;
     }
 
     [UnmanagedFunctionPointer(CallingConvention.Cdecl)]
@@ -915,6 +1129,11 @@ internal static class Program
         nuint referenceCount,
         byte metadataByte,
         [MarshalAs(UnmanagedType.I1)] bool claimBits);
+
+    [UnmanagedFunctionPointer(CallingConvention.Cdecl)]
+    private delegate void SetRequiresWork(
+        nuint destination,
+        [MarshalAs(UnmanagedType.I1)] bool requiresWork);
 
     [UnmanagedFunctionPointer(CallingConvention.Cdecl)]
     private delegate nuint GetPointer();
@@ -938,6 +1157,7 @@ internal static class Program
         GetCallCount DependentEdgeCallCount,
         ResetSlotLog Reset,
         ResetSlotLogRange ResetRange,
+        SetRequiresWork SetRequiresWork,
         GetCallCount AttemptCount,
         GetCallCount WinCount,
         GetCallCount ArgumentErrorCount,
@@ -989,9 +1209,50 @@ internal sealed class ObjectHolder
     public object? Value;
 }
 
+internal sealed class LargeReferenceHolder
+{
+    public LargeMixedReferences Value;
+}
+
 internal struct MixedReferences
 {
     public object? First;
     public nuint Scalar;
     public object? Second;
+}
+
+internal struct LargeMixedReferences
+{
+    public object? First;
+    public nuint Scalar0;
+    public object? Second;
+    public nuint Scalar1;
+    public object? Third;
+    public nuint Scalar2;
+    public object? Fourth;
+    public nuint Scalar3;
+    public object? Fifth;
+    public nuint Scalar4;
+    public object? Sixth;
+    public nuint Scalar5;
+    public object? Seventh;
+    public nuint Scalar6;
+    public object? Eighth;
+    public nuint Scalar7;
+    public object? Ninth;
+    public nuint Scalar8;
+    public object? Tenth;
+    public nuint Scalar9;
+    public object? Eleventh;
+    public nuint Scalar10;
+    public object? Twelfth;
+    public nuint Scalar11;
+    public object? Thirteenth;
+    public nuint Scalar12;
+    public object? Fourteenth;
+    public nuint Scalar13;
+    public object? Fifteenth;
+    public nuint Scalar14;
+    public object? Sixteenth;
+    public nuint Scalar15;
 }

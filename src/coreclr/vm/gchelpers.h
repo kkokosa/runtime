@@ -87,10 +87,21 @@ extern void ThrowOutOfMemoryDimensionsExceeded();
 //========================================================================
 
 void ErectWriteBarrier(OBJECTREF* dst, OBJECTREF ref);
+
+enum class WriteBarrierBulkAction
+{
+    CardTable,
+    AllClaimed,
+    NeedsSlowPath,
+};
+
+WriteBarrierBulkAction ClassifyWriteBarrierBulk(void* destination, size_t byteCount);
 bool ErectWriteBarrierPre(Object** dst, Object* ref);
 bool ErectWriteBarrierRangePre(Object** dst, Object** src, size_t referenceCount);
 bool ErectWriteBarrierLayoutRangePre(
     void* dst, const void* src, MethodTable* type, size_t elementSize, size_t elementCount);
+bool ErectWriteBarrierLayoutFillPre(
+    void* dst, const void* value, MethodTable* type, size_t elementSize, size_t elementCount);
 void ErectWriteBarrierDependentEdgePre(void* dst, Object* oldRef, Object* newRef);
 
 void PublishFrozenObject(Object*& orObject);

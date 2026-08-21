@@ -27,6 +27,7 @@ constexpr uint32_t ApxClobberMask = 8;
 
 uint8_t* g_write_barrier_test_metadata;
 size_t g_write_barrier_test_metadata_size;
+size_t g_write_barrier_test_metadata_storage_size;
 uintptr_t g_write_barrier_test_first_metadata_byte;
 uint8_t g_write_barrier_test_granularity_shift;
 volatile int64_t g_write_barrier_test_call_count;
@@ -87,24 +88,31 @@ bool WriteBarrierTestTryClaim(Object** destination)
     uint8_t* byte =
         &g_write_barrier_test_metadata[metadataByte - g_write_barrier_test_first_metadata_byte];
     uintptr_t byteAddress = reinterpret_cast<uintptr_t>(byte);
-    volatile uint32_t* word = reinterpret_cast<volatile uint32_t*>(byteAddress & ~static_cast<uintptr_t>(3));
+    volatile uintptr_t* word =
+        reinterpret_cast<volatile uintptr_t*>(byteAddress & ~(static_cast<uintptr_t>(sizeof(uintptr_t)) - 1));
     uint32_t bitInByte =
         static_cast<uint32_t>((address >> g_write_barrier_test_granularity_shift) & 7);
-    uint32_t bitInWord = bitInByte + (static_cast<uint32_t>(byteAddress & 3) * 8);
-    uint32_t mask = static_cast<uint32_t>(1) << bitInWord;
+    uint32_t bitInWord =
+        bitInByte + (static_cast<uint32_t>(byteAddress & (sizeof(uintptr_t) - 1)) * 8);
+    uintptr_t mask = static_cast<uintptr_t>(1) << bitInWord;
     bool workWhenSet = GCConfig::GetWriteBarrierTestBitMeaning() != 0;
 
     while (true)
     {
-        uint32_t oldValue = VolatileLoad(word);
+        uintptr_t oldValue = VolatileLoad(word);
         bool requiresWork = workWhenSet ? ((oldValue & mask) != 0) : ((oldValue & mask) == 0);
         if (!requiresWork)
         {
             return false;
         }
 
-        uint32_t newValue = workWhenSet ? (oldValue & ~mask) : (oldValue | mask);
-        if (Interlocked::CompareExchange(word, newValue, oldValue) == oldValue)
+        uintptr_t newValue = workWhenSet ? (oldValue & ~mask) : (oldValue | mask);
+        uintptr_t observed = reinterpret_cast<uintptr_t>(
+            Interlocked::CompareExchangePointer(
+                reinterpret_cast<void* volatile*>(word),
+                reinterpret_cast<void*>(newValue),
+                reinterpret_cast<void*>(oldValue)));
+        if (observed == oldValue)
         {
             if (countClaim)
             {
@@ -262,7 +270,11 @@ uint8_t* GetWriteBarrierTestMetadataBase(
         (reinterpret_cast<uintptr_t>(highestAddress) - 1) >> (granularityShift + 3);
     g_write_barrier_test_metadata_size =
         static_cast<size_t>(lastMetadataByte - g_write_barrier_test_first_metadata_byte + 1);
-    g_write_barrier_test_metadata = new (nothrow) uint8_t[g_write_barrier_test_metadata_size];
+    size_t metadataWordCount =
+        (g_write_barrier_test_metadata_size + sizeof(uintptr_t) - 1) / sizeof(uintptr_t);
+    g_write_barrier_test_metadata_storage_size = metadataWordCount * sizeof(uintptr_t);
+    uintptr_t* metadataWords = new (nothrow) uintptr_t[metadataWordCount];
+    g_write_barrier_test_metadata = reinterpret_cast<uint8_t*>(metadataWords);
     if (g_write_barrier_test_metadata == nullptr)
     {
         return nullptr;
@@ -271,11 +283,21 @@ uint8_t* GetWriteBarrierTestMetadataBase(
     memset(
         g_write_barrier_test_metadata,
         GCConfig::GetWriteBarrierTestBitMeaning() == 0 ? 0 : 0xFF,
-        g_write_barrier_test_metadata_size);
+        g_write_barrier_test_metadata_storage_size);
     g_write_barrier_test_claim_bits = GCConfig::GetWriteBarrierTestClaimBits();
     return reinterpret_cast<uint8_t*>(
         reinterpret_cast<uintptr_t>(g_write_barrier_test_metadata) -
         g_write_barrier_test_first_metadata_byte);
+}
+
+uint8_t* GetWriteBarrierTestMetadataStart()
+{
+    return g_write_barrier_test_metadata;
+}
+
+size_t GetWriteBarrierTestMetadataSize()
+{
+    return g_write_barrier_test_metadata_storage_size;
 }
 
 WriteBarrierSlowPath GetWriteBarrierTestSlowPath()
@@ -324,7 +346,7 @@ void ResetWriteBarrierTestMetadataForGc()
         memset(
             g_write_barrier_test_metadata,
             GCConfig::GetWriteBarrierTestBitMeaning() == 0 ? 0 : 0xFF,
-            g_write_barrier_test_metadata_size);
+            g_write_barrier_test_metadata_storage_size);
     }
 }
 
@@ -413,6 +435,30 @@ extern "C" DLLEXPORT void GC_WriteBarrierTest_Reset(
     bool claimBits)
 {
     GC_WriteBarrierTest_ResetRange(destination, 1, metadataValue, claimBits);
+}
+
+extern "C" DLLEXPORT void GC_WriteBarrierTest_SetRequiresWork(
+    uintptr_t destination,
+    bool requiresWork)
+{
+    uintptr_t metadataByte =
+        destination >> (g_write_barrier_test_granularity_shift + 3);
+    _ASSERTE(metadataByte >= g_write_barrier_test_first_metadata_byte);
+    size_t metadataOffset =
+        static_cast<size_t>(metadataByte - g_write_barrier_test_first_metadata_byte);
+    _ASSERTE(metadataOffset < g_write_barrier_test_metadata_size);
+
+    uint8_t mask = static_cast<uint8_t>(
+        1 << ((destination >> g_write_barrier_test_granularity_shift) & 7));
+    bool workWhenSet = GCConfig::GetWriteBarrierTestBitMeaning() != 0;
+    if (requiresWork == workWhenSet)
+    {
+        g_write_barrier_test_metadata[metadataOffset] |= mask;
+    }
+    else
+    {
+        g_write_barrier_test_metadata[metadataOffset] &= static_cast<uint8_t>(~mask);
+    }
 }
 
 extern "C" DLLEXPORT uint64_t GC_WriteBarrierTest_GetAttemptCount()

@@ -477,17 +477,13 @@ FCIMPL3(VOID, Buffer::BulkMoveWithWriteBarrier, void *dst, void *src, size_t byt
 }
 FCIMPLEND
 
-FCIMPL5(
-    VOID,
-    Buffer::BulkMoveWithOldValueWriteBarrier,
+static void BulkMoveWithOldValueWriteBarrierCore(
     void* dst,
     void* src,
     MethodTable* type,
     size_t elementSize,
     size_t elementCount)
 {
-    FCALL_CONTRACT;
-
     if ((dst == src) || (elementCount == 0))
     {
         return;
@@ -513,18 +509,85 @@ FCIMPL5(
         InlinedMemmoveGCRefsHelper(dst, src, byteCount);
     }
 }
-FCIMPLEND
 
-FCIMPL4(
+FCIMPL5(
     VOID,
-    Buffer::ClearWithOldValueWriteBarrier,
+    Buffer::BulkMoveWithOldValueWriteBarrier,
     void* dst,
+    void* src,
     MethodTable* type,
     size_t elementSize,
     size_t elementCount)
 {
     FCALL_CONTRACT;
 
+    BulkMoveWithOldValueWriteBarrierCore(
+        dst, src, type, elementSize, elementCount);
+}
+FCIMPLEND
+
+FCIMPL4(
+    VOID,
+    Buffer::BulkMoveValueClassWithOldValueWriteBarrier,
+    void* dst,
+    void* src,
+    MethodTable* type,
+    size_t elementSize)
+{
+    FCALL_CONTRACT;
+
+    BulkMoveWithOldValueWriteBarrierCore(
+        dst, src, type, elementSize, 1);
+}
+FCIMPLEND
+
+FCIMPL5(
+    VOID,
+    Buffer::BulkFillWithOldValueWriteBarrier,
+    void* dst,
+    void* value,
+    MethodTable* type,
+    size_t elementSize,
+    size_t elementCount)
+{
+    FCALL_CONTRACT;
+
+    if (elementCount == 0)
+    {
+        return;
+    }
+
+    _ASSERTE(value != nullptr);
+    _ASSERTE(elementSize != 0);
+    _ASSERTE(elementCount <= (SIZE_T_MAX / elementSize));
+    _ASSERTE(IS_ALIGNED(dst, sizeof(size_t)));
+    _ASSERTE(IS_ALIGNED(value, sizeof(size_t)));
+    _ASSERTE(IS_ALIGNED(elementSize, sizeof(size_t)));
+
+    bool useSlotLog =
+        ErectWriteBarrierLayoutFillPre(dst, value, type, elementSize, elementCount);
+    for (size_t element = 0; element < elementCount; element++)
+    {
+        void* destination =
+            reinterpret_cast<uint8_t*>(dst) + (element * elementSize);
+        if (useSlotLog)
+        {
+            InlinedForwardGCSafeCopyHelper(destination, value, elementSize);
+        }
+        else
+        {
+            InlinedMemmoveGCRefsHelper(destination, value, elementSize);
+        }
+    }
+}
+FCIMPLEND
+
+static void ClearWithOldValueWriteBarrierCore(
+    void* dst,
+    MethodTable* type,
+    size_t elementSize,
+    size_t elementCount)
+{
     if (elementCount == 0)
     {
         return;
@@ -541,6 +604,34 @@ FCIMPL4(
     {
         VolatileStore(reinterpret_cast<size_t*>(reinterpret_cast<uint8_t*>(dst) + offset), static_cast<size_t>(0));
     }
+}
+
+FCIMPL4(
+    VOID,
+    Buffer::ClearWithOldValueWriteBarrier,
+    void* dst,
+    MethodTable* type,
+    size_t elementSize,
+    size_t elementCount)
+{
+    FCALL_CONTRACT;
+
+    ClearWithOldValueWriteBarrierCore(
+        dst, type, elementSize, elementCount);
+}
+FCIMPLEND
+
+FCIMPL3(
+    VOID,
+    Buffer::ClearValueClassWithOldValueWriteBarrier,
+    void* dst,
+    MethodTable* type,
+    size_t elementSize)
+{
+    FCALL_CONTRACT;
+
+    ClearWithOldValueWriteBarrierCore(
+        dst, type, elementSize, 1);
 }
 FCIMPLEND
 

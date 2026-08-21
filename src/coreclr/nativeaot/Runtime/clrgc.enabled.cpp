@@ -224,6 +224,9 @@ HRESULT GCHeapUtilities::InitializeStandaloneGC()
     g_write_barrier_parameters_include_epoch_reset =
         (g_gc_version_info.MajorVersion == GC_INTERFACE_MAJOR_VERSION) &&
         (g_gc_version_info.MinorVersion >= GC_WRITE_BARRIER_EPOCH_RESET_INTERFACE_MINOR_VERSION);
+    g_write_barrier_parameters_include_bulk_scan =
+        (g_gc_version_info.MajorVersion == GC_INTERFACE_MAJOR_VERSION) &&
+        (g_gc_version_info.MinorVersion >= GC_WRITE_BARRIER_BULK_SCAN_INTERFACE_MINOR_VERSION);
     HRESULT initResult = initFunc(gcToClr, &heap, &manager, &g_gc_dac_vars);
 
     if (initResult == S_OK)

@@ -39,6 +39,39 @@ extern bool g_gcHeapHardLimitInfoSpecified;
 #include <generatedumpflags.h>
 #include "gcrefmap.h"
 
+#if defined(TARGET_AMD64) && !defined(FEATURE_PORTABLE_HELPERS) && !defined(FEATURE_PORTABLE_ENTRYPOINTS)
+static bool IsValidWriteBarrierBulkScan(const WriteBarrierParameters* parameters)
+{
+    LIMITED_METHOD_CONTRACT;
+
+    const WriteBarrierBulkScanParameters& bulkScan = parameters->write_barrier_bulk_scan;
+    uintptr_t metadataStart = reinterpret_cast<uintptr_t>(bulkScan.metadata_start);
+    if ((bulkScan.metadata_start == nullptr) ||
+        (bulkScan.metadata_size < sizeof(uintptr_t)) ||
+        !IS_ALIGNED(metadataStart, sizeof(uintptr_t)) ||
+        !IS_ALIGNED(bulkScan.metadata_size, sizeof(uintptr_t)) ||
+        (bulkScan.metadata_size > (UINTPTR_MAX - metadataStart)))
+    {
+        return false;
+    }
+
+    uintptr_t metadataEnd = metadataStart + bulkScan.metadata_size;
+    uint8_t metadataByteShift =
+        static_cast<uint8_t>(parameters->write_barrier_side_metadata.granularity_shift + 3);
+    uintptr_t metadataBase =
+        reinterpret_cast<uintptr_t>(parameters->write_barrier_side_metadata.metadata_base);
+    uintptr_t firstMetadataByte =
+        metadataBase + (reinterpret_cast<uintptr_t>(parameters->lowest_address) >> metadataByteShift);
+    uintptr_t lastMetadataByte =
+        metadataBase +
+        ((reinterpret_cast<uintptr_t>(parameters->highest_address) - 1) >> metadataByteShift);
+
+    return (firstMetadataByte >= metadataStart) &&
+           (firstMetadataByte <= lastMetadataByte) &&
+           (lastMetadataByte < metadataEnd);
+}
+#endif // TARGET_AMD64 && !FEATURE_PORTABLE_HELPERS && !FEATURE_PORTABLE_ENTRYPOINTS
+
 void GCToEEInterface::SuspendEE(SUSPEND_REASON reason)
 {
     WRAPPER_NO_CONTRACT;
@@ -1153,7 +1186,8 @@ void GCToEEInterface::StompWriteBarrier(WriteBarrierParameters* args)
                 case WriteBarrierShape::SideMetadataFieldLog:
 #if defined(TARGET_AMD64) && !defined(FEATURE_PORTABLE_HELPERS) && !defined(FEATURE_PORTABLE_ENTRYPOINTS)
                     if (!g_write_barrier_parameters_include_complete_store ||
-                        !g_write_barrier_parameters_include_epoch_reset)
+                        !g_write_barrier_parameters_include_epoch_reset ||
+                        !g_write_barrier_parameters_include_bulk_scan)
                     {
                         args->write_barrier_request_status = WriteBarrierRequestStatus::Unsupported;
                         return;
@@ -1169,6 +1203,7 @@ void GCToEEInterface::StompWriteBarrier(WriteBarrierParameters* args)
                          WriteBarrierMetadataBitMeaning::WorkWhenBitIsClear) &&
                          (args->write_barrier_side_metadata.bit_meaning !=
                           WriteBarrierMetadataBitMeaning::WorkWhenBitIsSet)) ||
+                        !IsValidWriteBarrierBulkScan(args) ||
                         !IsWriteBarrierCopyEnabled() ||
                         g_pConfig->ReadyToRun())
                     {
