@@ -84,6 +84,7 @@ mechanisms share one oracle. `lxr-x/simplified` is explicitly excluded.
 | [`P0.3-oracle-probes.md`](P0.3-oracle-probes.md) | The evidence behind the ledger: the citation-basis correction, three P0.1 open items resolved from source, the two oracle probes, and the two questions P0.3 had to close |
 | [`P1.1-write-barrier-shape-contract.md`](P1.1-write-barrier-shape-contract.md) | The generic GC-requested write-barrier shape, startup failure contract, ordinary-ABI slow-call strategy, compatibility matrix, and executable/codegen/performance evidence |
 | [`P1.2-x64-slot-log-barrier.md`](P1.2-x64-slot-log-barrier.md) | The generic Windows/System V x64 slot-log family, complete reference-store surface, oracle parity, execution matrix, and performance evidence |
+| [`P1.3-store-path-coverage-and-bulk-barrier.md`](P1.3-store-path-coverage-and-bulk-barrier.md) | The complete current-main store-path ledger and generic family-level metadata-word bulk operation |
 | [`scripts/`](scripts/) | The clone, build, sanity, benchmark and probe scripts actually used, plus `verify-ledger.sh` (the ledger's gate) and `verify-gate.sh` (the gate's own positive control) |
 
 ## P0.1 outcome in one paragraph

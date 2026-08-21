@@ -1,0 +1,26 @@
+Name,Configuration,Result
+Exact-main baseline,Windows x64 Debug clr+libs+host,PASS
+Product build,Windows x64 Debug,PASS
+Validation build,Windows x64 Debug,PASS
+Descriptor layout,Windows x64 17/17,PASS
+Descriptor layout,Windows x86 17/17,PASS
+Built-in family,Workstation clear-bit,PASS
+Built-in family,Workstation set-bit,PASS
+Built-in family,Server clear-bit,PASS
+Built-in family,Server set-bit,PASS
+Standalone family,Workstation clear-bit,PASS
+Standalone family,Server set-bit,PASS
+Endpoint masks,clear-bit and set-bit,PASS
+Layout JIT helpers,copy and clear disassembly,PASS
+Malformed bulk bounds,null start and unaligned size,PASS
+ReadyToRun rejection,Windows x64,PASS
+Pre-5.12 family rejection,Windows x64,PASS
+Interpreter mixed stores,Windows x64,PASS
+Runtime async captured objects,Windows x64 1/1,PASS
+JIT register stress,Workstation and Server,PASS
+GC stress 0xC,standalone scalar/copy/clear/fill/layout surfaces,PASS
+NativeAOT fail closed,side family rejected and CardTable returned 100,PASS
+Stock codegen identity,preserved P1.2 main versus P1.3,PASS
+Microbenchmarks,three runtimes and four methods,PASS
+Multi-thread throughput,20 paired runs,PASS
+Exact product archive,Linux x64 build 0 warnings/errors and five execution arms,PASS

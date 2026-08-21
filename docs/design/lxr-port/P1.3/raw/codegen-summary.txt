@@ -1,0 +1,13 @@
+Windows x64 Release no-PGO
+
+Family layout copy:
+call CORINFO_HELP_BULK_WRITEBARRIER_WITH_LAYOUT
+
+Family layout clear:
+call CORINFO_HELP_BULK_WRITEBARRIER_CLEAR_WITH_LAYOUT
+
+The preserved P1.2-main CardTable runtime and changed P1.3 CardTable runtime
+produced an empty diff for Program:StoreLargeValue,
+Program:ClearLargeValue, and Program:StoreScalars.
+
+stock disassembly: byte-identical
