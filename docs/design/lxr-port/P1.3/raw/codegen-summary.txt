@@ -34,6 +34,6 @@ layout helpers. This confirms stack execution, not the structural
 value-class-eligibility gate.
 
 Separate reference-class-codegen.csv rows record the genuine 49152-byte
-MemberwiseClone shared-helper path: 1024-byte exact Linux Debug chunks and
-16384-byte Windows Release/Checked chunks, all passing with exact runtime
-identities.
+MemberwiseClone shared-helper path: 1024-byte exact Linux Debug/Windows
+Checked chunks and 16384-byte Windows Release chunks, all passing with exact
+runtime and CoreLib identities.

@@ -545,8 +545,10 @@ if (Test-Path -LiteralPath $referenceClassCodegen) {
             'Stack reference-class codegen does not confirm stack allocation and helper absence.')
         Confirm (($row.CoreClrSha256 -match '^[0-9A-F]{64}$') -and
             ($row.ClrJitSha256 -match '^[0-9A-F]{64}$') -and
+            ($row.CoreLibConfiguration -eq 'Release') -and
+            ($row.CoreLibSha256 -match '^[0-9A-F]{64}$') -and
             ($row.DisassemblySha256 -match '^[0-9A-F]{64}$')) (
-            'Stack reference-class codegen omits exact binary/disassembly identities.')
+            'Stack reference-class codegen omits exact runtime/CoreLib/disassembly identities.')
     }
 
     $cloneRows = @($rows | Where-Object Case -eq 'memberwise-clone-shared-helper')
@@ -560,12 +562,18 @@ if (Test-Path -LiteralPath $referenceClassCodegen) {
         ($expectedCloneConfigurations -join ',')) (
         'MemberwiseClone evidence omits an expected configuration.')
     foreach ($row in $cloneRows) {
-        $expectedChunkBytes = if ($row.Configuration -eq 'linux-x64-debug') { '1024' } else { '16384' }
+        $expectedCoreLibConfiguration = switch ($row.Configuration) {
+            'linux-x64-debug' { 'Debug' }
+            'windows-x64-checked' { 'Checked' }
+            'windows-x64-release-nopgo' { 'Release' }
+        }
+        $expectedChunkBytes = if ($expectedCoreLibConfiguration -eq 'Release') { '16384' } else { '1024' }
         Confirm (($row.ProofKind -eq 'behavioral-shared-helper') -and
             ($row.Method -eq 'VeryLargeReferenceHolder:Clone') -and
             ($row.LayoutKind -eq 'reference-class') -and
             ($row.ReferenceSlots -eq '4096') -and
             ($row.InstanceBytes -eq '49152') -and
+            ($row.CoreLibConfiguration -eq $expectedCoreLibConfiguration) -and
             ($row.ChunkBytes -eq $expectedChunkBytes) -and
             ($row.SharedChunkPath -eq
                 'Object.MemberwiseClone>Buffer.BulkMoveWithOldValueWriteBarrier>BulkMoveValueClassWithOldValueWriteBarrier') -and
@@ -574,8 +582,17 @@ if (Test-Path -LiteralPath $referenceClassCodegen) {
             ($row.EvidenceTip -eq '7fd9523ea45')) (
             "MemberwiseClone row '$($row.Configuration)' has inconsistent path or configuration.")
         Confirm (($row.CoreClrSha256 -match '^[0-9A-F]{64}$') -and
-            ($row.ClrJitSha256 -match '^[0-9A-F]{64}$')) (
-            "MemberwiseClone row '$($row.Configuration)' omits exact runtime identity.")
+            ($row.ClrJitSha256 -match '^[0-9A-F]{64}$') -and
+            ($row.CoreLibSha256 -match '^[0-9A-F]{64}$')) (
+            "MemberwiseClone row '$($row.Configuration)' omits exact runtime/CoreLib identity.")
+    }
+    Confirm (@($cloneRows.CoreLibSha256 | Sort-Object -Unique).Count -eq 3) (
+        'MemberwiseClone configurations do not identify three distinct CoreLib binaries.')
+    if ($stackRows.Count -eq 1) {
+        $releaseClone = @($cloneRows | Where-Object Configuration -eq 'windows-x64-release-nopgo')
+        Confirm (($releaseClone.Count -eq 1) -and
+            ($stackRows[0].CoreLibSha256 -eq $releaseClone[0].CoreLibSha256)) (
+            'Stack and MemberwiseClone Release rows do not identify the same CoreLib binary.')
     }
 }
 

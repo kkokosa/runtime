@@ -171,6 +171,11 @@ try {
         'linux-x64-debug,2048,Object.MemberwiseClone' `
         'MemberwiseClone Debug chunk size'
     Invoke-Perturbation `
+        'docs\design\lxr-port\P1.3\raw\reference-class-codegen.csv' `
+        'windows-x64-checked,Checked,5462DB2F984C4FAC66843F0A30729DD18DF3A9BBBE175C1A005005CC084F0E1C,1024,Object.MemberwiseClone' `
+        'windows-x64-checked,Checked,5462DB2F984C4FAC66843F0A30729DD18DF3A9BBBE175C1A005005CC084F0E1C,2048,Object.MemberwiseClone' `
+        'MemberwiseClone Checked chunk size'
+    Invoke-Perturbation `
         'docs\design\lxr-port\P1.3-store-path-coverage-and-bulk-barrier.md' `
         'code-size comparison: 106,418 to 49 bytes for' `
         'code-size comparison: 106,418 to 48 bytes for' `
