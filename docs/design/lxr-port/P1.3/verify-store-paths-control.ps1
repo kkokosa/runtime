@@ -72,7 +72,11 @@ try {
     if ($LASTEXITCODE -ne 0) {
         throw 'Verifier rejected the exact committed archive.'
     }
-    Copy-Item -LiteralPath $archiveRoot -Destination $perturbedRoot -Recurse
+    New-Item -ItemType Directory -Path $perturbedRoot -Force | Out-Null
+    tar -xf $archive -C $perturbedRoot
+    if ($LASTEXITCODE -ne 0) {
+        throw 'Unable to extract the perturbation tree.'
+    }
 
     Invoke-Perturbation `
         'src\coreclr\gc\gcinterface.h' `
