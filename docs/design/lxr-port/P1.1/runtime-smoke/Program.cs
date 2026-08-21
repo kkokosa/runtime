@@ -28,6 +28,7 @@ internal static class Program
             {
                 throw new InvalidOperationException("A stack-allocated reference-class layout lost a value.");
             }
+            ExerciseVeryLargeMemberwiseClone();
             Console.WriteLine("PASS: stack-allocated reference-class layout");
             return 0;
         }
@@ -328,6 +329,19 @@ internal static class Program
         return ReferenceEquals(holder.F000, s_stackFirst) &&
             ReferenceEquals(holder.F127, s_stackSecond) &&
             (Volatile.Read(ref Unsafe.Add(ref firstField, s_stackIndex)) is null);
+    }
+
+    private static void ExerciseVeryLargeMemberwiseClone()
+    {
+        VeryLargeReferenceHolder source = new();
+        source.Value[0] = new MixedReferences { First = s_stackFirst, Scalar = 101, Second = s_stackSecond };
+        source.Value[2047] = new MixedReferences { First = s_stackSecond, Scalar = 202, Second = s_stackFirst };
+        VeryLargeReferenceHolder clone = source.Clone();
+        if (!ReferenceEquals(clone.Value[0].First, s_stackFirst) ||
+            !ReferenceEquals(clone.Value[2047].Second, s_stackFirst))
+        {
+            throw new InvalidOperationException("A very-large MemberwiseClone lost a reference.");
+        }
     }
 
     [MethodImpl(OptimizedNoInlining)]
@@ -1557,6 +1571,9 @@ internal sealed class LargeReferenceHolder
 internal sealed class VeryLargeReferenceHolder
 {
     public VeryLargeMixedLayout Value;
+
+    public VeryLargeReferenceHolder Clone() =>
+        (VeryLargeReferenceHolder)MemberwiseClone();
 }
 
 #pragma warning disable CS0649
