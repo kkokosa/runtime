@@ -14,7 +14,7 @@ if (-not $RepositoryRoot) {
 
 $temporaryRoot = Join-Path ([IO.Path]::GetTempPath()) "p13-store-paths-$([Guid]::NewGuid())"
 $archive = Join-Path $temporaryRoot 'tip.tar'
-$original = Join-Path $temporaryRoot 'original'
+$archiveRoot = Join-Path $temporaryRoot 'original'
 
 function Assert-LiteralCount(
     [string]$Text,
@@ -30,18 +30,18 @@ function Assert-LiteralCount(
 
 function Invoke-Perturbation(
     [string]$RelativePath,
-    [string]$Original,
-    [string]$Replacement,
+    [string]$OriginalText,
+    [string]$ReplacementText,
     [string]$Description
 ) {
     $perturbed = Join-Path $temporaryRoot ([Guid]::NewGuid().ToString('N'))
-    Copy-Item -LiteralPath $original -Destination $perturbed -Recurse
+    Copy-Item -LiteralPath $archiveRoot -Destination $perturbed -Recurse
     $path = Join-Path $perturbed $RelativePath
     $text = Get-Content -LiteralPath $path -Raw
-    Assert-LiteralCount $text $Original 1 "$Description original"
-    $text = $text.Replace($Original, $Replacement)
-    Assert-LiteralCount $text $Original 0 "$Description original after perturbation"
-    Assert-LiteralCount $text $Replacement 1 "$Description replacement"
+    Assert-LiteralCount $text $OriginalText 1 "$Description original"
+    $text = $text.Replace($OriginalText, $ReplacementText)
+    Assert-LiteralCount $text $OriginalText 0 "$Description original after perturbation"
+    Assert-LiteralCount $text $ReplacementText 1 "$Description replacement"
     Set-Content -LiteralPath $path -Value $text -NoNewline
 
     $verifier = Join-Path $perturbed 'docs\design\lxr-port\P1.3\verify-store-paths.ps1'
@@ -52,18 +52,18 @@ function Invoke-Perturbation(
 }
 
 try {
-    New-Item -ItemType Directory -Path $original -Force | Out-Null
+    New-Item -ItemType Directory -Path $archiveRoot -Force | Out-Null
     git -C $RepositoryRoot archive --format=tar --output=$archive HEAD
     if ($LASTEXITCODE -ne 0) {
         throw 'Unable to archive HEAD.'
     }
-    tar -xf $archive -C $original
+    tar -xf $archive -C $archiveRoot
     if ($LASTEXITCODE -ne 0) {
         throw 'Unable to extract HEAD.'
     }
 
-    $verifier = Join-Path $original 'docs\design\lxr-port\P1.3\verify-store-paths.ps1'
-    & pwsh -NoProfile -File $verifier -RepositoryRoot $original
+    $verifier = Join-Path $archiveRoot 'docs\design\lxr-port\P1.3\verify-store-paths.ps1'
+    & pwsh -NoProfile -File $verifier -RepositoryRoot $archiveRoot
     if ($LASTEXITCODE -ne 0) {
         throw 'Verifier rejected the exact committed archive.'
     }
@@ -94,7 +94,7 @@ try {
         ',9.9999,' `
         'published benchmark ratio'
 
-    & pwsh -NoProfile -File $verifier -RepositoryRoot $original
+    & pwsh -NoProfile -File $verifier -RepositoryRoot $archiveRoot
     if ($LASTEXITCODE -ne 0) {
         throw 'Verifier did not pass again on the untouched archive.'
     }
