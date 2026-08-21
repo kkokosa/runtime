@@ -150,9 +150,13 @@ try {
                     Gen2 = $report.gc.gen2Collections
                     ObservedServerGC = $report.observedGcConfig.ServerGC
                     ObservedConcurrentGC = $report.observedGcConfig.ConcurrentGC
-                    ClaimBits = if ($variant -eq 'family') { 1 } else { 0 }
-                    ReadyToRun = 0
-                    TieredCompilation = 0
+                    CollectorConfirmed = $report.collectorConfirmed
+                    ReportValid = $report.valid
+                    VerificationSuccess = $report.verificationSuccess
+                    RequestedClaimBits = if ($variant -eq 'family') { 1 } else { 0 }
+                    RequestedReadyToRun = 0
+                    RequestedTieredCompilation = 0
+                    RequestEvidence = 'launcher environment; not independently confirmed by the worker'
                     CoreClrSha256 = $report.runtime.coreClrSha256
                     CoreClrFileVersion = $report.runtime.coreClrFileVersion
                     Processor = $report.machine.processorName
@@ -174,4 +178,4 @@ try {
     }
 }
 
-Write-Host "$passed/20 multi-thread throughput runs passed"
+Write-Host "$passed multi-thread throughput runs passed"

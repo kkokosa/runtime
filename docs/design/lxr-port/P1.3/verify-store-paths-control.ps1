@@ -111,6 +111,11 @@ try {
         'layout->GetSize() < MaxUnrolledLayoutBytes' `
         'large-layout JIT bound'
     Invoke-Perturbation `
+        'src\coreclr\jit\lower.cpp' `
+        '!layout->IsValueClass() ||' `
+        'false ||' `
+        'value-class helper eligibility'
+    Invoke-Perturbation `
         'src\coreclr\vm\gchelpers.cpp' `
         'lowestOffsetSeries[-middle]' `
         'lowestOffsetSeries[middle]' `
@@ -126,6 +131,21 @@ try {
         '"1.000000"' `
         'paired throughput raw row'
     Invoke-Perturbation `
+        'docs\design\lxr-port\P1.3\raw\bulk-throughput-invocations.csv' `
+        '"2689546.041091","0","0","0","true","true","true","true","true"' `
+        '"2689546.041091","0","0","0","false","true","true","true","true"' `
+        'observed ServerGC arm'
+    Invoke-Perturbation `
+        'docs\design\lxr-port\P1.3\raw\bulk-throughput-invocations.csv' `
+        '"2689546.041091","0","0","0","true","true","true","true","true"' `
+        '"2689546.041091","0","0","0","true","true","false","true","true"' `
+        'collector confirmation'
+    Invoke-Perturbation `
+        'docs\design\lxr-port\P1.3\raw\bulk-throughput-invocations.csv' `
+        '"2689546.041091","0","0","0","true","true","true","true","true","0","0","0","launcher environment; not independently confirmed by the worker","87fd9956a9d22e870e2f3173fcdc4cf0019990fe2b63243d7da4bd532646b685"' `
+        '"2689546.041091","0","0","0","true","true","true","true","true","0","0","0","launcher environment; not independently confirmed by the worker","87fd9956a9d22e870e2f3173fcdc4cf0019990fe2b63243d7da4bd532646b684"' `
+        'runtime binary identity'
+    Invoke-Perturbation `
         'docs\design\lxr-port\P1.3\raw\stock-fill-codegen.csv' `
         '751FCE9133704DEC292AA226D333A0297F0E3E94B4C229B26F086B61B771AA3A,true,CRLF' `
         '751FCE9133704DEC292AA226D333A0297F0E3E94B4C229B26F086B61B771AA3B,true,CRLF' `
@@ -135,6 +155,11 @@ try {
         ',bounded-helper,49,1,PASS,' `
         ',bounded-helper,49000,1,PASS,' `
         'bounded large-layout code size'
+    Invoke-Perturbation `
+        'docs\design\lxr-port\P1.3-store-path-coverage-and-bulk-barrier.md' `
+        'code-size comparison: 106,418 to 49 bytes for' `
+        'code-size comparison: 106,418 to 48 bytes for' `
+        'published final helper code size'
 
     & pwsh -NoProfile -File $verifier -RepositoryRoot $archiveRoot
     if ($LASTEXITCODE -ne 0) {

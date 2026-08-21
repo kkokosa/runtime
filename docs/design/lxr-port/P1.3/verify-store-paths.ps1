@@ -66,6 +66,7 @@ $layoutHelperPilots = Join-Path $scriptRoot 'raw\layout-helper-pilots.csv'
 $largeLayoutBenchmark = Join-Path $scriptRoot 'raw\large-layout-benchmark.csv'
 $layoutHelperCodegen = Join-Path $scriptRoot 'raw\layout-helper-codegen.csv'
 $customLayoutCodegen = Join-Path $scriptRoot 'raw\custom-layout-codegen.csv'
+$referenceClassCodegen = Join-Path $scriptRoot 'raw\reference-class-codegen.csv'
 $stockFillCodegen = Join-Path $scriptRoot 'raw\stock-fill-codegen.csv'
 $stockFillDisassembly = Join-Path $scriptRoot 'raw\stock-fill-codegen.txt'
 
@@ -82,6 +83,7 @@ foreach ($path in @(
     $largeLayoutBenchmark,
     $layoutHelperCodegen,
     $customLayoutCodegen,
+    $referenceClassCodegen,
     $stockFillCodegen,
     $stockFillDisassembly
 )) {
@@ -108,10 +110,13 @@ Require-Pattern 'src\libraries\System.Private.CoreLib\src\System\SpanHelpers.T.c
 Require-Pattern 'src\coreclr\jit\lower.cpp' 'CORINFO_HELP_BULK_WRITEBARRIER_WITH_LAYOUT'
 Require-Pattern 'src\coreclr\jit\lower.cpp' 'CORINFO_HELP_BULK_WRITEBARRIER_CLEAR_WITH_LAYOUT'
 Require-Pattern 'src\coreclr\jit\lower.cpp' 'ShouldUseLayoutBulkHelper'
+Require-Pattern 'src\coreclr\jit\lower.cpp' '!layout->IsValueClass()'
 Require-Pattern 'src\coreclr\jit\lower.cpp' 'layout->GetSize() > MaxUnrolledLayoutBytes'
 Require-Pattern 'src\coreclr\jit\lower.cpp' 'GetGcLayoutClassHandle()'
 Require-Pattern 'src\coreclr\jit\lower.cpp' 'GetGcLayoutOffset()'
 Require-Pattern 'src\coreclr\jit\layout.cpp' 'm_gcLayoutOffset + offset'
+Require-Pattern 'src\coreclr\jit\layout.cpp' 'IsValueClass(layout->IsValueClass())'
+Require-Pattern 'src\coreclr\jit\layout.cpp' 'gcLayoutOffset, IsValueClass()'
 Require-Pattern 'src\coreclr\vm\gchelpers.cpp' 'chunkLayoutOffset = gcLayoutOffset + chunkOffset'
 Require-Pattern 'src\coreclr\System.Private.CoreLib\src\System\Buffer.CoreCLR.cs' (
     'BulkMoveValueClassWithOldValueWriteBarrier(')
@@ -119,6 +124,7 @@ Require-Pattern 'src\coreclr\System.Private.CoreLib\src\System\Buffer.CoreCLR.cs
     'ClearValueClassWithOldValueWriteBarrier(')
 Require-Pattern 'src\coreclr\System.Private.CoreLib\src\System\Buffer.CoreCLR.cs' 'Thread.FastPollGC();'
 Require-Pattern 'src\coreclr\vm\gchelpers.cpp' 'ErectWriteBarrierLayoutChunkPre'
+Require-Pattern 'src\coreclr\vm\gchelpers.cpp' '_ASSERTE(type->IsValueType());'
 Require-Pattern 'src\coreclr\vm\gchelpers.cpp' 'lowestOffsetSeries[-middle]'
 Require-PatternCount 'src\coreclr\inc\corinfo.h' 'CORINFO_HELP_BULK_WRITEBARRIER_WITH_LAYOUT,' 1
 Require-PatternCount 'src\coreclr\inc\corinfo.h' 'CORINFO_HELP_BULK_WRITEBARRIER_CLEAR_WITH_LAYOUT,' 1
@@ -129,6 +135,7 @@ Require-Pattern 'docs\design\lxr-port\P1.1\runtime-smoke\Program.cs' 'layout-awa
 Require-Pattern 'docs\design\lxr-port\P1.1\runtime-smoke\Program.cs' 'mixed-reference Span.Fill'
 Require-Pattern 'docs\design\lxr-port\P1.1\runtime-smoke\Program.cs' 'very-large backward-overlap Span.CopyTo'
 Require-Pattern 'docs\design\lxr-port\P1.1\runtime-smoke\Program.cs' 'very-large volatile mixed-layout copy'
+Require-Pattern 'docs\design\lxr-port\P1.1\runtime-smoke\Program.cs' 'stack-allocated reference-class layout'
 Require-Pattern 'src\tests\async\objects-captured\objects-captured.cs' 'ValidateVeryLargeResult'
 Require-Pattern 'src\tests\async\objects-captured\objects-captured.cs' '[InlineArray(2048)]'
 Forbid-Pattern 'src\coreclr\inc\corinfo.h' 'CORINFO_HELP_ASSIGN_BYREF'
@@ -194,15 +201,60 @@ if (Test-Path -LiteralPath $benchmark) {
         foreach ($rawRow in $rawRows) {
             Confirm (([int]$rawRow.Gen0 + [int]$rawRow.Gen1 + [int]$rawRow.Gen2) -eq 0) (
                 "Throughput row $($rawRow.Pair)/$($rawRow.Variant) collected.")
-            Confirm (($rawRow.ReadyToRun -eq '0') -and ($rawRow.TieredCompilation -eq '0')) (
-                "Throughput row $($rawRow.Pair)/$($rawRow.Variant) changed codegen configuration.")
-            Confirm ($rawRow.ClaimBits -eq $(if ($rawRow.Variant -eq 'family') { '1' } else { '0' })) (
-                "Throughput row $($rawRow.Pair)/$($rawRow.Variant) has the wrong claim state.")
+            $expectedServerGC = if ($rawRow.GC -eq 'srv') { 'true' } else { 'false' }
+            Confirm ($rawRow.ObservedServerGC -eq $expectedServerGC) (
+                "Throughput row $($rawRow.Pair)/$($rawRow.Variant) observed the wrong ServerGC mode.")
+            Confirm ($rawRow.ObservedConcurrentGC -eq 'true') (
+                "Throughput row $($rawRow.Pair)/$($rawRow.Variant) did not observe concurrent GC.")
+            Confirm (($rawRow.CollectorConfirmed -eq 'true') -and
+                ($rawRow.ReportValid -eq 'true') -and
+                ($rawRow.VerificationSuccess -eq 'true')) (
+                "Throughput row $($rawRow.Pair)/$($rawRow.Variant) was not collector-confirmed and valid.")
+            Confirm ($rawRow.Arm -eq $rawRow.GC) (
+                "Throughput row $($rawRow.Pair)/$($rawRow.Variant) has inconsistent GC and arm identities.")
             Confirm ($rawRow.CoreClrSha256 -match '^[0-9a-fA-F]{64}$') (
                 "Throughput row $($rawRow.Pair)/$($rawRow.Variant) omits build identity.")
+            Confirm ([bool]$rawRow.CoreClrFileVersion) (
+                "Throughput row $($rawRow.Pair)/$($rawRow.Variant) omits runtime version identity.")
             Confirm ($rawRow.CompletionMarker -match '^low-allocation-compute:stores=\d+$') (
                 "Throughput row $($rawRow.Pair)/$($rawRow.Variant) omits its completion marker.")
         }
+
+        $rawColumns = @($rawRows[0].PSObject.Properties.Name)
+        foreach ($obsoleteColumn in @('ClaimBits', 'ReadyToRun', 'TieredCompilation')) {
+            Confirm ($rawColumns -notcontains $obsoleteColumn) (
+                "Throughput raw data retains success-shaped column '$obsoleteColumn'.")
+        }
+        foreach ($requestedColumn in @(
+            'RequestedClaimBits',
+            'RequestedReadyToRun',
+            'RequestedTieredCompilation',
+            'RequestEvidence'
+        )) {
+            Confirm ($rawColumns -contains $requestedColumn) (
+                "Throughput raw data omits honest request column '$requestedColumn'.")
+        }
+        Confirm ((@($rawRows.RequestEvidence | Sort-Object -Unique) -join ',') -eq
+            'launcher environment; not independently confirmed by the worker') (
+            'Throughput request evidence is not explicitly labeled as unverified.')
+
+        foreach ($variant in @('stock', 'family')) {
+            $variantRows = @($rawRows | Where-Object Variant -eq $variant)
+            $expectedClaimBits = if ($variant -eq 'family') { '1' } else { '0' }
+            Confirm ((@($variantRows.RequestedClaimBits | Sort-Object -Unique) -join ',') -eq
+                $expectedClaimBits) (
+                "Throughput $variant rows have inconsistent requested claim-bit configuration.")
+            Confirm ((@($variantRows.RequestedReadyToRun | Sort-Object -Unique) -join ',') -eq '0') (
+                "Throughput $variant rows have inconsistent requested ReadyToRun configuration.")
+            Confirm ((@($variantRows.RequestedTieredCompilation | Sort-Object -Unique) -join ',') -eq '0') (
+                "Throughput $variant rows have inconsistent requested tiering configuration.")
+            Confirm (@($variantRows.CoreClrSha256 | Sort-Object -Unique).Count -eq 1) (
+                "Throughput $variant rows do not share one runtime binary identity.")
+            Confirm (@($variantRows.CoreClrFileVersion | Sort-Object -Unique).Count -eq 1) (
+                "Throughput $variant rows do not share one runtime version identity.")
+        }
+        Confirm (@($rawRows.CoreClrSha256 | Sort-Object -Unique).Count -eq 2) (
+            'Throughput stock and family arms do not identify two distinct runtime binaries.')
 
         $pairs = @($rawRows | Group-Object Pair)
         foreach ($pair in $pairs) {
@@ -223,6 +275,20 @@ if (Test-Path -LiteralPath $benchmark) {
                 "Throughput pair '$($pair.Name)' does not alternate its first arm.")
             Confirm ($pair.Name -eq "$($pair.Group[0].GC)-$invocation") (
                 "Throughput pair '$($pair.Name)' has inconsistent identity fields.")
+        }
+
+        $gcCount = @($rawRows.GC | Sort-Object -Unique).Count
+        $variantCount = @($rawRows.Variant | Sort-Object -Unique).Count
+        $invocations = @($rawRows | Group-Object Invocation)
+        Confirm (@($invocations.Group.Seed | Sort-Object -Unique).Count -eq $invocations.Count) (
+            'Throughput seeds are not in one-to-one correspondence with invocation numbers.')
+        foreach ($invocation in $invocations) {
+            Confirm ($invocation.Count -eq ($gcCount * $variantCount)) (
+                "Throughput invocation '$($invocation.Name)' has incomplete GC/variant cardinality.")
+            Confirm (@($invocation.Group.Seed | Sort-Object -Unique).Count -eq 1) (
+                "Throughput invocation '$($invocation.Name)' does not use one seed.")
+            Confirm (@($invocation.Group.Pair | Sort-Object -Unique).Count -eq $gcCount) (
+                "Throughput invocation '$($invocation.Name)' does not contain one pair per GC arm.")
         }
 
         foreach ($summaryRow in $throughputRows) {
@@ -366,6 +432,35 @@ if (Test-Path -LiteralPath $layoutHelperCodegen) {
         }
     }
 
+    if (Test-Path -LiteralPath $document) {
+        $documentText = Get-Content -LiteralPath $document -Raw
+        $copyPrefix = [int]@($rows | Where-Object {
+            ($_.Case -eq 'very-large-prefix') -and ($_.Method -eq 'Program:StoreVeryLargeValue')
+        })[0].CodeBytes
+        $clearPrefix = [int]@($rows | Where-Object {
+            ($_.Case -eq 'very-large-prefix') -and ($_.Method -eq 'Program:ClearVeryLargeValue')
+        })[0].CodeBytes
+        $copyFinal = [int]@($rows | Where-Object {
+            ($_.Case -eq 'very-large-final') -and ($_.Method -eq 'Program:StoreVeryLargeValue')
+        })[0].CodeBytes
+        $clearFinal = [int]@($rows | Where-Object {
+            ($_.Case -eq 'very-large-final') -and ($_.Method -eq 'Program:ClearVeryLargeValue')
+        })[0].CodeBytes
+        $copyPrefixText = $copyPrefix.ToString('N0', [Globalization.CultureInfo]::InvariantCulture)
+        $clearPrefixText = $clearPrefix.ToString('N0', [Globalization.CultureInfo]::InvariantCulture)
+        Confirm ($documentText -match "one helper\s+call and $copyFinal/$clearFinal bytes") (
+            'Design helper code-size prose does not match structured final codegen evidence.')
+        Confirm ($documentText -match (
+            "code-size comparison:\s+$copyPrefixText to $copyFinal bytes for\s+" +
+            "copy and $clearPrefixText to $clearFinal bytes for clear")) (
+            'Design validation code-size prose does not rederive from structured codegen evidence.')
+    }
+    if (Test-Path -LiteralPath $codegen) {
+        $codegenText = Get-Content -LiteralPath $codegen -Raw
+        Confirm ($codegenText -match "one helper call and $copyFinal/$clearFinal bytes") (
+            'Codegen summary does not match structured final layout-helper sizes.')
+    }
+
     $volatile = @($rows | Where-Object Case -eq 'very-large-volatile-final')
     Confirm (($volatile.Count -eq 1) -and
         ($volatile[0].Method -eq '(dynamicClass):VolatileVeryLargeCopy') -and
@@ -416,6 +511,37 @@ if (Test-Path -LiteralPath $customLayoutCodegen) {
         Confirm (([int]$final[0].CodeBytes -lt 1024) -and
             ([int]$final[0].ClearHelperCalls -eq 1)) (
             'Final runtime-async slice is not bounded to one clear helper.')
+        if (Test-Path -LiteralPath $codegen) {
+            $codegenText = Get-Content -LiteralPath $codegen -Raw
+            Confirm ($codegenText -match (
+                "(?s)custom GC slice generated $($prefix[0].CodeBytes) bytes.*" +
+                "bounded body is $($final[0].CodeBytes) bytes")) (
+                'Codegen summary does not match structured custom-slice code sizes.')
+        }
+    }
+}
+
+if (Test-Path -LiteralPath $referenceClassCodegen) {
+    $rows = @(Import-Csv -LiteralPath $referenceClassCodegen)
+    Confirm ($rows.Count -eq 1) 'Reference-class codegen evidence must contain exactly one final row.'
+    if ($rows.Count -eq 1) {
+        $row = $rows[0]
+        Confirm (($row.Case -eq 'stack-reference-class-final') -and
+            ($row.Method -eq 'Program:ExerciseStackAllocatedReferenceClass') -and
+            ($row.LayoutKind -eq 'reference-class') -and
+            ($row.ReferenceSlots -eq '128') -and
+            ($row.ReleaseRuntimeResult -eq 'PASS') -and
+            ($row.CheckedRuntimeResult -eq 'PASS')) (
+            'Reference-class negative control has inconsistent identity or configuration.')
+        Confirm (([int]$row.StackFrameBytes -ge 1024) -and
+            ([int]$row.NewObjectHelperCalls -eq 0) -and
+            ([int]$row.LayoutHelperCalls -eq 0) -and
+            ([int]$row.CodeBytes -lt 1024)) (
+            'Reference-class codegen does not prove stack allocation without a layout helper.')
+        Confirm (($row.CoreClrSha256 -match '^[0-9A-F]{64}$') -and
+            ($row.ClrJitSha256 -match '^[0-9A-F]{64}$') -and
+            ($row.DisassemblySha256 -match '^[0-9A-F]{64}$')) (
+            'Reference-class codegen omits exact binary/disassembly identities.')
     }
 }
 
