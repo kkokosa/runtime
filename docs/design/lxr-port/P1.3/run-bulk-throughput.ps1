@@ -57,6 +57,7 @@ $environmentNames = @(
     'DOTNET_GCWriteBarrierTestClaimBits'
 )
 $passed = 0
+$invocationRows = [Collections.Generic.List[object]]::new()
 
 try {
     $env:CORE_LIBRARIES = $workerDirectory
@@ -80,7 +81,8 @@ try {
                 @('family', 'stock')
             }
 
-            foreach ($variant in $order) {
+            for ($orderIndex = 0; $orderIndex -lt $order.Count; $orderIndex++) {
+                $variant = $order[$orderIndex]
                 if ($variant -eq 'family') {
                     $runtime = $familyRuntime
                     $env:DOTNET_GCWriteBarrierTestShape = '1'
@@ -131,11 +133,41 @@ try {
                     throw "Claimed-bit throughput run collected: $id."
                 }
 
+                $invocationRows.Add([pscustomobject][ordered]@{
+                    Pair = "$gcMode-$invocation"
+                    Order = $orderIndex
+                    Invocation = $invocation
+                    Seed = $report.seed
+                    GC = $gcMode
+                    Arm = $report.arm
+                    Variant = $variant
+                    Workers = $report.workerCount
+                    OpsPerSecond = ([double]$report.metrics.operationsPerSecond).ToString(
+                        'F6',
+                        [Globalization.CultureInfo]::InvariantCulture)
+                    Gen0 = $report.gc.gen0Collections
+                    Gen1 = $report.gc.gen1Collections
+                    Gen2 = $report.gc.gen2Collections
+                    ObservedServerGC = $report.observedGcConfig.ServerGC
+                    ObservedConcurrentGC = $report.observedGcConfig.ConcurrentGC
+                    ClaimBits = if ($variant -eq 'family') { 1 } else { 0 }
+                    ReadyToRun = 0
+                    TieredCompilation = 0
+                    CoreClrSha256 = $report.runtime.coreClrSha256
+                    CoreClrFileVersion = $report.runtime.coreClrFileVersion
+                    Processor = $report.machine.processorName
+                    LogicalCores = $report.machine.logicalCores
+                    OS = $report.machine.osDescription
+                    CompletionMarker = $report.marker
+                })
                 $passed++
                 Write-Host "PASS: $id"
             }
         }
     }
+
+    $invocationRows |
+        Export-Csv -LiteralPath (Join-Path $OutputDirectory 'bulk-throughput-invocations.csv') -NoTypeInformation
 } finally {
     foreach ($name in $environmentNames) {
         Remove-Item "Env:\$name" -ErrorAction SilentlyContinue

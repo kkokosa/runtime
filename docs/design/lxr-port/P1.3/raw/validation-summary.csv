@@ -11,16 +11,17 @@ Built-in family,Server set-bit,PASS
 Standalone family,Workstation clear-bit,PASS
 Standalone family,Server set-bit,PASS
 Endpoint masks,clear-bit and set-bit,PASS
-Layout JIT helpers,copy and clear disassembly,PASS
+Layout JIT helpers,optimized/minopts/cold/volatile copy and clear disassembly,PASS
+Very-large mixed layouts,48 KB and 4096 references across JIT copy/clear and Span copy/fill/clear with overlap,PASS
 Malformed bulk bounds,null start and unaligned size,PASS
 ReadyToRun rejection,Windows x64,PASS
 Pre-5.12 family rejection,Windows x64,PASS
 Interpreter mixed stores,Windows x64,PASS
 Runtime async captured objects,Windows x64 1/1,PASS
 JIT register stress,Workstation and Server,PASS
-GC stress 0xC,standalone scalar/copy/clear/fill/layout surfaces,PASS
+GC stress 0xC,standalone scalar/copy/clear/fill/layout and 48 KB tracked-byref surfaces,PASS
 NativeAOT fail closed,side family rejected and CardTable returned 100,PASS
-Stock codegen identity,preserved P1.2 main versus P1.3,PASS
-Microbenchmarks,three runtimes and four methods,PASS
-Multi-thread throughput,20 paired runs,PASS
+Stock codegen identity,preserved P1.2 main versus P1.3 including dedicated reference and mixed Fill methods,PASS
+Microbenchmarks,three runtimes and six P1.3 methods,PASS
+Multi-thread throughput,20 paired runs with committed per-invocation rows,PASS
 Exact product archive,Linux x64 build 0 warnings/errors and five execution arms,PASS

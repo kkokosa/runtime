@@ -993,6 +993,48 @@ internal static class Program
     private static void ClearVeryLargeValue(VeryLargeReferenceHolder holder) =>
         holder.Value = default;
 
+    [MethodImpl(MethodImplOptions.NoInlining | MethodImplOptions.NoOptimization)]
+    private static void StoreVeryLargeValueMinOpts(
+        VeryLargeReferenceHolder holder,
+        in VeryLargeMixedLayout value) =>
+        holder.Value = value;
+
+    [MethodImpl(MethodImplOptions.NoInlining | MethodImplOptions.NoOptimization)]
+    private static void ClearVeryLargeValueMinOpts(VeryLargeReferenceHolder holder) =>
+        holder.Value = default;
+
+    [MethodImpl(MethodImplOptions.NoInlining)]
+    private static void StoreVeryLargeValueCold(
+        VeryLargeReferenceHolder holder,
+        in VeryLargeMixedLayout value)
+    {
+        try
+        {
+            ThrowForVeryLargeColdPath();
+        }
+        catch (InvalidOperationException)
+        {
+            holder.Value = value;
+        }
+    }
+
+    [MethodImpl(MethodImplOptions.NoInlining)]
+    private static void ClearVeryLargeValueCold(VeryLargeReferenceHolder holder)
+    {
+        try
+        {
+            ThrowForVeryLargeColdPath();
+        }
+        catch (InvalidOperationException)
+        {
+            holder.Value = default;
+        }
+    }
+
+    [MethodImpl(MethodImplOptions.NoInlining)]
+    private static void ThrowForVeryLargeColdPath() =>
+        throw new InvalidOperationException();
+
     [MethodImpl(MethodImplOptions.NoInlining)]
     private static object FillReferences(object?[] destination, object value)
     {
@@ -1092,6 +1134,20 @@ internal static class Program
         {
             throw new InvalidOperationException("Very-large mixed-layout clear retained references.");
         }
+
+        hooks.ResetRange(destinationAddress, destinationWordCount, workByte, claimBits: true);
+        StoreVeryLargeValueMinOpts(holder, in source);
+        AssertClaim(hooks, 4_096, 4_096, "very-large minopts mixed-layout copy");
+        hooks.ResetRange(destinationAddress, destinationWordCount, workByte, claimBits: true);
+        ClearVeryLargeValueMinOpts(holder);
+        AssertClaim(hooks, 4_096, 4_096, "very-large minopts mixed-layout clear");
+
+        hooks.ResetRange(destinationAddress, destinationWordCount, workByte, claimBits: true);
+        StoreVeryLargeValueCold(holder, in source);
+        AssertClaim(hooks, 4_096, 4_096, "very-large cold mixed-layout copy");
+        hooks.ResetRange(destinationAddress, destinationWordCount, workByte, claimBits: true);
+        ClearVeryLargeValueCold(holder);
+        AssertClaim(hooks, 4_096, 4_096, "very-large cold mixed-layout clear");
 
         StoreVeryLargeValue(holder, in source);
         hooks.ResetRange(destinationAddress, destinationWordCount, workByte, claimBits: true);

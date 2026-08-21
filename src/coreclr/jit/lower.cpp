@@ -10350,10 +10350,9 @@ void Lowering::LowerBlockStoreAsGcBulkCopyCall(GenTreeBlk* blk)
 
     // Capture whether the original block store could throw (e.g. NRE from a null address).
 
-    GenTree* dest = blk->Addr();
-    GenTree* data = blk->Data();
-    const bool isVolatile =
-        blk->IsVolatile() || (data->OperIs(GT_IND) && data->AsIndir()->IsVolatile());
+    GenTree*   dest       = blk->Addr();
+    GenTree*   data       = blk->Data();
+    const bool isVolatile = blk->IsVolatile() || (data->OperIs(GT_IND) && data->AsIndir()->IsVolatile());
 
     bool destMayFault = blk->IndirMayFault(m_compiler);
     bool dataMayFault;

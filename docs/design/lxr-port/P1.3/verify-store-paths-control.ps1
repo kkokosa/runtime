@@ -16,6 +16,7 @@ $temporaryRoot = Join-Path ([IO.Path]::GetTempPath()) "p13-store-paths-$([Guid]:
 $archive = Join-Path $temporaryRoot 'tip.tar'
 $archiveRoot = Join-Path $temporaryRoot 'original'
 $perturbedRoot = Join-Path $temporaryRoot 'perturbed'
+$perturbationCount = 0
 
 function Assert-LiteralCount(
     [string]$Text,
@@ -51,6 +52,7 @@ function Invoke-Perturbation(
         if ($LASTEXITCODE -eq 0) {
             throw "Verifier accepted perturbation: $Description"
         }
+        $script:perturbationCount++
     } finally {
         Copy-Item -LiteralPath $sourcePath -Destination $path -Force
     }
@@ -103,13 +105,38 @@ try {
         ',1.8734,' `
         ',9.9999,' `
         'published benchmark ratio'
+    Invoke-Perturbation `
+        'src\coreclr\jit\lower.cpp' `
+        'layout->GetSize() > MaxUnrolledLayoutBytes' `
+        'layout->GetSize() < MaxUnrolledLayoutBytes' `
+        'large-layout JIT bound'
+    Invoke-Perturbation `
+        'src\coreclr\vm\gchelpers.cpp' `
+        'lowestOffsetSeries[-middle]' `
+        'lowestOffsetSeries[middle]' `
+        'chunk descriptor search direction'
+    Invoke-Perturbation `
+        'docs\design\lxr-port\P1.3\raw\bulk-throughput-invocations.csv' `
+        '"2689546.041091"' `
+        '"1.000000"' `
+        'paired throughput raw row'
+    Invoke-Perturbation `
+        'docs\design\lxr-port\P1.3\raw\stock-fill-codegen.csv' `
+        '751FCE9133704DEC292AA226D333A0297F0E3E94B4C229B26F086B61B771AA3A,true,CRLF' `
+        '751FCE9133704DEC292AA226D333A0297F0E3E94B4C229B26F086B61B771AA3B,true,CRLF' `
+        'stock Fill identity hash'
+    Invoke-Perturbation `
+        'docs\design\lxr-port\P1.3\raw\layout-helper-codegen.csv' `
+        ',bounded-helper,43,1,PASS,' `
+        ',bounded-helper,43000,1,PASS,' `
+        'bounded large-layout code size'
 
     & pwsh -NoProfile -File $verifier -RepositoryRoot $archiveRoot
     if ($LASTEXITCODE -ne 0) {
         throw 'Verifier did not pass again on the untouched archive.'
     }
 
-    Write-Host 'RESULT: PASS (archive pass, five exact perturbations fail, archive re-pass)'
+    Write-Host "RESULT: PASS (archive pass, $perturbationCount exact perturbations fail, archive re-pass)"
 } finally {
     if (Test-Path -LiteralPath $temporaryRoot) {
         Remove-Item -LiteralPath $temporaryRoot -Recurse -Force

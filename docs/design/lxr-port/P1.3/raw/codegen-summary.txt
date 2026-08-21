@@ -11,3 +11,14 @@ produced an empty diff for Program:StoreLargeValue,
 Program:ClearLargeValue, and Program:StoreScalars.
 
 stock disassembly: byte-identical
+
+Dedicated Program:FillReferences and Program:FillMixedReferences methods are
+also identical after normalizing relocation addresses. Their exact method
+bodies, sizes, and SHA-256 hashes are in stock-fill-codegen.txt and
+stock-fill-codegen.csv.
+
+The 48 KB / 4096-reference negative control generated 106418 bytes for copy
+and 75742 bytes for clear before the bound. Product commit b79cf85133d
+generates one helper call and 43/41 bytes; minopts, cold, and volatile forms
+also contain exactly one helper call. Exact identities are in
+layout-helper-codegen.csv.
