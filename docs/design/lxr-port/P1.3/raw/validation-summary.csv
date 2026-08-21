@@ -19,6 +19,7 @@ Pre-5.12 family rejection,Windows x64,PASS
 Interpreter mixed stores,Windows x64,PASS
 Runtime async captured objects,Windows x64 1/1,PASS
 Runtime async custom GC slice,49160-byte value and offset-aware 119387-to-690-byte clear path 1/1,PASS
+Runtime async custom GC slice stress,Windows x64 standalone GCStress=0xC 1/1,PASS
 JIT register stress,Workstation and Server,PASS
 GC stress 0xC,standalone scalar/copy/clear/fill/layout and 48 KB tracked-byref surfaces,PASS
 NativeAOT fail closed,side family rejected and CardTable returned 100,PASS
@@ -26,3 +27,4 @@ Stock codegen identity,preserved P1.2 main versus P1.3 including dedicated refer
 Microbenchmarks,three runtimes and six P1.3 methods,PASS
 Multi-thread throughput,20 paired runs with committed per-invocation rows,PASS
 Exact product archive,Linux x64 build 0 warnings/errors and five execution arms,PASS
+Exact follow-up archive,Linux x64 cf42b571513 build 0 warnings/errors large both polarities async 1/1 and standalone GCStress,PASS
