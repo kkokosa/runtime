@@ -92,7 +92,7 @@ try {
     Invoke-Perturbation `
         'src\coreclr\jit\lower.cpp' `
         'CORINFO_HELP_BULK_WRITEBARRIER_CLEAR_WITH_LAYOUT,' `
-        'CORINFO_HELP_BULK_WRITEBARRIER_CLEAR_WITH_LAYOUT_BROKEN,' `
+        'CORINFO_HELP_BROKEN_LAYOUT_CLEAR,' `
         'JIT layout clear helper'
     Invoke-Perturbation `
         'docs\design\lxr-port\P1.3\raw\benchmark-summary.csv' `
