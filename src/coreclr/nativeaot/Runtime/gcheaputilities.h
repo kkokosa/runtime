@@ -19,6 +19,9 @@ extern bool g_write_barrier_parameters_include_complete_store;
 // Whether the loaded collector's WriteBarrierParameters contains the 5.11 tail.
 extern bool g_write_barrier_parameters_include_epoch_reset;
 
+// Whether the loaded collector's WriteBarrierParameters contains the 5.12 tail.
+extern bool g_write_barrier_parameters_include_bulk_scan;
+
 #ifndef DACCESS_COMPILE
 extern "C" {
 #endif // !DACCESS_COMPILE

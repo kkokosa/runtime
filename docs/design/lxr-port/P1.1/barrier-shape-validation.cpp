@@ -62,7 +62,11 @@ static_assert(
 static_assert(
     offsetof(WriteBarrierParameters, write_barrier_epoch_reset) ==
     offsetof(WriteBarrierParameters, write_barrier_dependent_edge_slow_path) + sizeof(void*));
-static_assert(sizeof(WriteBarrierParameters) == (sizeof(void*) == 8 ? 136 : 76));
+static_assert(
+    offsetof(WriteBarrierParameters, write_barrier_bulk_scan) ==
+    (sizeof(void*) == 8 ? 136 : 76));
+static_assert(sizeof(WriteBarrierBulkScanParameters) == (sizeof(void*) == 8 ? 16 : 8));
+static_assert(sizeof(WriteBarrierParameters) == (sizeof(void*) == 8 ? 152 : 84));
 
 namespace
 {
@@ -104,6 +108,10 @@ int main()
         defaults.write_barrier_dependent_edge_slow_path == nullptr);
     Expect("zero initialization clears epoch reset",
         defaults.write_barrier_epoch_reset == nullptr);
+    Expect("zero initialization clears bulk metadata start",
+        defaults.write_barrier_bulk_scan.metadata_start == nullptr);
+    Expect("zero initialization clears bulk metadata size",
+        defaults.write_barrier_bulk_scan.metadata_size == 0);
 
     uint8_t metadata = 0;
     defaults.write_barrier_shape = WriteBarrierShape::SideMetadataFieldLog;

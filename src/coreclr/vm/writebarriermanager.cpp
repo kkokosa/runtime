@@ -200,6 +200,8 @@ WriteBarrierSlowPath g_SlotLogWriteBarrierSlowPath;
 WriteBarrierRangeSlowPath g_SlotLogWriteBarrierRangeSlowPath;
 WriteBarrierDependentEdgeSlowPath g_SlotLogWriteBarrierDependentEdgeSlowPath;
 WriteBarrierEpochReset g_SlotLogWriteBarrierEpochReset;
+WriteBarrierSideMetadataParameters g_SlotLogWriteBarrierMetadata;
+WriteBarrierBulkScanParameters g_SlotLogWriteBarrierBulkScan;
 
 WriteBarrierManager::WriteBarrierManager() :
     m_currentWriteBarrier(WRITE_BARRIER_UNINITIALIZED),
@@ -224,6 +226,8 @@ void WriteBarrierManager::ConfigureWriteBarrier(const WriteBarrierParameters* pa
         g_SlotLogWriteBarrierRangeSlowPath = parameters->write_barrier_range_slow_path;
         g_SlotLogWriteBarrierDependentEdgeSlowPath = parameters->write_barrier_dependent_edge_slow_path;
         g_SlotLogWriteBarrierEpochReset = parameters->write_barrier_epoch_reset;
+        g_SlotLogWriteBarrierMetadata = m_sideMetadata;
+        g_SlotLogWriteBarrierBulkScan = parameters->write_barrier_bulk_scan;
     }
 }
 

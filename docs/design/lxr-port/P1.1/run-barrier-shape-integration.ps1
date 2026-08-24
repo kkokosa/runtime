@@ -150,6 +150,8 @@ $scenarios = @(
     @{ Name = 'standard-rejects-null-callback'; Runtime = $validationRuntime; GC = $ValidationStandaloneGC; Server = '0'; R2R = '0'; Result = 'failure'; Error = '0x80004001'; Malformed = '2' },
     @{ Name = 'standard-rejects-granularity-overflow'; Runtime = $validationRuntime; GC = $ValidationStandaloneGC; Server = '0'; R2R = '0'; Result = 'failure'; Error = '0x80004001'; Malformed = '3' },
     @{ Name = 'standard-rejects-invalid-polarity'; Runtime = $validationRuntime; GC = $ValidationStandaloneGC; Server = '0'; R2R = '0'; Result = 'failure'; Error = '0x80004001'; Malformed = '4' },
+    @{ Name = 'standard-rejects-null-bulk-metadata'; Runtime = $validationRuntime; GC = $ValidationStandaloneGC; Server = '0'; R2R = '0'; Result = 'failure'; Error = '0x80004001'; Malformed = '5' },
+    @{ Name = 'standard-rejects-unaligned-bulk-metadata-size'; Runtime = $validationRuntime; GC = $ValidationStandaloneGC; Server = '0'; R2R = '0'; Result = 'failure'; Error = '0x80004001'; Malformed = '6' },
     @{ Name = 'old-runtime-rejects-new-side-shape'; Runtime = $previousRuntime; GC = $ValidationStandaloneGC; Server = '0'; R2R = '0'; Result = 'failure'; Error = '0x80004001' }
 )
 

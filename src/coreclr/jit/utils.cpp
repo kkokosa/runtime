@@ -1695,6 +1695,8 @@ void HelperCallProperties::init()
                 isNoGC = true;
                 FALLTHROUGH;
             case CORINFO_HELP_BULK_WRITEBARRIER:
+            case CORINFO_HELP_BULK_WRITEBARRIER_WITH_LAYOUT:
+            case CORINFO_HELP_BULK_WRITEBARRIER_CLEAR_WITH_LAYOUT:
                 mutatesHeap = true;
                 break;
 

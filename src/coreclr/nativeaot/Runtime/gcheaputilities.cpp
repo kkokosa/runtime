@@ -14,6 +14,7 @@ GPTR_IMPL(IGCHeap, g_pGCHeap);
 bool g_write_barrier_parameters_include_shape;
 bool g_write_barrier_parameters_include_complete_store;
 bool g_write_barrier_parameters_include_epoch_reset;
+bool g_write_barrier_parameters_include_bulk_scan;
 
 // These globals are variables used within the GC and maintained
 // by the EE for use in write barriers. It is the responsibility
@@ -78,6 +79,7 @@ HRESULT GCHeapUtilities::InitializeDefaultGC()
     g_write_barrier_parameters_include_shape = true;
     g_write_barrier_parameters_include_complete_store = true;
     g_write_barrier_parameters_include_epoch_reset = true;
+    g_write_barrier_parameters_include_bulk_scan = true;
     g_gc_dac_vars.major_version_number = GC_INTERFACE_MAJOR_VERSION;
     g_gc_dac_vars.minor_version_number = GC_INTERFACE_MINOR_VERSION;
     HRESULT initResult = GC_Initialize(nullptr, &heap, &manager, &g_gc_dac_vars);

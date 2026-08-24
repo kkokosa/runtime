@@ -20,6 +20,14 @@ namespace System
             nuint elementCount);
 
         [MethodImpl(MethodImplOptions.InternalCall)]
+        private static extern unsafe void BulkFillWithOldValueWriteBarrierInternal(
+            ref byte destination,
+            ref byte value,
+            MethodTable* type,
+            nuint elementSize,
+            nuint elementCount);
+
+        [MethodImpl(MethodImplOptions.InternalCall)]
         private static extern void BulkMoveWithWriteBarrierInternal(ref byte destination, ref byte source, nuint byteCount);
 
         [MethodImpl(MethodImplOptions.InternalCall)]
@@ -45,11 +53,40 @@ namespace System
                 return;
             }
 
-            nuint elementsPerChunk = BulkMoveWithWriteBarrierChunk / elementSize;
-            if (elementsPerChunk == 0)
+            if (elementSize > BulkMoveWithWriteBarrierChunk)
             {
-                elementsPerChunk = 1;
+                if ((nuint)(nint)Unsafe.ByteOffset(ref source, ref destination) >= totalByteCount)
+                {
+                    for (nuint element = 0; element < elementCount; element++)
+                    {
+                        nuint byteOffset = element * elementSize;
+                        BulkMoveValueClassWithOldValueWriteBarrier(
+                            ref Unsafe.AddByteOffset(ref destination, byteOffset),
+                            ref Unsafe.AddByteOffset(ref source, byteOffset),
+                            type,
+                            0,
+                            elementSize);
+                    }
+                }
+                else
+                {
+                    for (nuint element = elementCount; element != 0; element--)
+                    {
+                        nuint byteOffset = (element - 1) * elementSize;
+                        BulkMoveValueClassWithOldValueWriteBarrier(
+                            ref Unsafe.AddByteOffset(ref destination, byteOffset),
+                            ref Unsafe.AddByteOffset(ref source, byteOffset),
+                            type,
+                            0,
+                            elementSize);
+                    }
+                }
+
+                return;
             }
+
+            nuint elementsPerChunk = BulkMoveWithWriteBarrierChunk / elementSize;
+            Debug.Assert(elementsPerChunk != 0);
 
             if ((nuint)(nint)Unsafe.ByteOffset(ref source, ref destination) >= totalByteCount)
             {
@@ -87,6 +124,143 @@ namespace System
             }
         }
 
+        [MethodImpl(MethodImplOptions.InternalCall)]
+        private static extern unsafe void BulkMoveValueClassWithOldValueWriteBarrierInternal(
+            ref byte destination,
+            ref byte source,
+            MethodTable* type,
+            nuint gcLayoutOffset,
+            nuint elementSize,
+            nuint chunkOffset,
+            nuint chunkSize);
+
+        [MethodImpl(MethodImplOptions.InternalCall)]
+        private static extern unsafe void ClearValueClassWithOldValueWriteBarrierInternal(
+            ref byte destination,
+            MethodTable* type,
+            nuint gcLayoutOffset,
+            nuint elementSize,
+            nuint chunkOffset,
+            nuint chunkSize);
+
+        internal static unsafe void BulkMoveValueClassWithOldValueWriteBarrier(
+            ref byte destination,
+            ref byte source,
+            MethodTable* type,
+            nuint gcLayoutOffset,
+            nuint elementSize)
+        {
+            Debug.Assert(elementSize != 0);
+            if (Unsafe.AreSame(ref destination, ref source))
+            {
+                return;
+            }
+
+            if ((nuint)(nint)Unsafe.ByteOffset(ref source, ref destination) >= elementSize)
+            {
+                nuint processed = 0;
+                while (processed < elementSize)
+                {
+                    nuint chunkSize = Math.Min(BulkMoveWithWriteBarrierChunk, elementSize - processed);
+                    BulkMoveValueClassWithOldValueWriteBarrierInternal(
+                        ref Unsafe.AddByteOffset(ref destination, processed),
+                        ref Unsafe.AddByteOffset(ref source, processed),
+                        type,
+                        gcLayoutOffset,
+                        elementSize,
+                        processed,
+                        chunkSize);
+                    processed += chunkSize;
+                    Thread.FastPollGC();
+                }
+            }
+            else
+            {
+                nuint remaining = elementSize;
+                while (remaining != 0)
+                {
+                    nuint chunkSize = Math.Min(BulkMoveWithWriteBarrierChunk, remaining);
+                    remaining -= chunkSize;
+                    BulkMoveValueClassWithOldValueWriteBarrierInternal(
+                        ref Unsafe.AddByteOffset(ref destination, remaining),
+                        ref Unsafe.AddByteOffset(ref source, remaining),
+                        type,
+                        gcLayoutOffset,
+                        elementSize,
+                        remaining,
+                        chunkSize);
+                    Thread.FastPollGC();
+                }
+            }
+        }
+
+        internal static unsafe void ClearValueClassWithOldValueWriteBarrier(
+            ref byte destination,
+            MethodTable* type,
+            nuint gcLayoutOffset,
+            nuint elementSize)
+        {
+            Debug.Assert(elementSize != 0);
+
+            nuint processed = 0;
+            while (processed < elementSize)
+            {
+                nuint chunkSize = Math.Min(BulkMoveWithWriteBarrierChunk, elementSize - processed);
+                ClearValueClassWithOldValueWriteBarrierInternal(
+                    ref Unsafe.AddByteOffset(ref destination, processed),
+                    type,
+                    gcLayoutOffset,
+                    elementSize,
+                    processed,
+                    chunkSize);
+                processed += chunkSize;
+                Thread.FastPollGC();
+            }
+        }
+
+        internal static unsafe void BulkFillWithOldValueWriteBarrier(
+            ref byte destination,
+            ref byte value,
+            MethodTable* type,
+            nuint elementSize,
+            nuint elementCount)
+        {
+            Debug.Assert(elementSize != 0);
+            Debug.Assert(elementCount <= (nuint.MaxValue / elementSize));
+
+            if (elementSize > BulkMoveWithWriteBarrierChunk)
+            {
+                for (nuint element = 0; element < elementCount; element++)
+                {
+                    BulkMoveValueClassWithOldValueWriteBarrier(
+                        ref Unsafe.AddByteOffset(ref destination, element * elementSize),
+                        ref value,
+                        type,
+                        0,
+                        elementSize);
+                }
+
+                return;
+            }
+
+            nuint elementsPerChunk = BulkMoveWithWriteBarrierChunk / elementSize;
+            Debug.Assert(elementsPerChunk != 0);
+
+            nuint processed = 0;
+            while (processed < elementCount)
+            {
+                nuint chunk = Math.Min(elementsPerChunk, elementCount - processed);
+                BulkFillWithOldValueWriteBarrierInternal(
+                    ref Unsafe.AddByteOffset(ref destination, processed * elementSize),
+                    ref value,
+                    type,
+                    elementSize,
+                    chunk);
+                processed += chunk;
+                Thread.FastPollGC();
+            }
+        }
+
         internal static unsafe void ClearWithOldValueWriteBarrier(
             ref byte destination,
             MethodTable* type,
@@ -96,11 +270,22 @@ namespace System
             Debug.Assert(elementSize != 0);
             Debug.Assert(elementCount <= (nuint.MaxValue / elementSize));
 
-            nuint elementsPerChunk = BulkMoveWithWriteBarrierChunk / elementSize;
-            if (elementsPerChunk == 0)
+            if (elementSize > BulkMoveWithWriteBarrierChunk)
             {
-                elementsPerChunk = 1;
+                for (nuint element = 0; element < elementCount; element++)
+                {
+                    ClearValueClassWithOldValueWriteBarrier(
+                        ref Unsafe.AddByteOffset(ref destination, element * elementSize),
+                        type,
+                        0,
+                        elementSize);
+                }
+
+                return;
             }
+
+            nuint elementsPerChunk = BulkMoveWithWriteBarrierChunk / elementSize;
+            Debug.Assert(elementsPerChunk != 0);
 
             nuint processed = 0;
             while (processed < elementCount)

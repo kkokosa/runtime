@@ -114,6 +114,8 @@ extern "C" WriteBarrierSlowPath g_SlotLogWriteBarrierSlowPath;
 extern WriteBarrierRangeSlowPath g_SlotLogWriteBarrierRangeSlowPath;
 extern WriteBarrierDependentEdgeSlowPath g_SlotLogWriteBarrierDependentEdgeSlowPath;
 extern WriteBarrierEpochReset g_SlotLogWriteBarrierEpochReset;
+extern WriteBarrierSideMetadataParameters g_SlotLogWriteBarrierMetadata;
+extern WriteBarrierBulkScanParameters g_SlotLogWriteBarrierBulkScan;
 
 #endif // TARGET_AMD64 || TARGET_ARM64
 

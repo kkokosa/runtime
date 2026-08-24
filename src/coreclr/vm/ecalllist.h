@@ -272,8 +272,11 @@ FCFuncStart(gArrayFuncs)
 FCFuncEnd()
 
 FCFuncStart(gBufferFuncs)
+    FCFuncElement("BulkFillWithOldValueWriteBarrierInternal", Buffer::BulkFillWithOldValueWriteBarrier)
     FCFuncElement("BulkMoveWithOldValueWriteBarrierInternal", Buffer::BulkMoveWithOldValueWriteBarrier)
+    FCFuncElement("BulkMoveValueClassWithOldValueWriteBarrierInternal", Buffer::BulkMoveValueClassWithOldValueWriteBarrier)
     FCFuncElement("BulkMoveWithWriteBarrierInternal", Buffer::BulkMoveWithWriteBarrier)
+    FCFuncElement("ClearValueClassWithOldValueWriteBarrierInternal", Buffer::ClearValueClassWithOldValueWriteBarrier)
     FCFuncElement("ClearWithOldValueWriteBarrierInternal", Buffer::ClearWithOldValueWriteBarrier)
 FCFuncEnd()
 

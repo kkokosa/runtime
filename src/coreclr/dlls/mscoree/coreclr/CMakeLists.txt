@@ -56,6 +56,7 @@ if (NOT CLR_CMAKE_HOST_ARCH_WASM)
             "/EXPORT:GC_WriteBarrierTest_GetDependentEdgeCallCount"
             "/EXPORT:GC_WriteBarrierTest_Reset"
             "/EXPORT:GC_WriteBarrierTest_ResetRange"
+            "/EXPORT:GC_WriteBarrierTest_SetRequiresWork"
             "/EXPORT:GC_WriteBarrierTest_GetAttemptCount"
             "/EXPORT:GC_WriteBarrierTest_GetWinCount"
             "/EXPORT:GC_WriteBarrierTest_GetArgumentErrorCount"

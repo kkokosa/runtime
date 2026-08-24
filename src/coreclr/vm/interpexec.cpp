@@ -4683,9 +4683,11 @@ do                                                                      \
                     if (bytesTotal != 0)
                     {
                         GCHeapMemoryBarrier();
-                        bool useSlotLog = false;
+                        WriteBarrierBulkAction bulkAction =
+                            ClassifyWriteBarrierBulk(pContinuationDataStart, bytesTotal);
+                        bool useSlotLog = bulkAction != WriteBarrierBulkAction::CardTable;
 #ifdef TARGET_AMD64
-                        if (g_SlotLogWriteBarrierSlowPath != nullptr)
+                        if (bulkAction == WriteBarrierBulkAction::NeedsSlowPath)
                         {
                             MethodTable* continuationType = continuation->GetMethodTable();
                             if (continuationType->ContainsGCPointers())
@@ -4731,7 +4733,7 @@ do                                                                      \
                                         _ASSERTE((sourceOffset + sizeof(Object*)) <= sourceEntry->countBytes);
                                         Object** source = reinterpret_cast<Object**>(
                                             LOCAL_VAR_ADDR(sourceEntry->startOffset + sourceOffset, uint8_t));
-                                        useSlotLog |= ErectWriteBarrierPre(
+                                        ErectWriteBarrierPre(
                                             reinterpret_cast<Object**>(destination), VolatileLoad(source));
                                     }
                                 }
