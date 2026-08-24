@@ -27,9 +27,10 @@ param([string]$LogDir = "$env:USERPROFILE\.copilot\logs\extensions",
 
 $ErrorActionPreference = 'Stop'
 
-$EXPECTED = @{ Phases = 11; Steps = 54; Fields = 360; Rules = 109 }
+$EXPECTED = @{ Phases = 11; Steps = 54; Fields = 360; Rules = 110 }
 
 $board = Join-Path $PSScriptRoot 'roadmap.md'
+$extension = Join-Path $PSScriptRoot 'extension.mjs'
 $pass = 0
 $fail = 0
 
@@ -75,6 +76,20 @@ if ($rules.Count -ge $EXPECTED.Rules) {
     ok "rule count $($rules.Count) meets the floor of $($EXPECTED.Rules)"
 } else {
     bad "rule count $($rules.Count) is below the floor of $($EXPECTED.Rules); rules have been lost"
+}
+
+$extensionText = if (Test-Path -LiteralPath $extension -PathType Leaf) {
+    Get-Content -LiteralPath $extension -Raw
+} else {
+    ''
+}
+$hasLxrBase = $extensionText.Contains('base_branch=\"lxr\"')
+$hasLxrPrBase = $extensionText.Contains('Every LXR pull request targets the `lxr` branch')
+$protectsMain = $extensionText.Contains('Fork `main` tracks `upstream/main`')
+if ($hasLxrBase -and $hasLxrPrBase -and $protectsMain) {
+    ok 'LXR branch flow: sessions and pull requests use lxr; main tracks upstream'
+} else {
+    bad "LXR branch flow drifted: base=$hasLxrBase, prBase=$hasLxrPrBase, protectsMain=$protectsMain"
 }
 
 Write-Output ''

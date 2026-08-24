@@ -29,9 +29,11 @@ New-Item -ItemType Directory -Path $work | Out-Null
 New-Item -ItemType Directory -Path $logs | Out-Null
 Copy-Item (Join-Path $src 'board-check.ps1') $work
 Copy-Item (Join-Path $src 'roadmap.md') (Join-Path $work 'pristine.md')
+Copy-Item (Join-Path $src 'extension.mjs') (Join-Path $work 'pristine-extension.mjs')
 
 $board = Join-Path $work 'roadmap.md'
 $bc    = Join-Path $work 'board-check.ps1'
+$extension = Join-Path $work 'extension.mjs'
 
 # Ask the battery what it considers its own root rather than deriving it here. $env:TEMP
 # yields the 8.3 short form (KONRAD~1) while $PSScriptRoot resolves long, so a locally
@@ -213,6 +215,8 @@ $cases = @(
     @{ n = 'selfcount-2';     want = "rule 93's self-count" },
     @{ n = 'ridentity-1';     want = 'rule identity' },
     @{ n = 'ridentity-2';     want = 'rule identity' },
+    @{ n = 'branchflow-1';    want = 'LXR branch flow' },
+    @{ n = 'branchflow-2';    want = 'LXR branch flow' },
     @{ n = 'pristine';        want = '<none>' }
 )
 
@@ -228,6 +232,7 @@ $unreached = @()
 foreach ($c in $cases) {
     Get-ChildItem $logs -File | Remove-Item -Force
     $pristine | Set-Content $board
+    Copy-Item (Join-Path $work 'pristine-extension.mjs') $extension -Force
 
     switch -Regex ($c.n) {
         '^identity-alpha$' { Write-ExtLog 'ext-1.log' 'D:\decoy-alpha' (Get-Date) }
@@ -239,6 +244,20 @@ foreach ($c in $cases) {
         '^distinct-delta$' {
             Write-ExtLog 'ext-old.log' 'E:\other-delta' (Get-Date).AddHours(-2)
             Write-ExtLog 'ext-new.log' $selfPath        (Get-Date)
+        }
+        '^branchflow-1$' {
+            $text = (Get-Content -LiteralPath $extension -Raw).Replace(
+                'base_branch=\"lxr\"',
+                'base_branch=\"main\"')
+            Set-Content -LiteralPath $extension -Value $text -NoNewline
+            Write-ExtLog 'ext-new.log' $selfPath (Get-Date)
+        }
+        '^branchflow-2$' {
+            $text = (Get-Content -LiteralPath $extension -Raw).Replace(
+                'Every LXR pull request targets the `lxr` branch',
+                'Every LXR pull request targets the `main` branch')
+            Set-Content -LiteralPath $extension -Value $text -NoNewline
+            Write-ExtLog 'ext-new.log' $selfPath (Get-Date)
         }
         default {
             Write-ExtLog 'ext-1.log' $selfPath (Get-Date)
