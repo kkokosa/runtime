@@ -312,7 +312,6 @@ set(VM_SOURCES_WKS
     clrvarargs.cpp
     comdatetime.cpp
     comdelegate.cpp
-    comdependenthandle.cpp
     comdynamic.cpp
     commodule.cpp
     comsynchronizable.cpp
@@ -329,6 +328,7 @@ set(VM_SOURCES_WKS
     eecontract.cpp
     eepolicy.cpp
     eetoprofinterfaceimpl.cpp
+    ephemeronarray.cpp
     eventpipeinternal.cpp
     fcall.cpp
     fieldmarshaler.cpp
@@ -422,7 +422,6 @@ set(VM_HEADERS_WKS
     clrvarargs.h
     comdatetime.h
     comdelegate.h
-    comdependenthandle.h
     comdynamic.h
     commodule.h
     comsynchronizable.h
@@ -440,6 +439,7 @@ set(VM_HEADERS_WKS
     eeprofinterfaces.inl
     eetoprofinterfaceimpl.h
     eetoprofinterfaceimpl.inl
+    ephemeronarray.h
     eventpipeadapter.h
     eventpipeadaptertypes.h
     eventpipeinternal.h

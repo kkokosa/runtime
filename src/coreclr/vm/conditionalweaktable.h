@@ -18,14 +18,26 @@ typedef DPTR(ConditionalWeakTableContainerObject) CONDITIONAL_WEAK_TABLE_CONTAIN
 typedef DPTR(ConditionalWeakTableObject) CONDITIONAL_WEAK_TABLE_REF;
 #endif
 
+// Mirrors the ephemeron pair the managed ConditionalWeakTable stores inline in its entries array.
+// See System.Runtime.Ephemeron: the two slots are raw object pointers rather than object references,
+// because the entries array's GC descriptor deliberately does not describe them - the array's
+// ephemeron registration is what gives them their conditional semantics.
+struct EphemeronPair
+{
+    TADDR Key;
+    TADDR Value;
+};
+
 class ConditionalWeakTableContainerObject final : public Object
 {
     friend class CoreLibBinder;
     struct Entry
     {
+        // The field order here must match the managed auto layout; it is validated by the
+        // DEFINE_FIELD_U entries in corelib.h.
         int32_t HashCode;
         int32_t Next;
-        OBJECTHANDLE depHnd;
+        EphemeronPair Pair;
     };
 
 #ifdef USE_CHECKED_OBJECTREFS

@@ -664,7 +664,9 @@ internal sealed partial class ConditionalWeakTableEntry : IData<ConditionalWeakT
     [Field("HashCode")] public partial int HashCode { get; }
     [Field("Next")]     public partial int Next { get; }
     [FieldAddress("depHnd")]
-    public partial TargetPointer DepHndAddress { get; }
+    public partial TargetPointer? DepHndAddress { get; }
+    [FieldAddress("Pair")]
+    public partial TargetPointer? PairAddress { get; }
 }
 ```
 

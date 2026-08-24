@@ -512,41 +512,80 @@ namespace System.Runtime.CompilerServices
         // Entry can be in one of four states:
         //
         //    - Unused (stored with an index _firstFreeEntry and above)
-        //         depHnd.IsAllocated == false
+        //         GetKey() == null
         //         hashCode == <dontcare>
         //         next == <dontcare>)
         //
         //    - Used with live key (linked into a bucket list where _buckets[hashCode & (_buckets.Length - 1)] points to first entry)
-        //         depHnd.IsAllocated == true, depHnd.GetPrimary() != null
-        //         hashCode == RuntimeHelpers.GetHashCode(depHnd.GetPrimary()) & int.MaxValue
+        //         GetKey() != null
+        //         hashCode == RuntimeHelpers.GetHashCode(GetKey()) & int.MaxValue
         //         next links to next Entry in bucket.
         //
         //    - Used with dead key (linked into a bucket list where _buckets[hashCode & (_buckets.Length - 1)] points to first entry)
-        //         depHnd.IsAllocated == true, depHnd.GetPrimary() is null
+        //         GetKey() == null
         //         hashCode == <notcare>
         //         next links to next Entry in bucket.
         //
         //    - Has been removed from the table (by a call to Remove)
-        //         depHnd.IsAllocated == true, depHnd.GetPrimary() == <notcare>
+        //         GetKey() == <notcare>
         //         hashCode == -1
         //         next links to next Entry in bucket.
         //
         // The only difference between "used with live key" and "used with dead key" is that
-        // depHnd.GetPrimary() returns null. The transition from "used with live key" to "used with dead key"
+        // GetKey() returns null. The transition from "used with live key" to "used with dead key"
         // happens asynchronously as a result of normal garbage collection. The dictionary itself
         // receives no notification when this happens.
         //
         // When the dictionary grows the _entries table, it scours it for expired keys and does not
         // add those to the new container.
-        //  [cDAC] [ConditionalWeakTable] : Contract depends on the exact names of this type and the fields depHnd, HashCode, and Next.
+        //  [cDAC] [ConditionalWeakTable] : Contract depends on the exact names of this type and the fields Pair, HashCode, and Next.
         //--------------------------------------------------------------------------------------------
         [StructLayout(LayoutKind.Auto)]
         private struct Entry
         {
+#if CORECLR
+            // The key and the value, held directly by this entry rather than by a per entry handle
+            // or cell. The whole entries array of a container is registered with the GC once, which
+            // is what gives these two slots their conditional semantics: the value is only kept
+            // alive for as long as the key is reachable without going through the value.
+            //
+            // These slots are not object references as far as the GC descriptor of the entries
+            // array is concerned, so they must only ever be touched through EphemeronArray, and the
+            // entry must never be copied by value.
+            public Ephemeron Pair;
+#else
             public DependentHandle depHnd;      // Holds key and value using a weak reference for the key and a strong reference
                                                 // for the value that is traversed only if the key is reachable without going through the value.
+#endif
             public int HashCode;    // Cached copy of key's hashcode
             public int Next;        // Index of next entry, -1 if last
+
+            /// <summary>Gets the key of this entry, or null if it is unused, expired or removed.</summary>
+            public object? GetKey()
+            {
+#if CORECLR
+                return EphemeronArray.GetKey(ref Pair);
+#else
+                return depHnd.IsAllocated ? depHnd.UnsafeGetTarget() : null;
+#endif
+            }
+
+            /// <summary>Atomically gets the key and value of this entry.</summary>
+            /// <remarks>This method requires <paramref name="value"/> to be on the stack to be properly tracked.</remarks>
+            public object? GetKeyAndValue(out object? value)
+            {
+#if CORECLR
+                return EphemeronArray.GetKeyAndValue(ref Pair, out value);
+#else
+                if (!depHnd.IsAllocated)
+                {
+                    value = null;
+                    return null;
+                }
+
+                return depHnd.UnsafeGetTargetAndDependent(out value);
+#endif
+            }
         }
 
         /// <summary>
@@ -558,11 +597,14 @@ namespace System.Runtime.CompilerServices
         {
             private readonly ConditionalWeakTable<TKey, TValue> _parent;  // the ConditionalWeakTable with which this container is associated
             private int[] _buckets;                // _buckets[hashcode & (_buckets.Length - 1)] contains index of the first entry in bucket (-1 if empty). [cDAC] [ConditionalWeakTable] : Contract depends on this exact name
-            private Entry[] _entries;              // the table entries containing the stored dependency handles. [cDAC] [ConditionalWeakTable] : Contract depends on this exact name
+            private Entry[] _entries;              // the table entries containing the stored key/value pairs. [cDAC] [ConditionalWeakTable] : Contract depends on this exact name
             private int _firstFreeEntry;           // _firstFreeEntry < _entries.Length => table has capacity,  entries grow from the bottom of the table.
             private bool _invalid;                 // flag detects if OOM or other background exception threw us out of the lock.
+            private readonly nint _entriesRegistration; // the GC's token for _entries, or 0 where entries describe themselves
+#if !CORECLR
             private bool _finalized;               // set to true when initially finalized
             private volatile object? _oldKeepAlive; // used to ensure the next allocated container isn't finalized until this one is GC'd
+#endif
 
             internal Container(ConditionalWeakTable<TKey, TValue> parent)
             {
@@ -575,7 +617,7 @@ namespace System.Runtime.CompilerServices
                 {
                     _buckets[i] = -1;
                 }
-                _entries = new Entry[Size];
+                _entries = AllocateEntries(Size, out _entriesRegistration);
 
                 // Only store the parent after all of the allocations have happened successfully.
                 // Otherwise, as part of growing or clearing the container, we could end up allocating
@@ -584,7 +626,7 @@ namespace System.Runtime.CompilerServices
                 _parent = parent;
             }
 
-            private Container(ConditionalWeakTable<TKey, TValue> parent, int[] buckets, Entry[] entries, int firstFreeEntry)
+            private Container(ConditionalWeakTable<TKey, TValue> parent, int[] buckets, Entry[] entries, nint entriesRegistration, int firstFreeEntry)
             {
                 Debug.Assert(parent != null);
                 Debug.Assert(buckets != null);
@@ -595,7 +637,44 @@ namespace System.Runtime.CompilerServices
                 _parent = parent;
                 _buckets = buckets;
                 _entries = entries;
+                _entriesRegistration = entriesRegistration;
                 _firstFreeEntry = firstFreeEntry;
+            }
+
+            /// <summary>Allocates the storage for a container's entries.</summary>
+            /// <remarks>
+            /// On CoreCLR every key/value pair of a container lives directly in this one array, which
+            /// is registered with the GC as an ephemeron array. Registration happens here, before the
+            /// array is published or any pair is stored into it: until it is registered the GC does
+            /// not trace its pairs, so a value stored beforehand would simply be dropped. If the
+            /// registration cannot be recorded this throws, and the half built container is
+            /// discarded without ever having been reachable.
+            /// </remarks>
+            private static Entry[] AllocateEntries(int size, out nint entriesRegistration)
+            {
+                Entry[] entries = new Entry[size];
+#if CORECLR
+                ref Entry entry = ref MemoryMarshal.GetArrayDataReference(entries);
+                int pairOffset = (int)Unsafe.ByteOffset(
+                    ref Unsafe.As<Entry, byte>(ref entry),
+                    ref Unsafe.As<Ephemeron, byte>(ref entry.Pair));
+
+                entriesRegistration = EphemeronArray.Register(entries, pairOffset);
+#else
+                entriesRegistration = 0;
+#endif
+                return entries;
+            }
+
+            /// <summary>Stores a key/value pair into an entry that is not reachable by any reader yet.</summary>
+            private static void InitializeEntry(ref Entry entry, nint entriesRegistration, object key, object? value)
+            {
+#if CORECLR
+                EphemeronArray.SetKeyAndValue(entriesRegistration, ref entry.Pair, key, value);
+#else
+                _ = entriesRegistration;
+                entry.depHnd = new DependentHandle(key, value);
+#endif
             }
 
             internal bool HasCapacity => _firstFreeEntry < _entries.Length;
@@ -615,7 +694,7 @@ namespace System.Runtime.CompilerServices
                 int newEntry = _firstFreeEntry++;
 
                 _entries[newEntry].HashCode = hashCode;
-                _entries[newEntry].depHnd = new DependentHandle(key, value);
+                InitializeEntry(ref _entries[newEntry], _entriesRegistration, key, value);
                 int bucket = hashCode & (_buckets.Length - 1);
                 _entries[newEntry].Next = _buckets[bucket];
 
@@ -659,15 +738,15 @@ namespace System.Runtime.CompilerServices
                 int bucket = hashCode & (_buckets.Length - 1);
                 for (int entriesIndex = Volatile.Read(ref _buckets[bucket]); entriesIndex != -1; entriesIndex = _entries[entriesIndex].Next)
                 {
-                    if (_entries[entriesIndex].HashCode == hashCode && _entries[entriesIndex].depHnd.UnsafeGetTargetAndDependent(out value) == key)
+                    if (_entries[entriesIndex].HashCode == hashCode && _entries[entriesIndex].GetKeyAndValue(out value) == key)
                     {
-                        GC.KeepAlive(this); // Ensure we don't get finalized while accessing DependentHandle
+                        GC.KeepAlive(this); // Ensure we don't get finalized while accessing the entries
 
                         return entriesIndex;
                     }
                 }
 
-                GC.KeepAlive(this); // Ensure we don't get finalized while accessing DependentHandle
+                GC.KeepAlive(this); // Ensure we don't get finalized while accessing the entries
                 value = null;
                 return -1;
             }
@@ -677,9 +756,9 @@ namespace System.Runtime.CompilerServices
             {
                 if (index < _entries.Length)
                 {
-                    object? oKey = _entries[index].depHnd.UnsafeGetTargetAndDependent(out object? oValue);
+                    object? oKey = _entries[index].GetKeyAndValue(out object? oValue);
 
-                    GC.KeepAlive(this); // Ensure we don't get finalized while accessing DependentHandle
+                    GC.KeepAlive(this); // Ensure we don't get finalized while accessing the entries
 
                     if (oKey != null)
                     {
@@ -726,13 +805,26 @@ namespace System.Runtime.CompilerServices
 
                 ref Entry entry = ref _entries[entryIndex];
 
-                // We do not free the handle here, as we may be racing with readers who already saw the hash code.
+                // We do not free the entry here, as we may be racing with readers who already saw the hash code.
                 // Instead, we simply overwrite the entry's hash code, so subsequent reads will ignore it.
-                // The handle will be free'd in Container's finalizer, after the table is resized or discarded.
+                // Native handles are free'd in Container's finalizer, after the table is resized or discarded;
+                // pairs held directly by the entries array are reclaimed with the array itself.
                 Volatile.Write(ref entry.HashCode, -1);
 
                 // Also, clear the key to allow GC to collect objects pointed to by the entry
+                RetireEntry(ref entry);
+            }
+
+            /// <summary>Permanently clears the key and the value of an entry.</summary>
+            private static void RetireEntry(ref Entry entry)
+            {
+#if CORECLR
+                // Storing null needs no registration token: a null slot references nothing, so it can
+                // never make an array interesting to a collection that would otherwise skip it.
+                EphemeronArray.Retire(ref entry.Pair);
+#else
                 entry.depHnd.UnsafeSetTargetToNull();
+#endif
             }
 
             internal void UpdateValue(int entryIndex, TValue newValue)
@@ -742,7 +834,11 @@ namespace System.Runtime.CompilerServices
                 VerifyIntegrity();
                 _invalid = true;
 
+#if CORECLR
+                EphemeronArray.SetValue(_entriesRegistration, ref _entries[entryIndex].Pair, newValue);
+#else
                 _entries[entryIndex].depHnd.UnsafeSetDependent(newValue);
+#endif
 
                 _invalid = false;
             }
@@ -774,7 +870,7 @@ namespace System.Runtime.CompilerServices
                             break;
                         }
 
-                        if (entry.depHnd.IsAllocated && entry.depHnd.UnsafeGetTarget() is null)
+                        if (entry.GetKey() is null)
                         {
                             // the entry has expired
                             hasExpiredEntries = true;
@@ -804,15 +900,19 @@ namespace System.Runtime.CompilerServices
                 {
                     newBuckets[bucketIndex] = -1;
                 }
-                Entry[] newEntries = new Entry[newSize];
+                Entry[] newEntries = AllocateEntries(newSize, out nint newEntriesRegistration);
                 int newEntriesIndex = 0;
                 bool activeEnumerators = _parent != null && _parent._activeEnumeratorRefCount > 0;
+#if !CORECLR
                 bool transferredHandles;
+#endif
 
                 // Migrate existing entries to the new table.
                 if (activeEnumerators)
                 {
+#if !CORECLR
                     transferredHandles = true;
+#endif
 
                     // There's at least one active enumerator, which means we don't want to
                     // remove any expired/removed entries, in order to not affect existing
@@ -825,7 +925,7 @@ namespace System.Runtime.CompilerServices
                         int hashCode = oldEntry.HashCode;
 
                         newEntry.HashCode = hashCode;
-                        newEntry.depHnd = oldEntry.depHnd;
+                        TransferEntry(ref oldEntry, ref newEntry, newEntriesRegistration);
                         int bucket = hashCode & (newBuckets.Length - 1);
                         newEntry.Next = newBuckets[bucket];
                         newBuckets[bucket] = newEntriesIndex;
@@ -833,7 +933,9 @@ namespace System.Runtime.CompilerServices
                 }
                 else
                 {
+#if !CORECLR
                     transferredHandles = false;
+#endif
 
                     // There are no active enumerators, which means we want to compact by
                     // removing expired/removed entries.
@@ -841,18 +943,19 @@ namespace System.Runtime.CompilerServices
                     {
                         ref Entry oldEntry = ref _entries[entriesIndex];
                         int hashCode = oldEntry.HashCode;
-                        DependentHandle depHnd = oldEntry.depHnd;
-                        if (hashCode != -1 && depHnd.IsAllocated)
+                        if (hashCode != -1)
                         {
-                            if (depHnd.UnsafeGetTarget() is not null)
+                            if (oldEntry.GetKey() is not null)
                             {
+#if !CORECLR
                                 transferredHandles = true;
+#endif
 
                                 ref Entry newEntry = ref newEntries[newEntriesIndex];
 
                                 // Entry is used and has not expired. Link it into the appropriate bucket list.
                                 newEntry.HashCode = hashCode;
-                                newEntry.depHnd = depHnd;
+                                TransferEntry(ref oldEntry, ref newEntry, newEntriesRegistration);
                                 int bucket = hashCode & (newBuckets.Length - 1);
                                 newEntry.Next = newBuckets[bucket];
                                 newBuckets[bucket] = newEntriesIndex;
@@ -872,7 +975,8 @@ namespace System.Runtime.CompilerServices
                 // the old container to the new container, and also ensure that the new container isn't finalized
                 // while the old container may still be in use.  As such, we store a reference from the old container
                 // to the new one, which will keep the new container alive as long as the old one is.
-                var newContainer = new Container(_parent!, newBuckets, newEntries, newEntriesIndex);
+                var newContainer = new Container(_parent!, newBuckets, newEntries, newEntriesRegistration, newEntriesIndex);
+#if !CORECLR
                 if (activeEnumerators)
                 {
                     // If there are active enumerators, both the old container and the new container may be storing
@@ -888,10 +992,35 @@ namespace System.Runtime.CompilerServices
                     // and the new container's finalizer can't be run until this container is no longer in use.
                     _oldKeepAlive = newContainer;
                 }
+#endif
 
-                GC.KeepAlive(this); // ensure we don't get finalized while accessing DependentHandles.
+                GC.KeepAlive(this); // ensure we don't get finalized while accessing the entries.
 
                 return newContainer;
+            }
+
+            /// <summary>Moves the key/value pair of an entry into an entry of the replacement container.</summary>
+            /// <remarks>
+            /// On CoreCLR the pair is copied rather than handed over, because it lives directly in the
+            /// container's own entries array. The copy goes through real object references, so it is
+            /// safe against a collection happening in the middle of the migration and against the
+            /// destination array being relocated; the cost is that a key that is already unreachable
+            /// but not yet collected survives one more collection. The destination array is registered
+            /// but not published yet, so the intermediate "key without value" state is not observable.
+            /// </remarks>
+            private static void TransferEntry(ref Entry oldEntry, ref Entry newEntry, nint newEntriesRegistration)
+            {
+#if CORECLR
+                object? key = EphemeronArray.GetKeyAndValue(ref oldEntry.Pair, out object? value);
+
+                if (key is not null)
+                {
+                    EphemeronArray.SetKeyAndValue(newEntriesRegistration, ref newEntry.Pair, key, value);
+                }
+#else
+                _ = newEntriesRegistration;
+                newEntry.depHnd = oldEntry.depHnd;
+#endif
             }
 
             private void VerifyIntegrity()
@@ -902,6 +1031,12 @@ namespace System.Runtime.CompilerServices
                 }
             }
 
+#if !CORECLR
+            // On CoreCLR the entries hold their key/value pairs directly, in one array that is
+            // registered with the GC, so a container owns nothing that has to be released and needs
+            // no finalizer at all. That also means retired containers do not have to be kept alive
+            // by _oldKeepAlive (see Resize), which would otherwise keep a chain of replaced
+            // containers reachable.
             ~Container()
             {
                 // Skip doing anything if the container is invalid, including if somehow
@@ -953,6 +1088,7 @@ namespace System.Runtime.CompilerServices
                     }
                 }
             }
+#endif // !CORECLR
         }
     }
 }

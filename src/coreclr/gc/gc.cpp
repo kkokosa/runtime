@@ -1064,6 +1064,8 @@ size_t      gc_heap::mark_stack_array_length = 0;
 
 mark*       gc_heap::mark_stack_array = 0;
 
+bool        gc_heap::ephemeron_arrays_unpromoted_p = false;
+
 #if defined (_DEBUG) && defined (VERIFY_HEAP)
 BOOL        gc_heap::verify_pinned_queue_p = FALSE;
 #endif //_DEBUG && VERIFY_HEAP
@@ -1229,6 +1231,10 @@ no_gc_region_info gc_heap::current_no_gc_region_info;
 FinalizerWorkItem* gc_heap::finalizer_work;
 BOOL gc_heap::proceed_with_gc_p = FALSE;
 GCSpinLock gc_heap::gc_lock;
+
+ephemeron_array_chunk* gc_heap::ephemeron_chunk_list = nullptr;
+ephemeron_array_chunk* gc_heap::ephemeron_chunk_free_list = nullptr;
+VOLATILE(int32_t) gc_heap::ephemeron_registry_lock = 0;
 
 #ifdef FEATURE_JAVAMARSHAL
 uint8_t**   gc_heap::global_bridge_list;

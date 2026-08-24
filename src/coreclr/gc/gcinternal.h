@@ -2767,7 +2767,7 @@ BOOL gc_heap::is_mark_set (uint8_t* o)
 }
 
 inline
-void gc_heap::pin_object (uint8_t* o, uint8_t** ppObject)
+void gc_heap::pin_object (uint8_t* o, uint8_t** ppObject, bool cross_heap_p)
 {
     dprintf (3, ("Pinning %zx->%zx", (size_t)ppObject, (size_t)o));
     set_pinned (o);
@@ -2779,7 +2779,18 @@ void gc_heap::pin_object (uint8_t* o, uint8_t** ppObject)
     }
 #endif // FEATURE_EVENT_TRACE
 
-    num_pinned_objects++;
+    if (cross_heap_p)
+    {
+#ifdef TARGET_64BIT
+        InterlockedIncrement64 ((LONG64*)&num_pinned_objects);
+#else
+        InterlockedIncrement ((LONG*)&num_pinned_objects);
+#endif
+    }
+    else
+    {
+        num_pinned_objects++;
+    }
 }
 
 #define contain_pointers(i) header(i)->ContainsGCPointers()

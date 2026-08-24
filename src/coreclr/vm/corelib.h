@@ -838,7 +838,7 @@ DEFINE_FIELD_U(_buckets,            ConditionalWeakTableContainerObject, _bucket
 DEFINE_FIELD_U(_entries,            ConditionalWeakTableContainerObject, _entries)
 
 DEFINE_CLASS_U(CompilerServices,    ConditionalWeakTable`2+Entry, ConditionalWeakTableContainerObject::Entry)
-DEFINE_FIELD_U(depHnd,              ConditionalWeakTableContainerObject::Entry, depHnd)
+DEFINE_FIELD_U(Pair,                ConditionalWeakTableContainerObject::Entry, Pair)
 DEFINE_FIELD_U(HashCode,            ConditionalWeakTableContainerObject::Entry, HashCode)
 DEFINE_FIELD_U(Next,                ConditionalWeakTableContainerObject::Entry, Next)
 

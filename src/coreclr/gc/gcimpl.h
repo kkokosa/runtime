@@ -334,6 +334,9 @@ public:
     virtual int RefreshMemoryLimit();
 
     virtual void NullBridgeObjectsWeakRefs(size_t length, void* unreachableObjectHandles);
+
+    virtual uint8_t* RegisterEphemeronArray(Object* array, uint32_t dataOffset, uint32_t stride, uint32_t count);
+    virtual void UnregisterEphemeronArray(Object* array, uint8_t* registration);
 };
 
 #endif  // GCIMPL_H_

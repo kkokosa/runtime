@@ -17,15 +17,15 @@ IGCHandleManager* CreateGCHandleManager()
 
 void GCHandleStore::Uproot()
 {
-    // Dead path. The vtable slot is preserved for GC_INTERFACE_MAJOR_VERSION 5
-    // ABI compatibility with external standalone GC implementations.
+    // Dead path. The vtable slot is preserved to keep the interface layout stable;
+    // it is not called by the runtime.
     assert(!"Uproot is not in use");
 }
 
 bool GCHandleStore::ContainsHandle(OBJECTHANDLE handle)
 {
-    // Dead path. The vtable slot is preserved for GC_INTERFACE_MAJOR_VERSION 5
-    // ABI compatibility with external standalone GC implementations.
+    // Dead path. The vtable slot is preserved to keep the interface layout stable;
+    // it is not called by the runtime.
     assert(!"ContainsHandle is not in use");
     return false;
 }
@@ -134,8 +134,8 @@ IGCHandleStore* GCHandleManager::GetGlobalHandleStore()
 
 IGCHandleStore* GCHandleManager::CreateHandleStore()
 {
-    // Dead path. The vtable slot is preserved for GC_INTERFACE_MAJOR_VERSION 5
-    // ABI compatibility with external standalone GC implementations.
+    // Dead path. The vtable slot is preserved to keep the interface layout stable;
+    // it is not called by the runtime.
     assert(!"CreateHandleStore is not in use");
     return nullptr;
 }

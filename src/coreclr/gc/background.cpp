@@ -1090,7 +1090,7 @@ void gc_heap::background_scan_dependent_handles (ScanContext *sc)
         // determine the local value and collect the results into the s_fUnpromotedHandles variable in what is
         // effectively an OR operation. As per s_fUnscannedPromotions we can't read the final result until
         // we're safely joined.
-        if (GCScan::GcDhUnpromotedHandlesExist(sc))
+        if (GCScan::GcDhUnpromotedHandlesExist(sc) || ephemeron_arrays_unpromoted_keys_exist())
             s_fUnpromotedHandles = TRUE;
 
         // Synchronize all the threads so we can read our state variables safely. The following shared
@@ -1175,6 +1175,10 @@ void gc_heap::background_scan_dependent_handles (ScanContext *sc)
         if (GCScan::GcDhUnpromotedHandlesExist(sc))
             if (GCScan::GcDhReScan(sc))
                 s_fUnscannedPromotions = TRUE;
+
+        // Registered ephemeron arrays take part in the same fixed point as dependent handles.
+        if (scan_ephemeron_arrays_for_promotion (sc, background_promote))
+            s_fUnscannedPromotions = TRUE;
     }
 }
 
@@ -1188,7 +1192,7 @@ void gc_heap::background_scan_dependent_handles (ScanContext *sc)
 
     // Scan dependent handles repeatedly until there are no further promotions that can be made or we made a
     // scan without performing any new promotions.
-    while (GCScan::GcDhUnpromotedHandlesExist(sc) && fUnscannedPromotions)
+    while ((GCScan::GcDhUnpromotedHandlesExist(sc) || ephemeron_arrays_unpromoted_keys_exist()) && fUnscannedPromotions)
     {
         // On each iteration of the loop start with the assumption that no further objects have been promoted.
         fUnscannedPromotions = false;
@@ -1201,6 +1205,10 @@ void gc_heap::background_scan_dependent_handles (ScanContext *sc)
 
         // Perform the scan and set the flag if any promotions resulted.
         if (GCScan::GcDhReScan (sc))
+            fUnscannedPromotions = true;
+
+        // Registered ephemeron arrays take part in the same fixed point as dependent handles.
+        if (scan_ephemeron_arrays_for_promotion (sc, background_promote))
             fUnscannedPromotions = true;
     }
 
@@ -2072,6 +2080,13 @@ void gc_heap::background_mark_phase ()
     // table has been fully promoted.
     dprintf (2, ("1st dependent handle scan and process mark overflow"));
     GCScan::GcDhInitialScan(background_promote, max_generation, max_generation, &sc);
+
+    // Registered ephemeron arrays get the same initial pass. A background GC condemns the maximum
+    // generation, so every registration chunk is in scope; the scan age filter only ever excludes
+    // anything for the ephemeral collections.
+    begin_ephemeron_array_scan (max_generation, &sc);
+    scan_ephemeron_arrays_for_promotion (&sc, background_promote);
+
     background_scan_dependent_handles (&sc);
     //concurrent_print_time_delta ("1st nonconcurrent dependent handle scan and process mark overflow");
     concurrent_print_time_delta ("NR 1st Hov");
@@ -2196,6 +2211,10 @@ void gc_heap::background_mark_phase ()
     // null out the target of long weakref that were not promoted.
     GCScan::GcWeakPtrScan (max_generation, max_generation, &sc);
     concurrent_print_time_delta ("NR GcWeakPtrScan");
+
+    // Sever the registered ephemeron pairs whose key did not survive, and drop the registrations of
+    // the arrays that did not survive.
+    clear_dead_ephemeron_pairs (&sc);
 
 #ifdef MULTIPLE_HEAPS
     bgc_t_join.join(this, gc_join_null_dead_syncblk);

@@ -1,9 +1,6 @@
 // Licensed to the .NET Foundation under one or more agreements.
 // The .NET Foundation licenses this file to you under the MIT license.
 
-using System.Runtime.CompilerServices;
-using System.Runtime.InteropServices;
-
 namespace System.Runtime
 {
     /// <summary>
@@ -30,31 +27,34 @@ namespace System.Runtime
     public partial struct DependentHandle : IDisposable
     {
         // =========================================================================================
-        // This struct collects all operations on native DependentHandles. The DependentHandle
-        // merely wraps an IntPtr so this struct serves mainly as a "managed typedef."
+        // A DependentHandle is backed by a one element registered ephemeron array rather than by a
+        // native GC handle, so there is no unmanaged resource to release and no handle table entry
+        // that could be leaked. The registration is weak: once the array becomes unreachable the GC
+        // reclaims it and drops the registration along with it.
         //
         // DependentHandles exist in one of two states:
         //
         //    IsAllocated == false
-        //        No actual handle is allocated underneath. Illegal to get Target, Dependent
-        //        or GetTargetAndDependent(). Ok to call Dispose().
+        //        No array is referenced. Illegal to get Target, Dependent or TargetAndDependent.
+        //        Ok to call Dispose().
         //
         //        Initializing a DependentHandle using the nullary ctor creates a DependentHandle
         //        that's in the !IsAllocated state.
-        //        (! Right now, we get this guarantee for free because (IntPtr)0 == NULL unmanaged handle.
-        //         ! If that assertion ever becomes false, we'll have to add an _isAllocated field
-        //         ! to compensate.)
-        //
         //
         //    IsAllocated == true
-        //        There's a handle allocated underneath. You must call Dispose() on this eventually
-        //        or you cause a native handle table leak.
+        //        An array is referenced. Calling Dispose() drops the reference; the array is then
+        //        reclaimed like any other unreachable object.
         //
         // This struct intentionally does no self-synchronization. It's up to the caller to
         // to use DependentHandles in a thread-safe way.
         // =========================================================================================
 
-        private IntPtr _handle;
+        private Ephemeron[]? _data;
+
+        // The token the GC hands out at registration. It is what tells a collection that condemns
+        // only the younger generations that this array may now reference a young object, and it is
+        // only meaningful while _data is non null.
+        private nint _registration;
 
         /// <summary>
         /// Initializes a new instance of the <see cref="DependentHandle"/> struct with the specified arguments.
@@ -63,10 +63,15 @@ namespace System.Runtime
         /// <param name="dependent">The dependent object instance to associate with <paramref name="target"/>.</param>
         public DependentHandle(object? target, object? dependent)
         {
-            IntPtr handle = InternalAlloc(target, dependent);
-            if (handle == 0)
-                handle = InternalAllocWithGCTransition(target, dependent);
-            _handle = handle;
+            Ephemeron[] data = new Ephemeron[1];
+
+            // The array has to be registered before anything is stored into it: until then the GC
+            // does not trace its pair at all, so a dependent stored first would simply be dropped.
+            _registration = EphemeronArray.Register(data, pairOffset: 0);
+
+            EphemeronArray.SetKeyAndValue(_registration, ref data[0], target, dependent);
+
+            _data = data;
         }
 
         /// <summary>
@@ -74,7 +79,7 @@ namespace System.Runtime
         /// <see cref="DependentHandle(object?, object?)"/> and has not yet been disposed.
         /// </summary>
         /// <remarks>This property is thread-safe.</remarks>
-        public readonly bool IsAllocated => _handle != 0;
+        public readonly bool IsAllocated => _data is not null;
 
         /// <summary>
         /// Gets or sets the target object instance for the current handle. The target can only be set to a <see langword="null"/> value
@@ -88,25 +93,25 @@ namespace System.Runtime
         {
             readonly get
             {
-                IntPtr handle = _handle;
+                Ephemeron[]? data = _data;
 
-                if (handle == 0)
+                if (data is null)
                 {
                     ThrowHelper.ThrowInvalidOperationException();
                 }
 
-                return InternalGetTarget(handle);
+                return EphemeronArray.GetKey(ref data[0]);
             }
             set
             {
-                IntPtr handle = _handle;
+                Ephemeron[]? data = _data;
 
-                if (handle == 0 || value is not null)
+                if (data is null || value is not null)
                 {
                     ThrowHelper.ThrowInvalidOperationException();
                 }
 
-                InternalSetTargetToNull(handle);
+                EphemeronArray.Retire(ref data[0]);
             }
         }
 
@@ -120,30 +125,31 @@ namespace System.Runtime
         /// target in a local and calling <see cref="GC.KeepAlive(object)"/> on it after <see cref="Dependent"/> is accessed.
         /// </remarks>
         /// <exception cref="InvalidOperationException">Thrown if <see cref="IsAllocated"/> is <see langword="false"/>.</exception>
-        /// <remarks>This property is thread-safe.</remarks>
         public object? Dependent
         {
             readonly get
             {
-                IntPtr handle = _handle;
+                Ephemeron[]? data = _data;
 
-                if (handle == 0)
+                if (data is null)
                 {
                     ThrowHelper.ThrowInvalidOperationException();
                 }
 
-                return InternalGetDependent(handle);
+                EphemeronArray.GetKeyAndValue(ref data[0], out object? dependent);
+
+                return dependent;
             }
             set
             {
-                IntPtr handle = _handle;
+                Ephemeron[]? data = _data;
 
-                if (handle == 0)
+                if (data is null)
                 {
                     ThrowHelper.ThrowInvalidOperationException();
                 }
 
-                InternalSetDependent(handle, value);
+                EphemeronArray.SetValue(_registration, ref data[0], value);
             }
         }
 
@@ -161,14 +167,14 @@ namespace System.Runtime
         {
             get
             {
-                IntPtr handle = _handle;
+                Ephemeron[]? data = _data;
 
-                if (handle == 0)
+                if (data is null)
                 {
                     ThrowHelper.ThrowInvalidOperationException();
                 }
 
-                object? target = InternalGetTargetAndDependent(handle, out object? dependent);
+                object? target = EphemeronArray.GetKeyAndValue(ref data[0], out object? dependent);
 
                 return (target, dependent);
             }
@@ -181,7 +187,7 @@ namespace System.Runtime
         /// <remarks>This method mirrors <see cref="Target"/>, but without the allocation check.</remarks>
         internal readonly object? UnsafeGetTarget()
         {
-            return InternalGetTarget(_handle);
+            return EphemeronArray.GetKey(ref _data![0]);
         }
 
         /// <summary>
@@ -191,21 +197,20 @@ namespace System.Runtime
         /// <returns>The values of <see cref="Target"/> and <see cref="Dependent"/>.</returns>
         /// <remarks>
         /// This method mirrors the <see cref="TargetAndDependent"/> property, but without the allocation check.
-        /// The signature is also kept the same as the one for the internal call, to improve the codegen.
         /// Note that <paramref name="dependent"/> is required to be on the stack (or it might not be tracked).
         /// </remarks>
         internal readonly object? UnsafeGetTargetAndDependent(out object? dependent)
         {
-            return InternalGetTargetAndDependent(_handle, out dependent);
+            return EphemeronArray.GetKeyAndValue(ref _data![0], out dependent);
         }
 
         /// <summary>
-        /// Sets the dependent object instance for the current handle to <see langword="null"/>.
+        /// Sets the target object instance for the current handle to <see langword="null"/>.
         /// </summary>
         /// <remarks>This method mirrors the <see cref="Target"/> setter, but without allocation and input checks.</remarks>
         internal readonly void UnsafeSetTargetToNull()
         {
-            InternalSetTargetToNull(_handle);
+            EphemeronArray.Retire(ref _data![0]);
         }
 
         /// <summary>
@@ -214,68 +219,27 @@ namespace System.Runtime
         /// <remarks>This method mirrors <see cref="Dependent"/>, but without the allocation check.</remarks>
         internal readonly void UnsafeSetDependent(object? dependent)
         {
-            InternalSetDependent(_handle, dependent);
+            EphemeronArray.SetValue(_registration, ref _data![0], dependent);
         }
 
         /// <inheritdoc cref="IDisposable.Dispose"/>
         /// <remarks>This method is not thread-safe.</remarks>
         public void Dispose()
         {
-            // Forces the DependentHandle back to non-allocated state
-            // (if not already there) and frees the handle if needed.
-            IntPtr handle = _handle;
+            // Forces the DependentHandle back to non-allocated state (if not already there).
+            Ephemeron[]? data = _data;
 
-            if (handle != 0)
+            if (data is not null)
             {
-                _handle = 0;
+                nint registration = _registration;
+                _data = null;
+                _registration = 0;
 
-                if (!InternalFree(handle))
-                {
-                    InternalFreeWithGCTransition(handle);
-                }
+                // Retire the pair eagerly, so that a dependent kept alive only by this handle becomes
+                // collectible at the next GC even if a racing reader still holds the array alive.
+                EphemeronArray.Retire(ref data[0]);
+                EphemeronArray.Unregister(data, registration);
             }
         }
-
-        [MethodImpl(MethodImplOptions.InternalCall)]
-        private static extern IntPtr InternalAlloc(object? target, object? dependent);
-
-        [MethodImpl(MethodImplOptions.NoInlining)]
-        private static IntPtr InternalAllocWithGCTransition(object? target, object? dependent)
-            => _InternalAllocWithGCTransition(ObjectHandleOnStack.Create(ref target), ObjectHandleOnStack.Create(ref dependent));
-
-        [LibraryImport(RuntimeHelpers.QCall, EntryPoint = "DependentHandle_InternalAllocWithGCTransition")]
-        private static partial IntPtr _InternalAllocWithGCTransition(ObjectHandleOnStack target, ObjectHandleOnStack dependent);
-
-#if DEBUG
-        [MethodImpl(MethodImplOptions.InternalCall)]
-        private static extern object? InternalGetTarget(IntPtr dependentHandle);
-#else
-        // This optimization is the same that is used in GCHandle in RELEASE mode.
-        // This is not used in DEBUG builds as the runtime performs additional checks.
-        // The logic below is the inlined copy of ObjectFromHandle in the unmanaged runtime.
-        private static unsafe object? InternalGetTarget(IntPtr dependentHandle) => *(object*)dependentHandle;
-#endif
-
-        [MethodImpl(MethodImplOptions.InternalCall)]
-        private static extern object? InternalGetDependent(IntPtr dependentHandle);
-
-        [MethodImpl(MethodImplOptions.InternalCall)]
-        private static extern object? InternalGetTargetAndDependent(IntPtr dependentHandle, out object? dependent);
-
-        [MethodImpl(MethodImplOptions.InternalCall)]
-        private static extern void InternalSetDependent(IntPtr dependentHandle, object? dependent);
-
-        [MethodImpl(MethodImplOptions.InternalCall)]
-        private static extern void InternalSetTargetToNull(IntPtr dependentHandle);
-
-        [MethodImpl(MethodImplOptions.InternalCall)]
-        private static extern bool InternalFree(IntPtr dependentHandle);
-
-        [MethodImpl(MethodImplOptions.NoInlining)]
-        private static void InternalFreeWithGCTransition(IntPtr dependentHandle)
-            => _InternalFreeWithGCTransition(dependentHandle);
-
-        [LibraryImport(RuntimeHelpers.QCall, EntryPoint = "DependentHandle_InternalFreeWithGCTransition")]
-        private static partial void _InternalFreeWithGCTransition(IntPtr dependentHandle);
     }
 }

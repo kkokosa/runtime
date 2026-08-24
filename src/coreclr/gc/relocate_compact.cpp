@@ -1474,6 +1474,12 @@ void gc_heap::relocate_phase (int condemned_gen_number,
     }
 #endif //BACKGROUND_GC
 
+    // Registered ephemeron arrays and the pairs inside them are invisible to relocate_survivors and to
+    // card marking, because the array's type describes no references. This is the only thing that moves
+    // them along with the rest of the heap.
+    dprintf(3, ("Relocating registered ephemeron arrays"));
+    relocate_ephemeron_arrays (&sc);
+
 #ifdef FEATURE_CARD_MARKING_STEALING
     // for card marking stealing, do the other relocations *before* we scan the older generations
     // this gives us a chance to make up for imbalance in these phases later

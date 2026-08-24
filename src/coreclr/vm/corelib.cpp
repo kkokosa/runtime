@@ -36,11 +36,11 @@
 
 #include "appdomainnative.hpp"
 #include "conditionalweaktable.h"
+#include "ephemeronarray.h"
 #include "runtimehandles.h"
 #include "reflectioninvocation.h"
 #include "managedmdimport.hpp"
 #include "typestring.h"
-#include "comdependenthandle.h"
 #include "weakreferencenative.h"
 #include "mlinfo.h"
 

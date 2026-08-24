@@ -3,11 +3,21 @@
 
 namespace Microsoft.Diagnostics.DataContractReader.Contracts;
 
-internal struct ConditionalWeakTable_1 : IConditionalWeakTable
+/// <summary>
+/// ConditionalWeakTable contract version 2.
+/// </summary>
+/// <remarks>
+/// Differs from version 1 in how an entry stores its key/value pair. In version 1 <c>depHnd</c> was a
+/// native <c>OBJECTHANDLE</c> whose target was the key and whose handle extra info was the value. In
+/// version 2 the entry holds the pair itself: <c>Pair</c> is the key immediately followed by the
+/// value, as raw object pointers that the GC only traces through the container's ephemeron array
+/// registration. As a result this version no longer uses the <c>GC</c> contract.
+/// </remarks>
+internal struct ConditionalWeakTable_2 : IConditionalWeakTable
 {
     private readonly Target _target;
 
-    internal ConditionalWeakTable_1(Target target)
+    internal ConditionalWeakTable_2(Target target)
     {
         _target = target;
     }
@@ -44,11 +54,11 @@ internal struct ConditionalWeakTable_1 : IConditionalWeakTable
 
             if (entry.HashCode == hashCode)
             {
-                Data.ObjectHandle handle = _target.ProcessedData.GetOrAdd<Data.ObjectHandle>(entry.DepHndAddress!.Value);
-                if (handle.Object == key)
+                // The pair is the key immediately followed by the value.
+                TargetPointer pair = entry.PairAddress!.Value;
+                if (_target.ReadPointer(pair) == key)
                 {
-                    TargetNUInt extraInfo = _target.Contracts.GC.GetHandleExtraInfo(handle.Handle);
-                    value = new TargetPointer(extraInfo.Value);
+                    value = _target.ReadPointer(pair + (uint)_target.PointerSize);
 
                     return true;
                 }

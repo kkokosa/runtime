@@ -35,7 +35,6 @@
 #include "reflectioninvocation.h"
 #include "managedmdimport.hpp"
 #include "typestring.h"
-#include "comdependenthandle.h"
 #include "weakreferencenative.h"
 #include "varargsnative.h"
 #include "mlinfo.h"
@@ -335,8 +334,6 @@ static const Entry s_QCall[] =
     DllImportEntry(memset)
 #endif // TARGET_SUNOS
     DllImportEntry(memmove)
-    DllImportEntry(DependentHandle_InternalAllocWithGCTransition)
-    DllImportEntry(DependentHandle_InternalFreeWithGCTransition)
     DllImportEntry(GCInterface_GetTotalAllocatedBytesPrecise)
     DllImportEntry(GCInterface_WaitForFullGCApproach)
     DllImportEntry(GCInterface_WaitForFullGCComplete)

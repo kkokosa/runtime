@@ -1523,6 +1523,59 @@ public:
 
 float median_of_3 (float a, float b, float c);
 
+// Registered ephemeron arrays
+//
+// The runtime stores conditional key/value pairs - ConditionalWeakTable entries and
+// DependentHandles - inside ordinary managed arrays whose element type contains no object
+// reference fields as far as the type's GC descriptor is concerned. The generic marking, card
+// marking, relocation and heap verification paths therefore never look at the pairs at all: they
+// see an array that does not contain pointers.
+//
+// The runtime instead registers such an array with the GC (see IGCHeap::RegisterEphemeronArray),
+// describing where the pairs live inside it. The registrations below are what makes the pairs
+// visible to the GC, and they are the only thing that promotes, severs or relocates them.
+//
+// The registration does not keep the array alive: an array that nothing else references is
+// collected and its registration is dropped in the same GC that collects it.
+struct ephemeron_array_chunk;
+
+struct ephemeron_array_registration
+{
+    // The generation of the youngest object this array, its keys or its values may live in.
+    // Managed code stores zero here before mutating a pair.
+    uint8_t scan_age;
+
+    // Whether this GC decided to look at this registration, latched at the start of marking.
+    bool active_p;
+
+    // The registered array, or null for an unused entry. This is a weak reference: the array is
+    // only kept alive by whoever else references it.
+    uint8_t* array;
+    // The containing chunk, used to return this entry to its free list in constant time.
+    ephemeron_array_chunk* chunk;
+    // Byte offset from the start of the array object to the first pair.
+    uint32_t data_offset;
+    // Byte distance between consecutive pairs. The key is at the start of a pair and the value
+    // one pointer later; anything else in an element is not the GC's business.
+    uint32_t stride;
+    // Number of pairs.
+    uint32_t count;
+};
+
+// Registrations live in fixed size chunks so that each registration has a stable address for the
+// lifetime of the process. Chunks are never freed or moved, only their entries are reused.
+#define EPHEMERON_ARRAY_CHUNK_SIZE 16
+
+struct ephemeron_array_chunk
+{
+    ephemeron_array_chunk* next;
+    ephemeron_array_chunk* free_next;
+
+    uint32_t free_count;
+
+    ephemeron_array_registration entries[EPHEMERON_ARRAY_CHUNK_SIZE];
+};
+
 //class definition of the internal class
 class gc_heap
 {
@@ -2854,6 +2907,33 @@ private:
 
     PER_HEAP_METHOD void scan_dependent_handles (int condemned_gen_number, ScanContext *sc, BOOL initial_scan_p);
 
+    // Registered ephemeron array support. See the comment on ephemeron_array_registration.
+    //
+    // Registration is called by the runtime at any time on a mutator thread; every other method
+    // here runs inside a GC with the EE suspended. All of them stripe the registration chunks
+    // across the heaps by chunk index, so a given chunk is only ever touched by one GC thread and
+    // the same chunk is handled by the same heap for every pass of a single GC.
+    PER_HEAP_ISOLATED_METHOD uint8_t* register_ephemeron_array (uint8_t* array, uint32_t data_offset, uint32_t stride, uint32_t count);
+    PER_HEAP_ISOLATED_METHOD void unregister_ephemeron_array (uint8_t* array, uint8_t* registration);
+    PER_HEAP_ISOLATED_METHOD void enter_ephemeron_registry_lock();
+    PER_HEAP_ISOLATED_METHOD void leave_ephemeron_registry_lock();
+    PER_HEAP_ISOLATED_METHOD void add_ephemeron_chunk_to_free_list (ephemeron_array_chunk* chunk);
+    PER_HEAP_ISOLATED_METHOD uint8_t* ephemeron_pair_key_slot (ephemeron_array_registration* registration, uint32_t index);
+
+    // Decides which chunks this GC has to look at, and resets the per GC promotion state.
+    PER_HEAP_METHOD void begin_ephemeron_array_scan (int condemned_gen_number, ScanContext* sc);
+    // One promotion pass: promotes the value of every pair whose key is already promoted. Returns
+    // true if it promoted anything, and latches whether any pair still has an unpromoted key.
+    PER_HEAP_METHOD bool scan_ephemeron_arrays_for_promotion (ScanContext* sc, promote_func* fn);
+    PER_HEAP_METHOD bool ephemeron_arrays_unpromoted_keys_exist();
+    // Severs pairs whose key did not survive and drops the registrations of dead arrays.
+    PER_HEAP_METHOD void clear_dead_ephemeron_pairs (ScanContext* sc);
+    // Updates the registered array pointers and the surviving pairs of a compacting collection.
+    PER_HEAP_METHOD void relocate_ephemeron_arrays (ScanContext* sc);
+    // Brings the chunk scan ages up to date once the plan for this GC is final.
+    PER_HEAP_METHOD void age_ephemeron_arrays ();
+    PER_HEAP_ISOLATED_METHOD void diag_scan_ephemeron_arrays (handle_scan_fn fn, ScanContext* context);
+
     PER_HEAP_METHOD size_t get_generation_start_size (int gen_number);
 
     PER_HEAP_ISOLATED_METHOD int get_num_heaps();
@@ -2862,7 +2942,7 @@ private:
 
     PER_HEAP_METHOD void mark_phase (int condemned_gen_number);
 
-    PER_HEAP_METHOD void pin_object (uint8_t* o, uint8_t** ppObject);
+    PER_HEAP_METHOD void pin_object (uint8_t* o, uint8_t** ppObject, bool cross_heap_p = false);
 
     PER_HEAP_ISOLATED_METHOD size_t get_total_pinned_objects();
 
@@ -3816,6 +3896,12 @@ private:
     PER_HEAP_FIELD_MAINTAINED size_t mark_stack_array_length;
     PER_HEAP_FIELD_MAINTAINED mark* mark_stack_array;
 
+    // Set when the last ephemeron promotion pass on this heap saw a pair whose key is not
+    // promoted yet. That pair's value may still have to be promoted if something later in this
+    // GC makes the key reachable, so the dependent handle fixed point has to keep going. This is
+    // the registered array equivalent of DhContext::m_fUnpromotedPrimaries.
+    PER_HEAP_FIELD_SINGLE_GC bool ephemeron_arrays_unpromoted_p;
+
     // This one is unusual, it's calculated in one GC and used in the next GC. so it's maintained
     // but only maintained till the next GC.
     // It only affects perf.
@@ -4309,6 +4395,17 @@ private:
     /*********************************************/
 
     PER_HEAP_ISOLATED_FIELD_MAINTAINED GCSpinLock gc_lock; //lock while doing GC
+
+    // The registered ephemeron arrays. The list only ever grows: chunks are kept and their
+    // entries reused when the arrays they describe die, so that the scan age address handed out
+    // at registration time stays valid forever.
+    //
+    // Only mutators change the list, and only while holding ephemeron_registry_lock below. The
+    // GC walks it without the lock, which is safe because registration runs in cooperative mode
+    // and so cannot overlap a suspension.
+    PER_HEAP_ISOLATED_FIELD_MAINTAINED ephemeron_array_chunk* ephemeron_chunk_list;
+    PER_HEAP_ISOLATED_FIELD_MAINTAINED ephemeron_array_chunk* ephemeron_chunk_free_list;
+    PER_HEAP_ISOLATED_FIELD_MAINTAINED VOLATILE(int32_t) ephemeron_registry_lock;
 
     // Loosely maintained,can be reinit-ed in grow_mark_list.
     PER_HEAP_ISOLATED_FIELD_MAINTAINED size_t mark_list_size;

@@ -2695,6 +2695,13 @@ void GCHeap::DiagScanHandles (handle_scan_fn fn, int gen_number, ScanContext* co
 void GCHeap::DiagScanDependentHandles (handle_scan_fn fn, int gen_number, ScanContext* context)
 {
     GCScan::GcScanDependentHandlesForProfilerAndETW (gen_number, context, fn);
+
+    // A ConditionalWeakTable entry and a DependentHandle are pairs inside a registered ephemeron
+    // array rather than dependent handles, so they have to be reported from here as well. Doing it
+    // here rather than from the object walk keeps the whole conditional edge stream in one place,
+    // and every edge is still reported exactly once: an array's contents are only described by its
+    // registration, never by its GC descriptor.
+    gc_heap::diag_scan_ephemeron_arrays (fn, context);
 }
 
 size_t GCHeap::GetLOHThreshold()
@@ -2735,6 +2742,16 @@ void GCHeap::NullBridgeObjectsWeakRefs(size_t length, void* unreachableObjectHan
 #else
     assert(false);
 #endif
+}
+
+uint8_t* GCHeap::RegisterEphemeronArray(Object* array, uint32_t dataOffset, uint32_t stride, uint32_t count)
+{
+    return gc_heap::register_ephemeron_array ((uint8_t*)array, dataOffset, stride, count);
+}
+
+void GCHeap::UnregisterEphemeronArray(Object* array, uint8_t* registration)
+{
+    gc_heap::unregister_ephemeron_array ((uint8_t*)array, registration);
 }
 
 HRESULT GCHeap::WaitUntilConcurrentGCCompleteAsync(int millisecondsTimeout)

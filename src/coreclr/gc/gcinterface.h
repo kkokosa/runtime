@@ -6,12 +6,27 @@
 
 // The major version of the IGCHeap interface. Breaking changes to this interface
 // require bumps in the major version number.
-#define GC_INTERFACE_MAJOR_VERSION 5
+//
+// Version 6 adds IGCHeap::RegisterEphemeronArray and UnregisterEphemeronArray and requires the GC to
+// implement them. The runtime stores every ConditionalWeakTable entry and every DependentHandle in a
+// managed array whose type describes no object references, and relies on the registration to promote,
+// sever and relocate the key/value pairs inside it. A version 5 GC would load happily and simply never
+// look at those pairs, which turns every value into garbage while its key is still alive. That is a
+// correctness break, not a minor compatible addition, so the major version is bumped to keep such a
+// GC from being loaded at all.
+#define GC_INTERFACE_MAJOR_VERSION 6
 
 // The minor version of the IGCHeap interface. Non-breaking changes are required
 // to bump the minor version number. GCs and EEs with minor version number
 // mismatches can still interoperate correctly, with some care.
-#define GC_INTERFACE_MINOR_VERSION 8
+//
+// This is deliberately NOT reset when the major version is bumped. The runtime seeds
+// GcDacVars::minor_version_number with this value before calling GC_Initialize, and PopulateDacVars
+// reads it back as a capability level ("which DAC fields does this runtime understand"), gating on
+// >= 2, >= 4, >= 6 and >= 8 before it fills the corresponding fields in. Resetting it to 0 would
+// leave those DAC fields null or zero while the GC still reports 8 on the way out, silently
+// breaking the DAC and SOS. It must therefore stay monotonic across major bumps.
+#define GC_INTERFACE_MINOR_VERSION 9
 
 // The major version of the IGCToCLR interface. Breaking changes to this interface
 // require bumps in the major version number.
@@ -1074,6 +1089,37 @@ public:
     virtual void DiagWalkHeapWithACHandling(walk_fn fn, void* context, int gen_number, bool walk_large_object_heap_p) PURE_VIRTUAL
 
     virtual void NullBridgeObjectsWeakRefs(size_t length, void* unreachableObjectHandles) PURE_VIRTUAL;
+
+    // Registers an array of ephemeron key/value pairs with the GC.
+    //
+    // The array's own type must describe no object references, so that the generic marking, card
+    // marking, relocation and heap verification paths ignore its contents entirely. This
+    // registration is then the only thing that makes the pairs visible to the GC: for each pair the
+    // value is promoted if and only if the key is reachable by other means, the pair is severed when
+    // the key is not, and both slots are updated by a compacting collection.
+    //
+    // A pair is a key pointer immediately followed by a value pointer. The first pair starts
+    // dataOffset bytes into the array object and consecutive pairs are stride bytes apart, which lets
+    // the runtime keep unrelated data - a hash code, a collision link - in the same array element.
+    //
+    // The registration is weak: it does not keep the array alive and it is dropped by the collection
+    // that reclaims the array. Storage with an explicit lifetime may unregister after clearing all
+    // of its pairs.
+    //
+    // Returns the address of a byte the runtime must set to zero immediately before it stores a key
+    // or a value into any registered array, or null if the registration could not be recorded because
+    // there was not enough memory. That byte is how the GC learns that an array which only used to
+    // reference old objects may now reference young ones; without it a collection that condemns only
+    // the younger generations is free to skip the array altogether.
+    //
+    // Must be called in cooperative mode with the array already allocated but not yet published, and
+    // before any key or value is stored into it.
+    virtual uint8_t* RegisterEphemeronArray(Object* array, uint32_t dataOffset, uint32_t stride, uint32_t count) PURE_VIRTUAL
+
+    // Removes a registration previously returned by RegisterEphemeronArray. The array must no longer
+    // contain any key or value references before this is called. Each registration may be removed at
+    // most once.
+    virtual void UnregisterEphemeronArray(Object* array, uint8_t* registration) PURE_VIRTUAL
 };
 
 #ifdef WRITE_BARRIER_CHECK

@@ -44,16 +44,6 @@
 //
 //
 
-FCFuncStart(gDependentHandleFuncs)
-    FCFuncElement("InternalAlloc",                 DependentHandle::InternalAlloc)
-    FCFuncElement("InternalGetTarget",             DependentHandle::InternalGetTarget)
-    FCFuncElement("InternalGetDependent",          DependentHandle::InternalGetDependent)
-    FCFuncElement("InternalGetTargetAndDependent", DependentHandle::InternalGetTargetAndDependent)
-    FCFuncElement("InternalSetTargetToNull",       DependentHandle::InternalSetTargetToNull)
-    FCFuncElement("InternalSetDependent",          DependentHandle::InternalSetDependent)
-    FCFuncElement("InternalFree",                  DependentHandle::InternalFree)
-FCFuncEnd()
-
 FCFuncStart(gStringFuncs)
     FCDynamic("FastAllocateString", ECall::FastAllocateString)
     FCDynamicSig(COR_CTOR_METHOD_NAME, &gsig_IM_ArrChar_RetVoid, ECall::CtorCharArrayManaged)
@@ -70,6 +60,11 @@ FCFuncEnd()
 FCFuncStart(gEnvironmentFuncs)
     FCFuncElement("set_ExitCode", EnvironmentNative::SetExitCode)
     FCFuncElement("get_ExitCode", EnvironmentNative::GetExitCode)
+FCFuncEnd()
+
+FCFuncStart(gEphemeronArrayFuncs)
+    FCFuncElement("RegisterCore", EphemeronArrayNative::Register)
+    FCFuncElement("UnregisterCore", EphemeronArrayNative::Unregister)
 FCFuncEnd()
 
 FCFuncStart(gExceptionFuncs)
@@ -389,8 +384,8 @@ FCClassElement("AsyncHelpers", "System.Runtime.CompilerServices", gAsyncHelpers)
 #endif
 FCClassElement("Buffer", "System", gBufferFuncs)
 FCClassElement("Delegate", "System", gDelegateFuncs)
-FCClassElement("DependentHandle", "System.Runtime", gDependentHandleFuncs)
 FCClassElement("Environment", "System", gEnvironmentFuncs)
+FCClassElement("EphemeronArray", "System.Runtime", gEphemeronArrayFuncs)
 FCClassElement("Exception", "System", gExceptionFuncs)
 FCClassElement("GC", "System", gGCInterfaceFuncs)
 FCClassElement("GCFrameRegistration", "System.Runtime", gGCFrameRegistration)

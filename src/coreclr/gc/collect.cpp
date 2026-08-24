@@ -173,6 +173,10 @@ void gc_heap::gc1()
             plan_phase (n);
             GCScan::GcRuntimeStructuresValid (TRUE);
 
+            // Now that the plan is final we know whether this collection promoted or demoted, which is
+            // what the ephemeron array registration scan ages are derived from.
+            age_ephemeron_arrays ();
+
             check_gen0_bricks();
         }
     }
