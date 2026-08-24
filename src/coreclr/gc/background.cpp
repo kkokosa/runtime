@@ -1177,7 +1177,7 @@ void gc_heap::background_scan_dependent_handles (ScanContext *sc)
                 s_fUnscannedPromotions = TRUE;
 
         // Registered ephemeron arrays take part in the same fixed point as dependent handles.
-        if (scan_ephemeron_arrays_for_promotion (sc, background_promote))
+        if (scan_ephemeron_arrays_for_promotion (sc, background_promote, max_generation))
             s_fUnscannedPromotions = TRUE;
     }
 }
@@ -1208,7 +1208,7 @@ void gc_heap::background_scan_dependent_handles (ScanContext *sc)
             fUnscannedPromotions = true;
 
         // Registered ephemeron arrays take part in the same fixed point as dependent handles.
-        if (scan_ephemeron_arrays_for_promotion (sc, background_promote))
+        if (scan_ephemeron_arrays_for_promotion (sc, background_promote, max_generation))
             fUnscannedPromotions = true;
     }
 
@@ -2085,7 +2085,7 @@ void gc_heap::background_mark_phase ()
     // generation, so every registration chunk is in scope; the scan age filter only ever excludes
     // anything for the ephemeral collections.
     begin_ephemeron_array_scan (max_generation, &sc);
-    scan_ephemeron_arrays_for_promotion (&sc, background_promote);
+    scan_ephemeron_arrays_for_promotion (&sc, background_promote, max_generation);
 
     background_scan_dependent_handles (&sc);
     //concurrent_print_time_delta ("1st nonconcurrent dependent handle scan and process mark overflow");

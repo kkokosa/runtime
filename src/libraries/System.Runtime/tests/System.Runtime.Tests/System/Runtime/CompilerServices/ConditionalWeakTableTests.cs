@@ -943,10 +943,66 @@ namespace System.Runtime.CompilerServices.Tests
                     {
                         pins[i].Free();
                     }
+
                 }
             }
 
             GC.KeepAlive(table);
+        }
+
+        [ConditionalFact(typeof(PlatformDetection), nameof(PlatformDetection.IsPreciseGcSupported))]
+        public static void LargeEntryArraySurvivesCompactionAndClearsDeadRanges()
+        {
+            const int EntryCount = 70_000;
+            int[] deadIndices = [1, 16_383, 16_384, 32_767, 32_768, 49_151, 49_152, 65_535, 65_536, 69_998];
+            var keys = new object[EntryCount];
+            var values = new object[EntryCount];
+            var table = new ConditionalWeakTable<object, object>();
+
+            for (int i = 0; i < EntryCount; i++)
+            {
+                keys[i] = new object();
+                values[i] = new object();
+                table.Add(keys[i], values[i]);
+            }
+
+            WeakReference[] deadValues = DropEntries(keys, values, deadIndices);
+
+            GC.Collect(2, GCCollectionMode.Forced, blocking: true, compacting: true);
+            GC.WaitForPendingFinalizers();
+            GC.Collect(2, GCCollectionMode.Forced, blocking: true, compacting: true);
+
+            Assert.All(deadValues, value => Assert.False(value.IsAlive));
+
+            int deadIndex = 0;
+            for (int i = 0; i < EntryCount; i++)
+            {
+                if ((deadIndex < deadIndices.Length) && (i == deadIndices[deadIndex]))
+                {
+                    deadIndex++;
+                    continue;
+                }
+
+                Assert.True(table.TryGetValue(keys[i], out object value), $"entry {i} was lost");
+                Assert.Same(values[i], value);
+            }
+
+            GC.KeepAlive(table);
+        }
+
+        [MethodImpl(MethodImplOptions.NoInlining)]
+        private static WeakReference[] DropEntries(object[] keys, object[] values, int[] indices)
+        {
+            var weakValues = new WeakReference[indices.Length];
+            for (int i = 0; i < indices.Length; i++)
+            {
+                int index = indices[i];
+                weakValues[i] = new WeakReference(values[index], trackResurrection: true);
+                keys[index] = null;
+                values[index] = null;
+            }
+
+            return weakValues;
         }
 
         [System.Runtime.CompilerServices.MethodImplAttribute(System.Runtime.CompilerServices.MethodImplOptions.NoInlining)]

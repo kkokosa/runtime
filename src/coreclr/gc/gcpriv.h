@@ -1565,6 +1565,9 @@ struct ephemeron_array_registration
 // Registrations live in fixed size chunks so that each registration has a stable address for the
 // lifetime of the process. Chunks are never freed or moved, only their entries are reused.
 #define EPHEMERON_ARRAY_CHUNK_SIZE 16
+// Large registrations are divided among all GC workers instead of being processed by the worker
+// that owns their registration chunk.
+#define EPHEMERON_ARRAY_PARALLEL_SCAN_THRESHOLD (64 * 1024)
 
 struct ephemeron_array_chunk
 {
@@ -1572,6 +1575,9 @@ struct ephemeron_array_chunk
     ephemeron_array_chunk* free_next;
 
     uint32_t free_count;
+    // Once set, this remains set for the lifetime of the chunk. This lets non-owner workers skip
+    // chunks that have only ever contained small registrations without racing registration cleanup.
+    bool has_large_registration_p;
 
     ephemeron_array_registration entries[EPHEMERON_ARRAY_CHUNK_SIZE];
 };
@@ -2910,21 +2916,23 @@ private:
     // Registered ephemeron array support. See the comment on ephemeron_array_registration.
     //
     // Registration is called by the runtime at any time on a mutator thread; every other method
-    // here runs inside a GC with the EE suspended. All of them stripe the registration chunks
-    // across the heaps by chunk index, so a given chunk is only ever touched by one GC thread and
-    // the same chunk is handled by the same heap for every pass of a single GC.
+    // here runs inside a GC with the EE suspended. Registration metadata is striped across the
+    // heaps by chunk index. Pair processing for a large registration is divided into contiguous
+    // ranges so that one large array does not serialize a Server GC on its chunk's worker.
     PER_HEAP_ISOLATED_METHOD uint8_t* register_ephemeron_array (uint8_t* array, uint32_t data_offset, uint32_t stride, uint32_t count);
     PER_HEAP_ISOLATED_METHOD void unregister_ephemeron_array (uint8_t* array, uint8_t* registration);
     PER_HEAP_ISOLATED_METHOD void enter_ephemeron_registry_lock();
     PER_HEAP_ISOLATED_METHOD void leave_ephemeron_registry_lock();
     PER_HEAP_ISOLATED_METHOD void add_ephemeron_chunk_to_free_list (ephemeron_array_chunk* chunk);
-    PER_HEAP_ISOLATED_METHOD uint8_t* ephemeron_pair_key_slot (ephemeron_array_registration* registration, uint32_t index);
+    PER_HEAP_ISOLATED_METHOD uint8_t* ephemeron_pair_key_slot (
+        ephemeron_array_registration* registration, uint8_t* array, uint32_t index);
 
     // Decides which chunks this GC has to look at, and resets the per GC promotion state.
     PER_HEAP_METHOD void begin_ephemeron_array_scan (int condemned_gen_number, ScanContext* sc);
     // One promotion pass: promotes the value of every pair whose key is already promoted. Returns
     // true if it promoted anything, and latches whether any pair still has an unpromoted key.
-    PER_HEAP_METHOD bool scan_ephemeron_arrays_for_promotion (ScanContext* sc, promote_func* fn);
+    PER_HEAP_METHOD bool scan_ephemeron_arrays_for_promotion (
+        ScanContext* sc, promote_func* fn, int condemned_gen_number);
     PER_HEAP_METHOD bool ephemeron_arrays_unpromoted_keys_exist();
     // Severs pairs whose key did not survive and drops the registrations of dead arrays.
     PER_HEAP_METHOD void clear_dead_ephemeron_pairs (ScanContext* sc);
@@ -3901,7 +3909,6 @@ private:
     // GC makes the key reachable, so the dependent handle fixed point has to keep going. This is
     // the registered array equivalent of DhContext::m_fUnpromotedPrimaries.
     PER_HEAP_FIELD_SINGLE_GC bool ephemeron_arrays_unpromoted_p;
-
     // This one is unusual, it's calculated in one GC and used in the next GC. so it's maintained
     // but only maintained till the next GC.
     // It only affects perf.

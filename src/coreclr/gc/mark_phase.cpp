@@ -1765,9 +1765,10 @@ void gc_heap::add_ephemeron_chunk_to_free_list (ephemeron_array_chunk* chunk)
 }
 
 inline
-uint8_t* gc_heap::ephemeron_pair_key_slot (ephemeron_array_registration* registration, uint32_t index)
+uint8_t* gc_heap::ephemeron_pair_key_slot (
+    ephemeron_array_registration* registration, uint8_t* array, uint32_t index)
 {
-    return registration->array + registration->data_offset + ((size_t)index * registration->stride);
+    return array + registration->data_offset + ((size_t)index * registration->stride);
 }
 
 // Registers an array of ephemeron pairs. Returns the address of the scan age byte the runtime has
@@ -1846,6 +1847,10 @@ uint8_t* gc_heap::register_ephemeron_array (uint8_t* array, uint32_t data_offset
     registration->count = count;
     registration->chunk = chunk;
     registration->array = array;
+    if (count >= EPHEMERON_ARRAY_PARALLEL_SCAN_THRESHOLD)
+    {
+        chunk->has_large_registration_p = true;
+    }
 
     chunk->free_count--;
     if (chunk->free_count == 0)
@@ -1917,10 +1922,42 @@ void gc_heap::begin_ephemeron_array_scan (int condemned_gen_number, ScanContext*
     }
 }
 
+// Assigns all pairs in a small registration to its chunk owner. Large registrations are split into
+// balanced contiguous ranges so every Server GC worker can process part of a single large array.
+static bool get_ephemeron_array_scan_range (
+    ephemeron_array_registration* registration,
+    ScanContext* sc,
+    bool chunk_owner_p,
+    uint32_t* range_start,
+    uint32_t* range_end)
+{
+    if ((registration->count < EPHEMERON_ARRAY_PARALLEL_SCAN_THRESHOLD) || (sc->thread_count == 1))
+    {
+        if (!chunk_owner_p)
+        {
+            return false;
+        }
+
+        *range_start = 0;
+        *range_end = registration->count;
+        return true;
+    }
+
+    uint32_t worker_count = static_cast<uint32_t>(sc->thread_count);
+    uint32_t worker = static_cast<uint32_t>(sc->thread_number);
+    uint32_t pairs_per_worker = registration->count / worker_count;
+    uint32_t remainder = registration->count % worker_count;
+
+    *range_start = (pairs_per_worker * worker) + (worker < remainder ? worker : remainder);
+    *range_end = *range_start + pairs_per_worker + (worker < remainder ? 1 : 0);
+    return *range_start != *range_end;
+}
+
 // One promotion pass over this heap's registration chunks. Promotes the value of every pair whose
 // key is already promoted, which is exactly what PromoteDependentHandle does for a dependent
 // handle. Returns true if anything was promoted.
-bool gc_heap::scan_ephemeron_arrays_for_promotion (ScanContext* sc, promote_func* fn)
+bool gc_heap::scan_ephemeron_arrays_for_promotion (
+    ScanContext* sc, promote_func* fn, int condemned_gen_number)
 {
     bool promoted_p = false;
     bool unpromoted_keys_p = false;
@@ -1928,26 +1965,36 @@ bool gc_heap::scan_ephemeron_arrays_for_promotion (ScanContext* sc, promote_func
     int chunk_index = 0;
     for (ephemeron_array_chunk* chunk = ephemeron_chunk_list; chunk != nullptr; chunk = chunk->next, chunk_index++)
     {
-        if ((chunk_index % sc->thread_count) != sc->thread_number)
+        bool chunk_owner_p = (chunk_index % sc->thread_count) == sc->thread_number;
+        if (!chunk_owner_p && !chunk->has_large_registration_p)
             continue;
 
         for (uint32_t entry_index = 0; entry_index < EPHEMERON_ARRAY_CHUNK_SIZE; entry_index++)
         {
             ephemeron_array_registration* registration = &chunk->entries[entry_index];
-            if (!registration->active_p)
+            uint8_t* array = VolatileLoadWithoutBarrier (&registration->array);
+            if ((array == nullptr) || (registration->scan_age > condemned_gen_number))
                 continue;
+
+            uint32_t range_start;
+            uint32_t range_end;
+            if (!get_ephemeron_array_scan_range (
+                    registration, sc, chunk_owner_p, &range_start, &range_end))
+            {
+                continue;
+            }
 
             // An array that is not reachable cannot keep anything alive. It may still be promoted
             // later in this GC, so ask for another iteration rather than deciding now.
-            if (!g_theGCHeap->IsPromoted ((Object*)registration->array))
+            if (!g_theGCHeap->IsPromoted ((Object*)array))
             {
                 unpromoted_keys_p = true;
                 continue;
             }
 
-            for (uint32_t pair_index = 0; pair_index < registration->count; pair_index++)
+            for (uint32_t pair_index = range_start; pair_index < range_end; pair_index++)
             {
-                uint8_t** key_slot = (uint8_t**)ephemeron_pair_key_slot (registration, pair_index);
+                uint8_t** key_slot = (uint8_t**)ephemeron_pair_key_slot (registration, array, pair_index);
                 uint8_t* key = key_slot[0];
 
                 if (key == nullptr)
@@ -1988,29 +2035,34 @@ void gc_heap::clear_dead_ephemeron_pairs (ScanContext* sc)
     int chunk_index = 0;
     for (ephemeron_array_chunk* chunk = ephemeron_chunk_list; chunk != nullptr; chunk = chunk->next, chunk_index++)
     {
-        if ((chunk_index % sc->thread_count) != sc->thread_number)
+        bool chunk_owner_p = (chunk_index % sc->thread_count) == sc->thread_number;
+        if (!chunk_owner_p && !chunk->has_large_registration_p)
             continue;
 
         for (uint32_t entry_index = 0; entry_index < EPHEMERON_ARRAY_CHUNK_SIZE; entry_index++)
         {
             ephemeron_array_registration* registration = &chunk->entries[entry_index];
-            if (!registration->active_p)
+            uint8_t* array = VolatileLoadWithoutBarrier (&registration->array);
+            if ((array == nullptr) || !VolatileLoadWithoutBarrier (&registration->active_p))
                 continue;
 
-            if (!g_theGCHeap->IsPromoted ((Object*)registration->array))
+            if (!g_theGCHeap->IsPromoted ((Object*)array))
             {
                 // The array is about to be collected. Registration is weak, so this is where it
                 // goes away; the entry is then free for a future registration to reuse.
                 dprintf (3, ("h%d: dropping the registration of dead ephemeron array %p",
-                             heap_number, registration->array));
+                             heap_number, array));
 
-                bool chunk_was_full = (chunk->free_count == 0);
-                registration->array = nullptr;
-                registration->active_p = false;
-                chunk->free_count++;
-                if (chunk_was_full)
+                if (chunk_owner_p)
                 {
-                    add_ephemeron_chunk_to_free_list (chunk);
+                    bool chunk_was_full = (chunk->free_count == 0);
+                    VolatileStoreWithoutBarrier (&registration->array, (uint8_t*)nullptr);
+                    VolatileStoreWithoutBarrier (&registration->active_p, false);
+                    chunk->free_count++;
+                    if (chunk_was_full)
+                    {
+                        add_ephemeron_chunk_to_free_list (chunk);
+                    }
                 }
                 continue;
             }
@@ -2031,7 +2083,7 @@ void gc_heap::clear_dead_ephemeron_pairs (ScanContext* sc)
             // object no phase of this GC is going to look at again.
             //
             // A background GC neither moves objects nor uses the pinned bit, so it skips this.
-            if (!settings.concurrent)
+            if (chunk_owner_p && !settings.concurrent)
             {
                 gc_heap* array_heap = gc_heap::heap_of (registration->array);
 
@@ -2048,9 +2100,17 @@ void gc_heap::clear_dead_ephemeron_pairs (ScanContext* sc)
                 }
             }
 
-            for (uint32_t pair_index = 0; pair_index < registration->count; pair_index++)
+            uint32_t range_start;
+            uint32_t range_end;
+            if (!get_ephemeron_array_scan_range (
+                    registration, sc, chunk_owner_p, &range_start, &range_end))
             {
-                uint8_t** key_slot = (uint8_t**)ephemeron_pair_key_slot (registration, pair_index);
+                continue;
+            }
+
+            for (uint32_t pair_index = range_start; pair_index < range_end; pair_index++)
+            {
+                uint8_t** key_slot = (uint8_t**)ephemeron_pair_key_slot (registration, array, pair_index);
                 uint8_t* key = key_slot[0];
 
                 if (key == nullptr)
@@ -2085,18 +2145,28 @@ void gc_heap::relocate_ephemeron_arrays (ScanContext* sc)
     int chunk_index = 0;
     for (ephemeron_array_chunk* chunk = ephemeron_chunk_list; chunk != nullptr; chunk = chunk->next, chunk_index++)
     {
-        if ((chunk_index % sc->thread_count) != sc->thread_number)
+        bool chunk_owner_p = (chunk_index % sc->thread_count) == sc->thread_number;
+        if (!chunk_owner_p && !chunk->has_large_registration_p)
             continue;
 
         for (uint32_t entry_index = 0; entry_index < EPHEMERON_ARRAY_CHUNK_SIZE; entry_index++)
         {
             ephemeron_array_registration* registration = &chunk->entries[entry_index];
-            if (!registration->active_p || (registration->array == nullptr))
+            uint8_t* array = registration->array;
+            if (!registration->active_p || (array == nullptr))
                 continue;
 
-            for (uint32_t pair_index = 0; pair_index < registration->count; pair_index++)
+            uint32_t range_start;
+            uint32_t range_end;
+            if (!get_ephemeron_array_scan_range (
+                    registration, sc, chunk_owner_p, &range_start, &range_end))
             {
-                uint8_t** key_slot = (uint8_t**)ephemeron_pair_key_slot (registration, pair_index);
+                continue;
+            }
+
+            for (uint32_t pair_index = range_start; pair_index < range_end; pair_index++)
+            {
+                uint8_t** key_slot = (uint8_t**)ephemeron_pair_key_slot (registration, array, pair_index);
 
                 // Every surviving pair has a surviving key and value at this point: the clearing
                 // pass nulled the others out.
@@ -2111,11 +2181,9 @@ void gc_heap::relocate_ephemeron_arrays (ScanContext* sc)
                 }
             }
 
-            // Relocate the array last, so that the loop above computed the pair addresses from the
-            // address the pairs are still at. This is a no operation for as long as the clearing
-            // pass pins every registered array a collection could move, and is kept so that the
-            // registration stays correct if that ever stops being true.
-            GCHeap::Relocate ((Object**)&registration->array, sc, 0);
+            // The clearing pass pins every registered array this collection could move. Arrays
+            // outside the condemned generations do not move, so the registration itself never
+            // requires relocation.
         }
     }
 }
@@ -2178,7 +2246,8 @@ void gc_heap::diag_scan_ephemeron_arrays (handle_scan_fn fn, ScanContext* contex
 
             for (uint32_t pair_index = 0; pair_index < registration->count; pair_index++)
             {
-                uint8_t** key_slot = (uint8_t**)ephemeron_pair_key_slot (registration, pair_index);
+                uint8_t** key_slot =
+                    (uint8_t**)ephemeron_pair_key_slot (registration, registration->array, pair_index);
 
                 if ((key_slot[0] == nullptr) || (key_slot[1] == nullptr))
                     continue;
@@ -3142,7 +3211,7 @@ void gc_heap::scan_dependent_handles (int condemned_gen_number, ScanContext *sc,
         // Registered ephemeron arrays take part in the same fixed point: a value promoted here can make
         // another pair's or handle's key reachable and vice versa. This is rescanned unconditionally because
         // its own "nothing left to do" state is recomputed by the pass itself.
-        if (scan_ephemeron_arrays_for_promotion (sc, GCHeap::Promote))
+        if (scan_ephemeron_arrays_for_promotion (sc, GCHeap::Promote, condemned_gen_number))
             s_fUnscannedPromotions = TRUE;
     }
 }
@@ -3180,7 +3249,7 @@ void gc_heap::scan_dependent_handles (int condemned_gen_number, ScanContext *sc,
             fUnscannedPromotions = true;
 
         // Registered ephemeron arrays take part in the same fixed point as dependent handles.
-        if (scan_ephemeron_arrays_for_promotion (sc, GCHeap::Promote))
+        if (scan_ephemeron_arrays_for_promotion (sc, GCHeap::Promote, condemned_gen_number))
             fUnscannedPromotions = true;
     }
 
@@ -3678,7 +3747,7 @@ void gc_heap::mark_phase (int condemned_gen_number)
     // which registration chunks are in scope for this GC; the clearing, relocating and aging passes later on
     // rely on that decision having been made here.
     begin_ephemeron_array_scan (condemned_gen_number, &sc);
-    scan_ephemeron_arrays_for_promotion (&sc, GCHeap::Promote);
+    scan_ephemeron_arrays_for_promotion (&sc, GCHeap::Promote, condemned_gen_number);
 
     scan_dependent_handles(condemned_gen_number, &sc, true);
 
