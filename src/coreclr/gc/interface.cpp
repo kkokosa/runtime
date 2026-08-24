@@ -185,15 +185,15 @@ HRESULT GCHeap::StaticShutdown()
 // init the instance heap
 HRESULT GCHeap::Init(size_t hn)
 {
-    HRESULT hres = S_OK;
+    HRESULT hres = E_OUTOFMEMORY;
 
 #ifdef MULTIPLE_HEAPS
-    if ((pGenGCHeap = gc_heap::make_gc_heap(this, (int)hn)) == 0)
-        hres = E_OUTOFMEMORY;
+    if ((pGenGCHeap = gc_heap::make_gc_heap(this, (int)hn, &hres)) != 0)
+        hres = S_OK;
 #else
     UNREFERENCED_PARAMETER(hn);
-    if (!gc_heap::make_gc_heap())
-        hres = E_OUTOFMEMORY;
+    if (gc_heap::make_gc_heap(&hres))
+        hres = S_OK;
 #endif //MULTIPLE_HEAPS
 
     // Failed.

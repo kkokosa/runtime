@@ -24,6 +24,10 @@
 #include "configuration.h"
 #include "genanalysis.h"
 #include "eventpipeadapter.h"
+#include "writebarriermanager.h"
+#ifdef FEATURE_WRITE_BARRIER_STANDARD_ABI_TEST
+#include <clrconfignocache.h>
+#endif
 #include <minipal/memorybarrierprocesswide.h>
 
 // Finalizes a weak reference directly.
@@ -56,6 +60,13 @@ void GCToEEInterface::SuspendEE(SUSPEND_REASON reason)
 void GCToEEInterface::RestartEE(bool bFinishedGC)
 {
     WRAPPER_NO_CONTRACT;
+
+#ifdef TARGET_AMD64
+    if (bFinishedGC && (g_SlotLogWriteBarrierEpochReset != nullptr))
+    {
+        g_SlotLogWriteBarrierEpochReset();
+    }
+#endif
 
     if (g_pDebugInterface)
         g_pDebugInterface->ResumeForGarbageCollectionStarted();
@@ -1105,11 +1116,16 @@ void GCToEEInterface::StompWriteBarrier(WriteBarrierParameters* args)
         break;
 
     case WriteBarrierOp::Initialize:
+    {
         assert(args->is_runtime_suspended && "the runtime must be suspended here!");
+
         // This operation should only be invoked once, upon initialization.
         assert(g_card_table == nullptr);
         assert(g_lowest_address == nullptr);
         assert(g_highest_address == nullptr);
+#ifdef FEATURE_MANUALLY_MANAGED_CARD_BUNDLES
+        assert(g_card_bundle_table == nullptr);
+#endif
         assert(args->card_table != nullptr);
         assert(args->lowest_address != nullptr);
         assert(args->highest_address != nullptr);
@@ -1117,10 +1133,124 @@ void GCToEEInterface::StompWriteBarrier(WriteBarrierParameters* args)
         assert(args->ephemeral_high != nullptr);
         assert(!args->requires_upper_bounds_check && "the ephemeral generation must be at the top of the heap!");
 
+        bool useStandardWriteBarrierAbi = false;
+        bool writeBarrierTracksOldValue = false;
+        if (g_write_barrier_parameters_include_shape)
+        {
+            assert(args->write_barrier_request_status == WriteBarrierRequestStatus::NotProcessed);
+
+            if (args->write_barrier_request_status != WriteBarrierRequestStatus::NotProcessed)
+            {
+                args->write_barrier_request_status = WriteBarrierRequestStatus::Unsupported;
+                return;
+            }
+
+            switch (args->write_barrier_shape)
+            {
+                case WriteBarrierShape::CardTable:
+                    break;
+
+                case WriteBarrierShape::SideMetadataFieldLog:
+#if defined(TARGET_AMD64) && !defined(FEATURE_PORTABLE_HELPERS) && !defined(FEATURE_PORTABLE_ENTRYPOINTS)
+                    if (!g_write_barrier_parameters_include_complete_store ||
+                        !g_write_barrier_parameters_include_epoch_reset)
+                    {
+                        args->write_barrier_request_status = WriteBarrierRequestStatus::Unsupported;
+                        return;
+                    }
+
+                    if ((args->write_barrier_side_metadata.metadata_base == nullptr) ||
+                        (args->write_barrier_side_metadata.slow_path == nullptr) ||
+                        (args->write_barrier_range_slow_path == nullptr) ||
+                        (args->write_barrier_dependent_edge_slow_path == nullptr) ||
+                        (args->write_barrier_epoch_reset == nullptr) ||
+                        (args->write_barrier_side_metadata.granularity_shift >= ((sizeof(uintptr_t) * 8) - 3)) ||
+                        ((args->write_barrier_side_metadata.bit_meaning !=
+                         WriteBarrierMetadataBitMeaning::WorkWhenBitIsClear) &&
+                         (args->write_barrier_side_metadata.bit_meaning !=
+                          WriteBarrierMetadataBitMeaning::WorkWhenBitIsSet)) ||
+                        !IsWriteBarrierCopyEnabled() ||
+                        g_pConfig->ReadyToRun())
+                    {
+                        args->write_barrier_request_status = WriteBarrierRequestStatus::Unsupported;
+                        return;
+                    }
+
+#ifdef _DEBUG
+                    if ((g_pConfig->GetHeapVerifyLevel() & EEConfig::HEAPVERIFY_BARRIERCHECK) != 0)
+                    {
+                        args->write_barrier_request_status = WriteBarrierRequestStatus::Unsupported;
+                        return;
+                    }
+#endif // _DEBUG
+
+                    useStandardWriteBarrierAbi = true;
+                    writeBarrierTracksOldValue = true;
+                    break;
+#else
+                    args->write_barrier_request_status = WriteBarrierRequestStatus::Unsupported;
+                    return;
+#endif
+
+                default:
+                    args->write_barrier_request_status = WriteBarrierRequestStatus::Unsupported;
+                    return;
+            }
+        }
+
+#ifdef FEATURE_WRITE_BARRIER_STANDARD_ABI_TEST
+        CLRConfigNoCache conflictTest = CLRConfigNoCache::Get("GCWriteBarrierTestConflict");
+        DWORD conflictTestEnabled = 0;
+        if (conflictTest.IsSet() &&
+            conflictTest.TryAsInteger(10, conflictTestEnabled) &&
+            conflictTestEnabled != 0)
+        {
+            bool preparedOppositeMode =
+                GCHeapUtilities::TryPrepareWriteBarrierCodegenMode(
+                    !useStandardWriteBarrierAbi,
+                    !useStandardWriteBarrierAbi);
+            if (!preparedOppositeMode)
+            {
+                EEPOLICY_HANDLE_FATAL_ERROR_WITH_MESSAGE(
+                    COR_E_EXECUTIONENGINE,
+                    W("Unable to prepare the write-barrier codegen conflict test."));
+                UNREACHABLE();
+            }
+        }
+#endif
+
+        if (!GCHeapUtilities::TryPrepareWriteBarrierCodegenMode(
+                useStandardWriteBarrierAbi,
+                writeBarrierTracksOldValue))
+        {
+            if (g_write_barrier_parameters_include_shape)
+            {
+                args->write_barrier_request_status = WriteBarrierRequestStatus::Unsupported;
+                return;
+            }
+
+            EEPOLICY_HANDLE_FATAL_ERROR_WITH_MESSAGE(
+                COR_E_EXECUTIONENGINE,
+                W("Conflicting write-barrier codegen mode during GC initialization."));
+            UNREACHABLE();
+        }
+
+#ifdef TARGET_AMD64
+        if (useStandardWriteBarrierAbi)
+        {
+            g_WriteBarrierManager.ConfigureWriteBarrier(args);
+            GCHeapUtilities::CompleteStandardWriteBarrierCodegenMode();
+        }
+#endif
+
+        if (g_write_barrier_parameters_include_shape)
+        {
+            args->write_barrier_request_status = WriteBarrierRequestStatus::Accepted;
+        }
+
         g_card_table = args->card_table;
 
 #ifdef FEATURE_MANUALLY_MANAGED_CARD_BUNDLES
-        assert(g_card_bundle_table == nullptr);
         g_card_bundle_table = args->card_bundle_table;
 #endif
 
@@ -1146,6 +1276,7 @@ void GCToEEInterface::StompWriteBarrier(WriteBarrierParameters* args)
         // called with the parameters (true, false), as it is above.
         stompWBCompleteActions |= ::StompWriteBarrierEphemeral(true);
         break;
+    }
 
     case WriteBarrierOp::SwitchToWriteWatch:
 #ifdef FEATURE_USE_SOFTWARE_WRITE_WATCH_FOR_GC_HEAP

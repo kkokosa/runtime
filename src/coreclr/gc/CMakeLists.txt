@@ -125,6 +125,17 @@ set(GC_WKS_SVR_SOURCES
   plan_phase.cpp
   regions_segments.cpp)
 
+if(CLR_CMAKE_ENABLE_WRITE_BARRIER_STANDARD_ABI_TEST)
+  if(CLR_CMAKE_TARGET_WIN32)
+    set(WRITE_BARRIER_STANDARD_ABI_TEST_ASM amd64/standardwritebarriertest.asm)
+  else()
+    set(WRITE_BARRIER_STANDARD_ABI_TEST_ASM amd64/standardwritebarriertest.S)
+  endif()
+  list(APPEND GC_SOURCES
+    standardwritebarriertest.cpp
+    ${WRITE_BARRIER_STANDARD_ABI_TEST_ASM})
+endif()
+
 if(FEATURE_STANDALONE_GC)
   if (CLR_CMAKE_TARGET_ARCH_ARM64 OR CLR_CMAKE_TARGET_ARCH_AMD64)
     set(BUILD_EXP_GC 1)
@@ -160,12 +171,18 @@ if(FEATURE_STANDALONE_GC)
 
   add_library_clr(clrgc_gc_wks OBJECT ${GC_WKS_SVR_SOURCES})
   add_dependencies(clrgc_gc_wks eventing_headers)
+  if(CLR_CMAKE_ENABLE_WRITE_BARRIER_STANDARD_ABI_TEST)
+    target_compile_definitions(clrgc_gc_wks PRIVATE FEATURE_WRITE_BARRIER_STANDARD_ABI_TEST)
+  endif()
   set(CLRGC_OBJECTS
     $<TARGET_OBJECTS:clrgc_gc_wks>)
   if(FEATURE_SVR_GC)
     add_library_clr(clrgc_gc_svr OBJECT ${GC_WKS_SVR_SOURCES})
     add_dependencies(clrgc_gc_svr eventing_headers)
     target_compile_definitions(clrgc_gc_svr PRIVATE SERVER_GC)
+    if(CLR_CMAKE_ENABLE_WRITE_BARRIER_STANDARD_ABI_TEST)
+      target_compile_definitions(clrgc_gc_svr PRIVATE FEATURE_WRITE_BARRIER_STANDARD_ABI_TEST)
+    endif()
     list(APPEND CLRGC_OBJECTS
       $<TARGET_OBJECTS:clrgc_gc_svr>)
   endif()
@@ -173,6 +190,9 @@ if(FEATURE_STANDALONE_GC)
   # clrgc is build with standalone+segments
   add_library_clr(clrgc SHARED ${GC_SOURCES} ${CLRGC_OBJECTS})
   add_dependencies(clrgc eventing_headers)
+  if(CLR_CMAKE_ENABLE_WRITE_BARRIER_STANDARD_ABI_TEST)
+    target_compile_definitions(clrgc PRIVATE FEATURE_WRITE_BARRIER_STANDARD_ABI_TEST)
+  endif()
   target_link_libraries(clrgc PRIVATE ${GC_LINK_LIBRARIES})
   target_link_libraries(clrgc PRIVATE gc_dll_wks_descriptor)
   if(FEATURE_SVR_GC)

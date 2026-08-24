@@ -12,6 +12,15 @@
 // The singular heap instance.
 GPTR_DECL(IGCHeap, g_pGCHeap);
 
+// Whether the loaded collector's WriteBarrierParameters contains the 5.9 tail.
+extern bool g_write_barrier_parameters_include_shape;
+
+// Whether the loaded collector's WriteBarrierParameters contains the 5.10 tail.
+extern bool g_write_barrier_parameters_include_complete_store;
+
+// Whether the loaded collector's WriteBarrierParameters contains the 5.11 tail.
+extern bool g_write_barrier_parameters_include_epoch_reset;
+
 #ifndef DACCESS_COMPILE
 extern "C" {
 #endif // !DACCESS_COMPILE
@@ -336,6 +345,18 @@ public:
     // Loads (if using a standalone GC) and initializes the GC.
     static HRESULT LoadAndInitialize();
 
+    // Reserves the process-wide write-barrier calling convention. The standard
+    // ABI cannot be selected after any compilation observed the specialized ABI.
+    static bool TryPrepareWriteBarrierCodegenMode(bool useStandardAbi, bool tracksOldValue);
+
+    // Publishes the standard ABI after its helper targets have been installed.
+    static void CompleteStandardWriteBarrierCodegenMode();
+
+    // Returns the immutable write-barrier settings for a JIT compilation.
+    // Observing an uninitialized mode commits that compilation to the
+    // specialized convention.
+    static void GetWriteBarrierCodegenModeForJit(bool* useStandardAbi, bool* tracksOldValue);
+
     // Records a change in eventing state. This ultimately will inform the GC that it needs to be aware
     // of new events being enabled.
     static void RecordEventStateChange(bool isPublicProvider, GCEventKeyword keywords, GCEventLevel level);
@@ -349,4 +370,3 @@ private:
 };
 
 #endif // _GCHEAPUTILITIES_H_
-

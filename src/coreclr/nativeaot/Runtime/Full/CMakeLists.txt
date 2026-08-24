@@ -69,6 +69,9 @@ add_library(Runtime.GC.Workstation OBJECT ${GC_WKS_SVR_SOURCES})
 if(FEATURE_PERFTRACING)
   add_dependencies(Runtime.GC.Workstation aot_eventing_headers)
 endif()
+if(CLR_CMAKE_ENABLE_WRITE_BARRIER_STANDARD_ABI_TEST)
+  target_compile_definitions(Runtime.GC.Workstation PRIVATE FEATURE_WRITE_BARRIER_STANDARD_ABI_TEST)
+endif()
 set_target_properties(Runtime.GC.Workstation PROPERTIES UNITY_BUILD ON UNITY_BUILD_BATCH_SIZE 0)
 
 add_library(Runtime.GC.Server OBJECT ${GC_WKS_SVR_SOURCES})
@@ -76,6 +79,9 @@ if(FEATURE_PERFTRACING)
   add_dependencies(Runtime.GC.Server aot_eventing_headers)
 endif()
 target_compile_definitions(Runtime.GC.Server PRIVATE FEATURE_SVR_GC SERVER_GC)
+if(CLR_CMAKE_ENABLE_WRITE_BARRIER_STANDARD_ABI_TEST)
+  target_compile_definitions(Runtime.GC.Server PRIVATE FEATURE_WRITE_BARRIER_STANDARD_ABI_TEST)
+endif()
 set_target_properties(Runtime.GC.Server PROPERTIES UNITY_BUILD ON UNITY_BUILD_BATCH_SIZE 0)
 
 if (CLR_CMAKE_TARGET_WIN32)
@@ -94,6 +100,9 @@ add_library(Runtime.WorkstationGC STATIC
     ${NATIVEAOT_PRIVATE_LIBUNWIND_OBJECT}
     ${RUNTIME_ARCH_ASM_OBJECTS}
     $<TARGET_OBJECTS:Runtime.GC.Workstation>)
+if(CLR_CMAKE_ENABLE_WRITE_BARRIER_STANDARD_ABI_TEST)
+  target_compile_definitions(Runtime.WorkstationGC PRIVATE FEATURE_WRITE_BARRIER_STANDARD_ABI_TEST)
+endif()
 if(FEATURE_PERFTRACING)
   add_dependencies(Runtime.WorkstationGC aot_eventing_headers)
 endif()
@@ -106,6 +115,9 @@ add_library(Runtime.ServerGC STATIC
     ${RUNTIME_ARCH_ASM_OBJECTS}
     $<TARGET_OBJECTS:Runtime.GC.Workstation>
     $<TARGET_OBJECTS:Runtime.GC.Server>)
+if(CLR_CMAKE_ENABLE_WRITE_BARRIER_STANDARD_ABI_TEST)
+  target_compile_definitions(Runtime.ServerGC PRIVATE FEATURE_WRITE_BARRIER_STANDARD_ABI_TEST)
+endif()
 if(FEATURE_PERFTRACING)
   add_dependencies(Runtime.ServerGC aot_eventing_headers)
 endif()

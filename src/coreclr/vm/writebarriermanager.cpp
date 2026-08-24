@@ -38,6 +38,11 @@ EXTERN_C void JIT_WriteBarrier_Byte_Region64(Object **dst, Object *ref);
 EXTERN_C void JIT_WriteBarrier_Byte_Region64_End();
 EXTERN_C void JIT_WriteBarrier_Bit_Region64(Object **dst, Object *ref);
 EXTERN_C void JIT_WriteBarrier_Bit_Region64_End();
+#ifdef TARGET_AMD64
+EXTERN_C void JIT_WriteBarrier_SlotLog64(Object **dst, Object *ref);
+EXTERN_C void JIT_WriteBarrier_SlotLog64_End();
+EXTERN_C void JIT_WriteBarrier_SlotLog_Slow(Object **dst, Object *ref);
+#endif // TARGET_AMD64
 #ifdef FEATURE_USE_SOFTWARE_WRITE_WATCH_FOR_GC_HEAP
 EXTERN_C void JIT_WriteBarrier_WriteWatch_PreGrow64(Object **dst, Object *ref);
 EXTERN_C void JIT_WriteBarrier_WriteWatch_PreGrow64_End();
@@ -51,6 +56,11 @@ EXTERN_C void JIT_WriteBarrier_WriteWatch_Byte_Region64(Object **dst, Object *re
 EXTERN_C void JIT_WriteBarrier_WriteWatch_Byte_Region64_End();
 EXTERN_C void JIT_WriteBarrier_WriteWatch_Bit_Region64(Object **dst, Object *ref);
 EXTERN_C void JIT_WriteBarrier_WriteWatch_Bit_Region64_End();
+#ifdef TARGET_AMD64
+EXTERN_C void JIT_WriteBarrier_WriteWatch_SlotLog64(Object **dst, Object *ref);
+EXTERN_C void JIT_WriteBarrier_WriteWatch_SlotLog64_End();
+EXTERN_C void JIT_WriteBarrier_WriteWatch_SlotLog_Slow(Object **dst, Object *ref);
+#endif // TARGET_AMD64
 #endif // FEATURE_USE_SOFTWARE_WRITE_WATCH_FOR_GC_HEAP
 
 
@@ -95,6 +105,14 @@ EXTERN_C void JIT_WriteBarrier_Bit_Region64_Patch_Label_CardTable();
 #ifdef FEATURE_MANUALLY_MANAGED_CARD_BUNDLES
 EXTERN_C void JIT_WriteBarrier_Bit_Region64_Patch_Label_CardBundleTable();
 #endif
+
+#ifdef TARGET_AMD64
+EXTERN_C void JIT_WriteBarrier_SlotLog64_Patch_Label_MetadataBase();
+EXTERN_C void JIT_WriteBarrier_SlotLog64_Patch_Label_SlowPathTarget();
+EXTERN_C void JIT_WriteBarrier_SlotLog64_Patch_Label_MetadataByteShift();
+EXTERN_C void JIT_WriteBarrier_SlotLog64_Patch_Label_MetadataBitShift();
+EXTERN_C void JIT_WriteBarrier_SlotLog64_Patch_Label_Polarity();
+#endif // TARGET_AMD64
 
 #ifdef FEATURE_USE_SOFTWARE_WRITE_WATCH_FOR_GC_HEAP
 EXTERN_C void JIT_WriteBarrier_WriteWatch_PreGrow64_Patch_Label_WriteWatchTable();
@@ -142,6 +160,15 @@ EXTERN_C void JIT_WriteBarrier_WriteWatch_Bit_Region64_Patch_Label_CardTable();
 EXTERN_C void JIT_WriteBarrier_WriteWatch_Bit_Region64_Patch_Label_CardBundleTable();
 #endif
 
+#ifdef TARGET_AMD64
+EXTERN_C void JIT_WriteBarrier_WriteWatch_SlotLog64_Patch_Label_MetadataBase();
+EXTERN_C void JIT_WriteBarrier_WriteWatch_SlotLog64_Patch_Label_SlowPathTarget();
+EXTERN_C void JIT_WriteBarrier_WriteWatch_SlotLog64_Patch_Label_MetadataByteShift();
+EXTERN_C void JIT_WriteBarrier_WriteWatch_SlotLog64_Patch_Label_MetadataBitShift();
+EXTERN_C void JIT_WriteBarrier_WriteWatch_SlotLog64_Patch_Label_Polarity();
+EXTERN_C void JIT_WriteBarrier_WriteWatch_SlotLog64_Patch_Label_WriteWatchTable();
+#endif // TARGET_AMD64
+
 #endif // FEATURE_USE_SOFTWARE_WRITE_WATCH_FOR_GC_HEAP
 
 #else // WRITE_BARRIER_VARS_INLINE
@@ -168,11 +195,42 @@ EXTERN_C void JIT_WriteBarrier_Patch_Label_GCShadowEnd();
 #endif // WRITE_BARRIER_VARS_INLINE
 
 WriteBarrierManager g_WriteBarrierManager;
+extern "C" WriteBarrierSlowPath g_SlotLogWriteBarrierSlowPath;
+WriteBarrierSlowPath g_SlotLogWriteBarrierSlowPath;
+WriteBarrierRangeSlowPath g_SlotLogWriteBarrierRangeSlowPath;
+WriteBarrierDependentEdgeSlowPath g_SlotLogWriteBarrierDependentEdgeSlowPath;
+WriteBarrierEpochReset g_SlotLogWriteBarrierEpochReset;
 
 WriteBarrierManager::WriteBarrierManager() :
-    m_currentWriteBarrier(WRITE_BARRIER_UNINITIALIZED)
+    m_currentWriteBarrier(WRITE_BARRIER_UNINITIALIZED),
+    m_writeBarrierShape(WriteBarrierShape::CardTable),
+    m_sideMetadata{}
 {
     LIMITED_METHOD_CONTRACT;
+}
+
+void WriteBarrierManager::ConfigureWriteBarrier(const WriteBarrierParameters* parameters)
+{
+    LIMITED_METHOD_CONTRACT;
+
+    _ASSERTE(parameters != nullptr);
+    _ASSERTE(m_writeBarrierShape == WriteBarrierShape::CardTable);
+
+    m_writeBarrierShape = parameters->write_barrier_shape;
+    if (m_writeBarrierShape == WriteBarrierShape::SideMetadataFieldLog)
+    {
+        m_sideMetadata = parameters->write_barrier_side_metadata;
+        g_SlotLogWriteBarrierSlowPath = m_sideMetadata.slow_path;
+        g_SlotLogWriteBarrierRangeSlowPath = parameters->write_barrier_range_slow_path;
+        g_SlotLogWriteBarrierDependentEdgeSlowPath = parameters->write_barrier_dependent_edge_slow_path;
+        g_SlotLogWriteBarrierEpochReset = parameters->write_barrier_epoch_reset;
+    }
+}
+
+bool WriteBarrierManager::IsSlotLogWriteBarrierEnabled() const
+{
+    LIMITED_METHOD_CONTRACT;
+    return m_writeBarrierShape == WriteBarrierShape::SideMetadataFieldLog;
 }
 
 PCODE WriteBarrierManager::GetCurrentWriteBarrierCode()
@@ -193,6 +251,10 @@ PCODE WriteBarrierManager::GetCurrentWriteBarrierCode()
             return GetEEFuncEntryPoint(JIT_WriteBarrier_Byte_Region64);
         case WRITE_BARRIER_BIT_REGIONS64:
             return GetEEFuncEntryPoint(JIT_WriteBarrier_Bit_Region64);
+#ifdef TARGET_AMD64
+        case WRITE_BARRIER_SLOT_LOG64:
+            return GetEEFuncEntryPoint(JIT_WriteBarrier_SlotLog64);
+#endif // TARGET_AMD64
 #ifdef FEATURE_USE_SOFTWARE_WRITE_WATCH_FOR_GC_HEAP
         case WRITE_BARRIER_WRITE_WATCH_PREGROW64:
             return GetEEFuncEntryPoint(JIT_WriteBarrier_WriteWatch_PreGrow64);
@@ -206,6 +268,10 @@ PCODE WriteBarrierManager::GetCurrentWriteBarrierCode()
             return GetEEFuncEntryPoint(JIT_WriteBarrier_WriteWatch_Byte_Region64);
         case WRITE_BARRIER_WRITE_WATCH_BIT_REGIONS64:
             return GetEEFuncEntryPoint(JIT_WriteBarrier_WriteWatch_Bit_Region64);
+#ifdef TARGET_AMD64
+        case WRITE_BARRIER_WRITE_WATCH_SLOT_LOG64:
+            return GetEEFuncEntryPoint(JIT_WriteBarrier_WriteWatch_SlotLog64);
+#endif // TARGET_AMD64
 #endif // FEATURE_USE_SOFTWARE_WRITE_WATCH_FOR_GC_HEAP
         default:
             UNREACHABLE_MSG("unexpected m_currentWriteBarrier!");
@@ -233,6 +299,10 @@ size_t WriteBarrierManager::GetSpecificWriteBarrierSize(WriteBarrierType writeBa
             return MARKED_FUNCTION_SIZE(JIT_WriteBarrier_Byte_Region64);
         case WRITE_BARRIER_BIT_REGIONS64:
             return MARKED_FUNCTION_SIZE(JIT_WriteBarrier_Bit_Region64);
+#ifdef TARGET_AMD64
+        case WRITE_BARRIER_SLOT_LOG64:
+            return MARKED_FUNCTION_SIZE(JIT_WriteBarrier_SlotLog64);
+#endif // TARGET_AMD64
 #ifdef FEATURE_USE_SOFTWARE_WRITE_WATCH_FOR_GC_HEAP
         case WRITE_BARRIER_WRITE_WATCH_PREGROW64:
             return MARKED_FUNCTION_SIZE(JIT_WriteBarrier_WriteWatch_PreGrow64);
@@ -246,6 +316,10 @@ size_t WriteBarrierManager::GetSpecificWriteBarrierSize(WriteBarrierType writeBa
             return MARKED_FUNCTION_SIZE(JIT_WriteBarrier_WriteWatch_Byte_Region64);
         case WRITE_BARRIER_WRITE_WATCH_BIT_REGIONS64:
             return MARKED_FUNCTION_SIZE(JIT_WriteBarrier_WriteWatch_Bit_Region64);
+#ifdef TARGET_AMD64
+        case WRITE_BARRIER_WRITE_WATCH_SLOT_LOG64:
+            return MARKED_FUNCTION_SIZE(JIT_WriteBarrier_WriteWatch_SlotLog64);
+#endif // TARGET_AMD64
 #endif // FEATURE_USE_SOFTWARE_WRITE_WATCH_FOR_GC_HEAP
         case WRITE_BARRIER_BUFFER:
 #if defined(WRITE_BARRIER_VARS_INLINE)
@@ -317,6 +391,9 @@ void WriteBarrierManager::Initialize()
 #endif // FEATURE_SVR_GC
     _ASSERTE_ALL_BUILDS(cbWriteBarrierBuffer >= GetSpecificWriteBarrierSize(WRITE_BARRIER_BYTE_REGIONS64));
     _ASSERTE_ALL_BUILDS(cbWriteBarrierBuffer >= GetSpecificWriteBarrierSize(WRITE_BARRIER_BIT_REGIONS64));
+#ifdef TARGET_AMD64
+    _ASSERTE_ALL_BUILDS(cbWriteBarrierBuffer >= GetSpecificWriteBarrierSize(WRITE_BARRIER_SLOT_LOG64));
+#endif // TARGET_AMD64
 #ifdef FEATURE_USE_SOFTWARE_WRITE_WATCH_FOR_GC_HEAP
     _ASSERTE_ALL_BUILDS(cbWriteBarrierBuffer >= GetSpecificWriteBarrierSize(WRITE_BARRIER_WRITE_WATCH_PREGROW64));
     _ASSERTE_ALL_BUILDS(cbWriteBarrierBuffer >= GetSpecificWriteBarrierSize(WRITE_BARRIER_WRITE_WATCH_POSTGROW64));
@@ -325,6 +402,9 @@ void WriteBarrierManager::Initialize()
 #endif // FEATURE_SVR_GC
     _ASSERTE_ALL_BUILDS(cbWriteBarrierBuffer >= GetSpecificWriteBarrierSize(WRITE_BARRIER_WRITE_WATCH_BYTE_REGIONS64));
     _ASSERTE_ALL_BUILDS(cbWriteBarrierBuffer >= GetSpecificWriteBarrierSize(WRITE_BARRIER_WRITE_WATCH_BIT_REGIONS64));
+#ifdef TARGET_AMD64
+    _ASSERTE_ALL_BUILDS(cbWriteBarrierBuffer >= GetSpecificWriteBarrierSize(WRITE_BARRIER_WRITE_WATCH_SLOT_LOG64));
+#endif // TARGET_AMD64
 #endif // FEATURE_USE_SOFTWARE_WRITE_WATCH_FOR_GC_HEAP
 
 
@@ -382,6 +462,22 @@ bool WriteBarrierManager::NeedDifferentWriteBarrier(bool bReqUpperBoundsCheck, b
 
     WriteBarrierType writeBarrierType = m_currentWriteBarrier;
 
+#ifdef TARGET_AMD64
+    if (IsSlotLogWriteBarrierEnabled())
+    {
+#ifdef FEATURE_USE_SOFTWARE_WRITE_WATCH_FOR_GC_HEAP
+        if (m_currentWriteBarrier == WRITE_BARRIER_WRITE_WATCH_SLOT_LOG64)
+        {
+            *pNewWriteBarrierType = WRITE_BARRIER_WRITE_WATCH_SLOT_LOG64;
+            return false;
+        }
+#endif // FEATURE_USE_SOFTWARE_WRITE_WATCH_FOR_GC_HEAP
+
+        *pNewWriteBarrierType = WRITE_BARRIER_SLOT_LOG64;
+        return m_currentWriteBarrier != WRITE_BARRIER_SLOT_LOG64;
+    }
+#endif // TARGET_AMD64
+
     for(;;)
     {
         switch (writeBarrierType)
@@ -426,6 +522,11 @@ bool WriteBarrierManager::NeedDifferentWriteBarrier(bool bReqUpperBoundsCheck, b
         case WRITE_BARRIER_BIT_REGIONS64:
             break;
 
+#ifdef TARGET_AMD64
+        case WRITE_BARRIER_SLOT_LOG64:
+            break;
+#endif // TARGET_AMD64
+
 #ifdef FEATURE_USE_SOFTWARE_WRITE_WATCH_FOR_GC_HEAP
         case WRITE_BARRIER_WRITE_WATCH_PREGROW64:
             if (bReqUpperBoundsCheck)
@@ -444,6 +545,10 @@ bool WriteBarrierManager::NeedDifferentWriteBarrier(bool bReqUpperBoundsCheck, b
         case WRITE_BARRIER_WRITE_WATCH_BYTE_REGIONS64:
         case WRITE_BARRIER_WRITE_WATCH_BIT_REGIONS64:
             break;
+#ifdef TARGET_AMD64
+        case WRITE_BARRIER_WRITE_WATCH_SLOT_LOG64:
+            break;
+#endif // TARGET_AMD64
 #endif // FEATURE_USE_SOFTWARE_WRITE_WATCH_FOR_GC_HEAP
 
         default:
@@ -502,6 +607,14 @@ int WriteBarrierManager::UpdateEphemeralBounds(bool isRuntimeSuspended)
             break;
 #endif // FEATURE_SVR_GC
 
+#ifdef TARGET_AMD64
+        case WRITE_BARRIER_SLOT_LOG64:
+#ifdef FEATURE_USE_SOFTWARE_WRITE_WATCH_FOR_GC_HEAP
+        case WRITE_BARRIER_WRITE_WATCH_SLOT_LOG64:
+#endif // FEATURE_USE_SOFTWARE_WRITE_WATCH_FOR_GC_HEAP
+            break;
+#endif // TARGET_AMD64
+
         default:
             UNREACHABLE_MSG("unexpected m_currentWriteBarrier in UpdateEphemeralBounds");
     }
@@ -555,6 +668,9 @@ int WriteBarrierManager::UpdateWriteWatchAndCardTableLocations(bool isRuntimeSus
 #endif // FEATURE_SVR_GC
         case WRITE_BARRIER_WRITE_WATCH_BYTE_REGIONS64:
         case WRITE_BARRIER_WRITE_WATCH_BIT_REGIONS64:
+#ifdef TARGET_AMD64
+        case WRITE_BARRIER_WRITE_WATCH_SLOT_LOG64:
+#endif // TARGET_AMD64
             stompWBCompleteActions |= updateVariable<UINT64>(m_pWriteWatchTableImmediate, (size_t)g_write_watch_table);
             break;
 
@@ -565,6 +681,37 @@ int WriteBarrierManager::UpdateWriteWatchAndCardTableLocations(bool isRuntimeSus
     stompWBCompleteActions |= updateVariable<UINT64>(m_pWriteWatchTableImmediate, (size_t)g_write_watch_table);
 #endif
 #endif // FEATURE_USE_SOFTWARE_WRITE_WATCH_FOR_GC_HEAP
+
+#ifdef TARGET_AMD64
+    if ((m_currentWriteBarrier == WRITE_BARRIER_SLOT_LOG64)
+#ifdef FEATURE_USE_SOFTWARE_WRITE_WATCH_FOR_GC_HEAP
+        || (m_currentWriteBarrier == WRITE_BARRIER_WRITE_WATCH_SLOT_LOG64)
+#endif // FEATURE_USE_SOFTWARE_WRITE_WATCH_FOR_GC_HEAP
+        )
+    {
+        stompWBCompleteActions |=
+            updateVariable<UINT64>(m_pSlotLogMetadataBaseImmediate, (size_t)m_sideMetadata.metadata_base);
+        stompWBCompleteActions |=
+            updateVariable<UINT64>(m_pSlotLogSlowPathTargetImmediate,
+                                   (size_t)((m_currentWriteBarrier == WRITE_BARRIER_SLOT_LOG64)
+                                                ? JIT_WriteBarrier_SlotLog_Slow
+#ifdef FEATURE_USE_SOFTWARE_WRITE_WATCH_FOR_GC_HEAP
+                                                : JIT_WriteBarrier_WriteWatch_SlotLog_Slow
+#else
+                                                : JIT_WriteBarrier_SlotLog_Slow
+#endif // FEATURE_USE_SOFTWARE_WRITE_WATCH_FOR_GC_HEAP
+                                                ));
+        stompWBCompleteActions |= updateVariable<UINT8>(
+            m_pSlotLogMetadataByteShift,
+            static_cast<UINT8>(m_sideMetadata.granularity_shift + 3));
+        stompWBCompleteActions |=
+            updateVariable<UINT8>(m_pSlotLogMetadataBitShift, m_sideMetadata.granularity_shift);
+        stompWBCompleteActions |= updateVariable<UINT8>(
+            m_pSlotLogPolarity,
+            (m_sideMetadata.bit_meaning == WriteBarrierMetadataBitMeaning::WorkWhenBitIsClear) ? 0xFF : 0);
+        return stompWBCompleteActions;
+    }
+#endif // TARGET_AMD64
 
 
 #if defined(WRITE_BARRIER_VARS_INLINE)
@@ -636,6 +783,12 @@ int WriteBarrierManager::SwitchToWriteWatchBarrier(bool isRuntimeSuspended)
             newWriteBarrierType = WRITE_BARRIER_WRITE_WATCH_BIT_REGIONS64;
             break;
 
+#ifdef TARGET_AMD64
+        case WRITE_BARRIER_SLOT_LOG64:
+            newWriteBarrierType = WRITE_BARRIER_WRITE_WATCH_SLOT_LOG64;
+            break;
+#endif // TARGET_AMD64
+
         default:
             UNREACHABLE();
     }
@@ -673,6 +826,12 @@ int WriteBarrierManager::SwitchToNonWriteWatchBarrier(bool isRuntimeSuspended)
         case WRITE_BARRIER_WRITE_WATCH_BIT_REGIONS64:
             newWriteBarrierType = WRITE_BARRIER_BIT_REGIONS64;
             break;
+
+#ifdef TARGET_AMD64
+        case WRITE_BARRIER_WRITE_WATCH_SLOT_LOG64:
+            newWriteBarrierType = WRITE_BARRIER_SLOT_LOG64;
+            break;
+#endif // TARGET_AMD64
 
         default:
             UNREACHABLE();
@@ -789,6 +948,15 @@ void WriteBarrierManager::Validate()
     _ASSERTE_ALL_BUILDS((reinterpret_cast<UINT64>(pCardBundleTableImmediate) & 0x7) == 0);
 #endif
 
+#ifdef TARGET_AMD64
+    PBYTE pSlotLogMetadataBaseImmediate =
+        CALC_PATCH_LOCATION(JIT_WriteBarrier_SlotLog64, Patch_Label_MetadataBase, 2);
+    PBYTE pSlotLogSlowPathTargetImmediate =
+        CALC_PATCH_LOCATION(JIT_WriteBarrier_SlotLog64, Patch_Label_SlowPathTarget, 2);
+    _ASSERTE_ALL_BUILDS((reinterpret_cast<UINT64>(pSlotLogMetadataBaseImmediate) & 0x7) == 0);
+    _ASSERTE_ALL_BUILDS((reinterpret_cast<UINT64>(pSlotLogSlowPathTargetImmediate) & 0x7) == 0);
+#endif // TARGET_AMD64
+
 #ifdef FEATURE_USE_SOFTWARE_WRITE_WATCH_FOR_GC_HEAP
     PBYTE pWriteWatchTableImmediate;
 
@@ -861,6 +1029,18 @@ void WriteBarrierManager::Validate()
     pCardBundleTableImmediate = CALC_PATCH_LOCATION(JIT_WriteBarrier_WriteWatch_Bit_Region64, Patch_Label_CardBundleTable, 2);
     _ASSERTE_ALL_BUILDS((reinterpret_cast<UINT64>(pCardBundleTableImmediate) & 0x7) == 0);
 #endif
+
+#ifdef TARGET_AMD64
+    pWriteWatchTableImmediate =
+        CALC_PATCH_LOCATION(JIT_WriteBarrier_WriteWatch_SlotLog64, Patch_Label_WriteWatchTable, 2);
+    pSlotLogMetadataBaseImmediate =
+        CALC_PATCH_LOCATION(JIT_WriteBarrier_WriteWatch_SlotLog64, Patch_Label_MetadataBase, 2);
+    pSlotLogSlowPathTargetImmediate =
+        CALC_PATCH_LOCATION(JIT_WriteBarrier_WriteWatch_SlotLog64, Patch_Label_SlowPathTarget, 2);
+    _ASSERTE_ALL_BUILDS((reinterpret_cast<UINT64>(pWriteWatchTableImmediate) & 0x7) == 0);
+    _ASSERTE_ALL_BUILDS((reinterpret_cast<UINT64>(pSlotLogMetadataBaseImmediate) & 0x7) == 0);
+    _ASSERTE_ALL_BUILDS((reinterpret_cast<UINT64>(pSlotLogSlowPathTargetImmediate) & 0x7) == 0);
+#endif // TARGET_AMD64
 
 #endif // FEATURE_USE_SOFTWARE_WRITE_WATCH_FOR_GC_HEAP
 }
@@ -964,6 +1144,28 @@ void WriteBarrierManager::UpdatePatchLocations(WriteBarrierType newWriteBarrier)
             _ASSERTE_ALL_BUILDS(0xf0f0f0f0f0f0f0f0 == *(UINT64*)m_pCardBundleTableImmediate);
 #endif
             break;
+
+#ifdef TARGET_AMD64
+        case WRITE_BARRIER_SLOT_LOG64:
+            m_pSlotLogMetadataBaseImmediate =
+                CALC_PATCH_LOCATION(JIT_WriteBarrier_SlotLog64, Patch_Label_MetadataBase, 2);
+            m_pSlotLogSlowPathTargetImmediate =
+                CALC_PATCH_LOCATION(JIT_WriteBarrier_SlotLog64, Patch_Label_SlowPathTarget, 2);
+            m_pSlotLogMetadataByteShift =
+                CALC_PATCH_LOCATION(JIT_WriteBarrier_SlotLog64, Patch_Label_MetadataByteShift, 3);
+            m_pSlotLogMetadataBitShift =
+                CALC_PATCH_LOCATION(JIT_WriteBarrier_SlotLog64, Patch_Label_MetadataBitShift, 3);
+            m_pSlotLogPolarity =
+                CALC_PATCH_LOCATION(JIT_WriteBarrier_SlotLog64, Patch_Label_Polarity, 1);
+
+            _ASSERTE_ALL_BUILDS(0xf0f0f0f0f0f0f0f0 == *(UINT64*)m_pSlotLogMetadataBaseImmediate);
+            _ASSERTE_ALL_BUILDS(0xf0f0f0f0f0f0f0f0 == *(UINT64*)m_pSlotLogSlowPathTargetImmediate);
+            _ASSERTE_ALL_BUILDS(0x16 == *(UINT8*)m_pSlotLogMetadataByteShift);
+            _ASSERTE_ALL_BUILDS(0x16 == *(UINT8*)m_pSlotLogMetadataBitShift);
+            _ASSERTE_ALL_BUILDS(0x34 == *(m_pSlotLogPolarity - 1));
+            _ASSERTE_ALL_BUILDS(0xa5 == *m_pSlotLogPolarity);
+            break;
+#endif // TARGET_AMD64
 
 #ifdef FEATURE_USE_SOFTWARE_WRITE_WATCH_FOR_GC_HEAP
         case WRITE_BARRIER_WRITE_WATCH_PREGROW64:
@@ -1069,6 +1271,31 @@ void WriteBarrierManager::UpdatePatchLocations(WriteBarrierType newWriteBarrier)
             _ASSERTE_ALL_BUILDS(0xf0f0f0f0f0f0f0f0 == *(UINT64*)m_pCardBundleTableImmediate);
 #endif
             break;
+
+#ifdef TARGET_AMD64
+        case WRITE_BARRIER_WRITE_WATCH_SLOT_LOG64:
+            m_pSlotLogMetadataBaseImmediate =
+                CALC_PATCH_LOCATION(JIT_WriteBarrier_WriteWatch_SlotLog64, Patch_Label_MetadataBase, 2);
+            m_pSlotLogSlowPathTargetImmediate =
+                CALC_PATCH_LOCATION(JIT_WriteBarrier_WriteWatch_SlotLog64, Patch_Label_SlowPathTarget, 2);
+            m_pSlotLogMetadataByteShift =
+                CALC_PATCH_LOCATION(JIT_WriteBarrier_WriteWatch_SlotLog64, Patch_Label_MetadataByteShift, 3);
+            m_pSlotLogMetadataBitShift =
+                CALC_PATCH_LOCATION(JIT_WriteBarrier_WriteWatch_SlotLog64, Patch_Label_MetadataBitShift, 3);
+            m_pSlotLogPolarity =
+                CALC_PATCH_LOCATION(JIT_WriteBarrier_WriteWatch_SlotLog64, Patch_Label_Polarity, 1);
+            m_pWriteWatchTableImmediate =
+                CALC_PATCH_LOCATION(JIT_WriteBarrier_WriteWatch_SlotLog64, Patch_Label_WriteWatchTable, 2);
+
+            _ASSERTE_ALL_BUILDS(0xf0f0f0f0f0f0f0f0 == *(UINT64*)m_pSlotLogMetadataBaseImmediate);
+            _ASSERTE_ALL_BUILDS(0xf0f0f0f0f0f0f0f0 == *(UINT64*)m_pSlotLogSlowPathTargetImmediate);
+            _ASSERTE_ALL_BUILDS(0xf0f0f0f0f0f0f0f0 == *(UINT64*)m_pWriteWatchTableImmediate);
+            _ASSERTE_ALL_BUILDS(0x16 == *(UINT8*)m_pSlotLogMetadataByteShift);
+            _ASSERTE_ALL_BUILDS(0x16 == *(UINT8*)m_pSlotLogMetadataBitShift);
+            _ASSERTE_ALL_BUILDS(0x34 == *(m_pSlotLogPolarity - 1));
+            _ASSERTE_ALL_BUILDS(0xa5 == *m_pSlotLogPolarity);
+            break;
+#endif // TARGET_AMD64
 
 
 #endif // FEATURE_USE_SOFTWARE_WRITE_WATCH_FOR_GC_HEAP

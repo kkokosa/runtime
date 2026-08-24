@@ -341,11 +341,15 @@ void SetObjectReferenceUnchecked(OBJECTREF *dst,OBJECTREF ref)
     // Assign value. We use casting to avoid going thru the overloaded
     // OBJECTREF= operator which in this case would trigger a false
     // write-barrier violation assert.
+    bool useSlotLog = ErectWriteBarrierPre((Object**)dst, OBJECTREFToObject(ref));
     VolatileStore((Object**)dst, OBJECTREFToObject(ref));
 #ifdef _DEBUG
     Thread::ObjectRefAssign(dst);
 #endif
-    ErectWriteBarrier(dst, ref);
+    if (!useSlotLog)
+    {
+        ErectWriteBarrier(dst, ref);
+    }
 }
 
 void CopyValueClassUnchecked(void* dest, void* src, MethodTable *pMT)
@@ -360,7 +364,7 @@ void CopyValueClassUnchecked(void* dest, void* src, MethodTable *pMT)
 
     if (pMT->ContainsGCPointers())
     {
-        memmoveGCRefs(dest, src, pMT->GetNumInstanceFieldBytesIfContainsGCPointers());
+        memmoveGCRefsWithLayout(dest, src, pMT->GetNumInstanceFieldBytesIfContainsGCPointers(), pMT);
     }
     else
     {

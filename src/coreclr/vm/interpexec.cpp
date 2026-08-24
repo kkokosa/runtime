@@ -15,6 +15,10 @@
 #include "gchelpers.inl"
 #include "arraynative.inl"
 
+#ifdef TARGET_AMD64
+#include "writebarriermanager.h"
+#endif
+
 #ifdef TARGET_WASM
 extern "C" void SamplingProfiler_OnSamplepoint();
 #endif
@@ -1259,7 +1263,8 @@ extern "C" ContinuationObject* AsyncHelpers_ResumeInterpreterContinuationWorker(
             else if (pSuspendData->asyncMethodReturnType != NULL && pSuspendData->asyncMethodReturnType->ContainsGCPointers())
             {
                 // ValueType containing gc refs, needs to be written with write barriers
-                memmoveGCRefs(resultStorage, returnValueLocation, returnValueSize);
+                memmoveGCRefsWithLayout(
+                    resultStorage, returnValueLocation, returnValueSize, pSuspendData->asyncMethodReturnType);
             }
             else
             {
@@ -4669,17 +4674,82 @@ do                                                                      \
                     uint8_t *pContinuationData = pContinuationDataStart;
                     size_t bytesTotal = 0;
                     InterpIntervalMapEntry *pCopyEntry = pAsyncSuspendData->liveLocalsIntervals;
-                    if (pCopyEntry->countBytes > 0)
+                    while (pCopyEntry->countBytes != 0)
+                    {
+                        bytesTotal += pCopyEntry->countBytes;
+                        pCopyEntry++;
+                    }
+
+                    if (bytesTotal != 0)
                     {
                         GCHeapMemoryBarrier();
+                        bool useSlotLog = false;
+#ifdef TARGET_AMD64
+                        if (g_SlotLogWriteBarrierSlowPath != nullptr)
+                        {
+                            MethodTable* continuationType = continuation->GetMethodTable();
+                            if (continuationType->ContainsGCPointers())
+                            {
+                                uint8_t* continuationDataEnd = pContinuationDataStart + bytesTotal;
+                                CGCDesc* map = CGCDesc::GetCGCDescFromMT(continuationType);
+                                CGCDescSeries* series = map->GetHighestSeries();
+                                const size_t seriesCount = map->GetNumSeries();
+                                InterpIntervalMapEntry* sourceEntry = pAsyncSuspendData->liveLocalsIntervals;
+                                size_t sourceStreamOffset = 0;
+
+                                for (size_t seriesIndex = 0;
+                                     seriesIndex < seriesCount;
+                                     seriesIndex++, series--)
+                                {
+                                    uint8_t* seriesStart =
+                                        reinterpret_cast<uint8_t*>(OBJECTREFToObject(continuation)) +
+                                        series->GetSeriesOffset();
+                                    size_t seriesSize =
+                                        series->GetSeriesSize() + continuationType->GetBaseSize();
+
+                                    for (size_t seriesOffset = 0;
+                                         seriesOffset < seriesSize;
+                                         seriesOffset += sizeof(Object*))
+                                    {
+                                        uint8_t* destination = seriesStart + seriesOffset;
+                                        if ((destination < pContinuationDataStart) ||
+                                            ((destination + sizeof(Object*)) > continuationDataEnd))
+                                        {
+                                            continue;
+                                        }
+
+                                        size_t relativeOffset = destination - pContinuationDataStart;
+                                        while (relativeOffset >=
+                                               (sourceStreamOffset + sourceEntry->countBytes))
+                                        {
+                                            sourceStreamOffset += sourceEntry->countBytes;
+                                            sourceEntry++;
+                                            _ASSERTE(sourceEntry->countBytes != 0);
+                                        }
+
+                                        size_t sourceOffset = relativeOffset - sourceStreamOffset;
+                                        _ASSERTE((sourceOffset + sizeof(Object*)) <= sourceEntry->countBytes);
+                                        Object** source = reinterpret_cast<Object**>(
+                                            LOCAL_VAR_ADDR(sourceEntry->startOffset + sourceOffset, uint8_t));
+                                        useSlotLog |= ErectWriteBarrierPre(
+                                            reinterpret_cast<Object**>(destination), VolatileLoad(source));
+                                    }
+                                }
+                            }
+                        }
+#endif // TARGET_AMD64
+
+                        pCopyEntry = pAsyncSuspendData->liveLocalsIntervals;
                         while (pCopyEntry->countBytes != 0)
                         {
                             InlinedForwardGCSafeCopyHelper(pContinuationData, LOCAL_VAR_ADDR(pCopyEntry->startOffset, uint8_t), pCopyEntry->countBytes);
-                            bytesTotal += pCopyEntry->countBytes;
                             pContinuationData += pCopyEntry->countBytes;
                             pCopyEntry++;
                         }
-                        InlinedSetCardsAfterBulkCopyHelper((Object**)pContinuationDataStart, bytesTotal);
+                        if (!useSlotLog)
+                        {
+                            InlinedSetCardsAfterBulkCopyHelper((Object**)pContinuationDataStart, bytesTotal);
+                        }
                     }
 
                     int32_t returnValueSize = pAsyncSuspendData->asyncMethodReturnTypePrimitiveSize;

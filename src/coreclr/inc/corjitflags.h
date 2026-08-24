@@ -64,6 +64,8 @@ public:
         CORJIT_FLAG_SOFTFP_ABI              = 30, // Enable armel calling convention
 #endif
         CORJIT_FLAG_USE_DISPATCH_HELPERS    = 31, // The JIT should use helpers for interface dispatch instead of virtual stub dispatch
+        CORJIT_FLAG_USE_STANDARD_WRITE_BARRIER_ABI = 32, // Write barrier helpers use the platform ABI volatile register contract
+        CORJIT_FLAG_WRITE_BARRIER_REQUIRES_OLD_VALUE = 33, // Write barriers observe the overwritten reference
     };
 
     CORJIT_FLAGS()
