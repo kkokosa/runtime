@@ -42,6 +42,21 @@ $standaloneHook = Join-Path $RepositoryRoot (
 $sessionId = (
     [DateTime]::UtcNow.ToString('yyyyMMddTHHmmssZ') + '-' +
     [Guid]::NewGuid().ToString('N'))
+$sourceCommit = (& git -C $RepositoryRoot rev-parse HEAD).Trim()
+if (($LASTEXITCODE -ne 0) -or
+    ($sourceCommit -notmatch '^[0-9a-f]{40}$')) {
+    throw 'Unable to identify the harness source commit.'
+}
+$sourceScopes = @(
+    'docs\design\lxr-port\harness',
+    'docs\design\lxr-port\P1.5\run-reference-enumeration-scenarios.ps1')
+$sourceStatus = @(
+    & git -C $RepositoryRoot status --porcelain -- @sourceScopes)
+if (($LASTEXITCODE -ne 0) -or ($sourceStatus.Count -ne 0)) {
+    throw (
+        'Scenario harness sources must match the identified commit: ' +
+        ($sourceStatus -join '; '))
+}
 $invocationRows = [Collections.Generic.List[object]]::new()
 $controlRows = [Collections.Generic.List[object]]::new()
 
@@ -220,6 +235,10 @@ function Invoke-Scenario(
     $env:P15_REFERENCE_ENUMERATION_EXPECTED_MODE = (
         $ExpectedMode -ne 0 ? $ExpectedMode : $variant.Mode).ToString()
     $env:P15_REFERENCE_ENUMERATION_EXPECTED_MODE_NAME = $variant.Name
+    $fixedFullCollectionCount =
+        $scenario.Name -eq 'pointer-chasing' ? 2 : 0
+    $env:P15_REFERENCE_ENUMERATION_FIXED_FULL_COLLECTION_COUNT =
+        $fixedFullCollectionCount.ToString()
     if ($configuration.Deployment -eq 'standalone') {
         $env:DOTNET_GCPath = $standaloneHook
     } else {
@@ -260,8 +279,16 @@ function Invoke-Scenario(
             ($workerReport.referenceEnumeration.ranges -le 0) -or
             ($workerReport.referenceEnumeration.slots -le 0) -or
             ($workerReport.referenceEnumeration.nonNullSlots -le 0) -or
-            ($workerReport.gc.inducedCollections -ne 0) -or
+            ($workerReport.referenceEnumeration.window -ne
+             'post-reset-through-telemetry-end') -or
+            ($workerReport.gc.expectedInducedCollections -ne
+             $fixedFullCollectionCount) -or
+            ($workerReport.gc.inducedCollections -ne
+             $fixedFullCollectionCount) -or
             ($workerReport.gc.gen0Collections -le 0) -or
+            ($scenario.Name -eq 'pointer-chasing' -and
+             $workerReport.gc.gen2Collections -lt
+             $fixedFullCollectionCount) -or
             ($workerReport.observedGcConfig.ServerGC -ne $configuration.Server) -or
             ($workerReport.observedGcConfig.ConcurrentGC -ne 'true') -or
             ($configuration.Name -eq 'srv' -and
@@ -327,6 +354,8 @@ try {
                             Gen0 = [int]$report.gc.gen0Collections
                             Gen1 = [int]$report.gc.gen1Collections
                             Gen2 = [int]$report.gc.gen2Collections
+                            ExpectedInduced = [int](
+                                $report.gc.expectedInducedCollections)
                             Induced = [int]$report.gc.inducedCollections
                             RequestedServerGC = $configuration.Server
                             ObservedServerGC =
@@ -394,7 +423,10 @@ try {
             'reference-enumeration-probe-failed')) -and
         (@($controlReport.referenceEnumerationFailures).Count -eq 1) -and
         ($controlReport.referenceEnumeration.mode -eq 2) -and
-        ($controlReport.referenceEnumeration.expectedMode -eq 3)
+        ($controlReport.referenceEnumeration.expectedMode -eq 3) -and
+        ($controlReport.gc.expectedInducedCollections -eq 2) -and
+        ($controlReport.gc.inducedCollections -eq 2) -and
+        ($controlReport.gc.gen2Collections -ge 2)
     if (-not $controlFired) {
         throw 'Reference-enumeration mode-mismatch control did not fire.'
     }
@@ -417,7 +449,8 @@ try {
         'DOTNET_GCPath',
         'P15_REFERENCE_ENUMERATION_HOOK_LIBRARY',
         'P15_REFERENCE_ENUMERATION_EXPECTED_MODE',
-        'P15_REFERENCE_ENUMERATION_EXPECTED_MODE_NAME'
+        'P15_REFERENCE_ENUMERATION_EXPECTED_MODE_NAME',
+        'P15_REFERENCE_ENUMERATION_FIXED_FULL_COLLECTION_COUNT'
     )) {
         Remove-Item "Env:\$name" -ErrorAction SilentlyContinue
     }
@@ -496,9 +529,9 @@ foreach ($scenario in $scenarios.Name) {
                 }
                 $ratioArray = $ratios.ToArray()
                 $point = Get-GeometricMean $ratioArray
+                $bootstrapSeed = 20260825 + $summaryRows.Count
                 $bootstrap = Get-BootstrapInterval (
-                    $ratioArray) (
-                    20260825 + $summaryRows.Count)
+                    $ratioArray) $bootstrapSeed
                 $summaryRows.Add([pscustomobject][ordered]@{
                     Session = $sessionId
                     Scenario = $scenario
@@ -513,6 +546,7 @@ foreach ($scenario in $scenarios.Name) {
                     RatioCiHigh = $bootstrap.High
                     CiMethod = 'paired-bootstrap-percentile-95'
                     BootstrapResamples = 10000
+                    BootstrapSeed = $bootstrapSeed
                 })
             }
     }
@@ -525,6 +559,14 @@ $controlRows |
     Export-Csv -LiteralPath (
         Join-Path $OutputDirectory 'scenario-controls.csv') -NoTypeInformation
 
+$runtimeVersions = @(
+    $invocationRows.CoreClrFileVersion |
+    Sort-Object -Unique)
+if (($runtimeVersions.Count -ne 1) -or
+    ($runtimeVersions[0] -notmatch '@Commit: (?<commit>[0-9a-f]{40})')) {
+    throw 'Unable to identify one exact scenario runtime commit.'
+}
+$runtimeCommit = $Matches.commit
 $identityRows = foreach ($path in @(
     $linkedHook,
     $standaloneHook,
@@ -535,6 +577,7 @@ $identityRows = foreach ($path in @(
         Path = $path
         Sha256 = (Get-FileHash -LiteralPath $path -Algorithm SHA256).Hash
         Length = (Get-Item -LiteralPath $path).Length
+        SourceCommit = $path -eq $worker ? $sourceCommit : $runtimeCommit
     }
 }
 $identityRows |

@@ -3,6 +3,7 @@
 
 using System;
 using System.Collections.Generic;
+using System.Globalization;
 using System.IO;
 using System.Runtime.InteropServices;
 using System.Security.Cryptography;
@@ -76,6 +77,8 @@ public sealed class ReferenceEnumerationProbe : IDisposable
         "P15_REFERENCE_ENUMERATION_EXPECTED_MODE";
     public const string ExpectedModeNameEnvironment =
         "P15_REFERENCE_ENUMERATION_EXPECTED_MODE_NAME";
+    public const string FixedFullCollectionCountEnvironment =
+        "P15_REFERENCE_ENUMERATION_FIXED_FULL_COLLECTION_COUNT";
 
     private readonly nint _library;
     private readonly ResetDelegate _reset;
@@ -106,6 +109,8 @@ public sealed class ReferenceEnumerationProbe : IDisposable
             "GC_ObjectReferenceEnumerationTest_GetSnapshot");
     }
 
+    public int FixedFullCollectionCount { get; private init; }
+
     public static ReferenceEnumerationProbe? TryCreateFromEnvironment()
     {
         string? libraryPath =
@@ -114,23 +119,38 @@ public sealed class ReferenceEnumerationProbe : IDisposable
             Environment.GetEnvironmentVariable(ExpectedModeEnvironment);
         string? expectedModeName =
             Environment.GetEnvironmentVariable(ExpectedModeNameEnvironment);
+        string? fixedFullCollectionCountText =
+            Environment.GetEnvironmentVariable(
+                FixedFullCollectionCountEnvironment);
 
-        if (libraryPath is null && expectedModeText is null && expectedModeName is null)
+        if (libraryPath is null &&
+            expectedModeText is null &&
+            expectedModeName is null &&
+            fixedFullCollectionCountText is null)
         {
             return null;
         }
         if (string.IsNullOrWhiteSpace(libraryPath) ||
             !int.TryParse(expectedModeText, out int expectedMode) ||
-            string.IsNullOrWhiteSpace(expectedModeName))
+            string.IsNullOrWhiteSpace(expectedModeName) ||
+            !int.TryParse(
+                fixedFullCollectionCountText,
+                NumberStyles.None,
+                CultureInfo.InvariantCulture,
+                out int fixedFullCollectionCount) ||
+            fixedFullCollectionCount is < 0 or > 16)
         {
             throw new InvalidOperationException(
-                "The P1.5 reference-enumeration hook requires library, numeric mode, and mode name.");
+                "The P1.5 reference-enumeration hook requires a library, numeric mode, mode name, and a full-collection count from 0 through 16.");
         }
 
         return new ReferenceEnumerationProbe(
             libraryPath,
             expectedMode,
-            expectedModeName);
+            expectedModeName)
+        {
+            FixedFullCollectionCount = fixedFullCollectionCount,
+        };
     }
 
     public void Reset()

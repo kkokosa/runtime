@@ -6,6 +6,7 @@ using System.Collections.Generic;
 using System.Diagnostics;
 using System.Globalization;
 using System.IO;
+using System.Runtime.ExceptionServices;
 using System.Text.Json;
 using System.Threading;
 
@@ -18,7 +19,8 @@ namespace Lxr.Harness.Core;
 /// <para>The order of operations matters and is enforced here: measurement ends <em>before</em>
 /// verification begins. Several scenarios can only check their invariants by forcing a collection,
 /// and an induced collection inside the measured region is precisely the confound P0.3 traced the
-/// hsqldb p99 discrepancy to.</para>
+/// hsqldb p99 discrepancy to. The P1.5 validation probe is the only exception: it declares an exact
+/// count up front and the worker rejects any different observed count.</para>
 /// </summary>
 public static class WorkerEntryPoint
 {
@@ -193,10 +195,20 @@ public static class WorkerEntryPoint
         // and the minimum operation count are what must reject this, not the exit code.
         double durationScale = Math.Clamp(options.PartialWorkFraction, 0.0, 1.0);
         double steadySeconds = options.SteadyStateSeconds * durationScale;
+        int expectedInducedCollections =
+            referenceEnumerationProbe?.FixedFullCollectionCount ?? 0;
+        using FixedFullCollectionSchedule? fixedFullCollections =
+            expectedInducedCollections > 0
+                ? new FixedFullCollectionSchedule(
+                    expectedInducedCollections,
+                    options.WarmupSeconds,
+                    steadySeconds)
+                : null;
 
         long runStart = Stopwatch.GetTimestamp();
         MeasuredRun? openLoop = null;
         ThroughputRun? throughput = null;
+        fixedFullCollections?.Start();
 
         if (options.Mode.Equals("latency", StringComparison.OrdinalIgnoreCase))
         {
@@ -224,7 +236,9 @@ public static class WorkerEntryPoint
             });
         }
 
-        // Measurement is over. Only now may anything force a collection.
+        fixedFullCollections?.WaitForCompletion();
+
+        // Measurement is over. Scenario verification may now force collections without affecting it.
         GcSummary gc = telemetry.EndMeasurement();
         ReferenceEnumerationSnapshot? referenceEnumeration =
             referenceEnumerationProbe?.CaptureAndStop();
@@ -250,7 +264,10 @@ public static class WorkerEntryPoint
 
         long operationsCompleted = openLoop?.RecordCount ?? throughput?.SteadyOperations ?? 0;
         bool enoughWork = operationsCompleted >= descriptor.MinimumOperations;
-        bool inducedOk = descriptor.AllowsInducedCollections || gc.InducedCollections == 0;
+        bool inducedOk = referenceEnumerationProbe is not null
+            ? gc.InducedCollections == expectedInducedCollections
+            : descriptor.AllowsInducedCollections ||
+              gc.InducedCollections == 0;
 
         bool valid = collectorConfirmed &&
             configPinFailures.Count == 0 &&
@@ -275,7 +292,7 @@ public static class WorkerEntryPoint
             WriteReport(outputPath, options, descriptor, verification, gc, openLoop, throughput, knobs, gcConfig,
                 identityFailures, configPinFailures, unverifiedKnobs, runtime, machine, memoryInfo, workingSet,
                 collectorConfirmed, valid, invalidReason, operationsCompleted, steadySeconds,
-                referenceEnumeration, referenceEnumerationFailures);
+                expectedInducedCollections, referenceEnumeration, referenceEnumerationFailures);
         }
 
         // The marker is the deterministic success signal. It is printed only when the scenario itself
@@ -304,6 +321,129 @@ public static class WorkerEntryPoint
         }
 
         return valid ? 0 : 1;
+    }
+
+    private sealed class FixedFullCollectionSchedule : IDisposable
+    {
+        private readonly int _collectionCount;
+        private readonly double _warmupSeconds;
+        private readonly double _steadySeconds;
+        private readonly ManualResetEventSlim _cancel = new(initialState: false);
+        private readonly Thread _thread;
+        private ExceptionDispatchInfo? _failure;
+        private long _startTimestamp;
+        private int _collectionsCompleted;
+        private bool _started;
+
+        public FixedFullCollectionSchedule(
+            int collectionCount,
+            double warmupSeconds,
+            double steadySeconds)
+        {
+            _collectionCount = collectionCount;
+            _warmupSeconds = warmupSeconds;
+            _steadySeconds = steadySeconds;
+            _thread = new Thread(Run)
+            {
+                IsBackground = true,
+                Name = "P1.5 fixed full collections",
+            };
+        }
+
+        public void Start()
+        {
+            ObjectDisposedException.ThrowIf(_cancel.IsSet, this);
+            if (_started)
+            {
+                throw new InvalidOperationException(
+                    "The fixed full-collection schedule was already started.");
+            }
+
+            _started = true;
+            _startTimestamp = Stopwatch.GetTimestamp();
+            _thread.Start();
+        }
+
+        public void WaitForCompletion()
+        {
+            if (!_started)
+            {
+                throw new InvalidOperationException(
+                    "The fixed full-collection schedule was not started.");
+            }
+
+            _thread.Join();
+            _failure?.Throw();
+            if (_collectionsCompleted != _collectionCount)
+            {
+                throw new InvalidOperationException(
+                    $"The fixed full-collection schedule completed {_collectionsCompleted} of {_collectionCount} collections.");
+            }
+        }
+
+        public void Dispose()
+        {
+            _cancel.Set();
+            if (_started && _thread.IsAlive)
+            {
+                _thread.Join();
+            }
+            _cancel.Dispose();
+        }
+
+        private void Run()
+        {
+            try
+            {
+                for (int collection = 0;
+                     collection < _collectionCount;
+                     collection++)
+                {
+                    double targetSeconds =
+                        _warmupSeconds +
+                        (_steadySeconds * (collection + 1) /
+                         (_collectionCount + 1));
+                    while (true)
+                    {
+                        double remainingSeconds =
+                            targetSeconds -
+                            Stopwatch.GetElapsedTime(
+                                _startTimestamp).TotalSeconds;
+                        if (remainingSeconds <= 0)
+                        {
+                            break;
+                        }
+
+                        int waitMilliseconds = Math.Max(
+                            1,
+                            Math.Min(
+                                50,
+                                (int)Math.Ceiling(
+                                    remainingSeconds * 1000)));
+                        if (_cancel.Wait(waitMilliseconds))
+                        {
+                            return;
+                        }
+                    }
+
+                    if (_cancel.IsSet)
+                    {
+                        return;
+                    }
+
+                    GC.Collect(
+                        2,
+                        GCCollectionMode.Forced,
+                        blocking: true,
+                        compacting: false);
+                    _collectionsCompleted++;
+                }
+            }
+            catch (Exception ex)
+            {
+                _failure = ExceptionDispatchInfo.Capture(ex);
+            }
+        }
     }
 
     private static bool GCSettings() => System.Runtime.GCSettings.IsServerGC;
@@ -364,6 +504,7 @@ public static class WorkerEntryPoint
         string? invalidReason,
         long operationsCompleted,
         double steadySeconds,
+        int expectedInducedCollections,
         ReferenceEnumerationSnapshot? referenceEnumeration,
         IReadOnlyList<string> referenceEnumerationFailures)
     {
@@ -443,7 +584,9 @@ public static class WorkerEntryPoint
                 "nonNullSlots",
                 referenceEnumeration.NonNullSlots);
             writer.WriteNumber("checksum", referenceEnumeration.Checksum);
-            writer.WriteString("window", "warmup+steady-state");
+            writer.WriteString(
+                "window",
+                "post-reset-through-telemetry-end");
             writer.WriteEndObject();
         }
 
@@ -493,7 +636,13 @@ public static class WorkerEntryPoint
         writer.WriteNumber("gen1Collections", gc.Gen1Collections);
         writer.WriteNumber("gen2Collections", gc.Gen2Collections);
         writer.WriteNumber("inducedCollections", gc.InducedCollections);
-        writer.WriteBoolean("inducedCollectionsAllowed", descriptor.AllowsInducedCollections);
+        writer.WriteNumber(
+            "expectedInducedCollections",
+            expectedInducedCollections);
+        writer.WriteBoolean(
+            "inducedCollectionsAllowed",
+            descriptor.AllowsInducedCollections ||
+            expectedInducedCollections > 0);
         writer.WriteNumber("totalPauseMs", gc.TotalPauseMs);
         writer.WriteNumber("observedPauseCount", gc.ObservedPauseCount);
         writer.WriteNumber("pauseShortfall", gc.PauseShortfall);
