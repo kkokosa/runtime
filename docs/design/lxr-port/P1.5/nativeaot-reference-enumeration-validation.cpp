@@ -16,6 +16,7 @@ constexpr uintptr_t MarkedBit = 0x1;
 int s_checks;
 int s_failures;
 int s_getSizeCalls;
+bool s_getSizeSawMarkedMethodTable;
 
 void Expect(const char* name, bool condition)
 {
@@ -141,11 +142,15 @@ void TestPointerFreeMarkedObject()
     instance.SetMarkedMethodTable(type.Get());
 
     s_getSizeCalls = 0;
+    s_getSizeSawMarkedMethodTable = false;
     std::vector<Object**> visitorSlots = EnumerateWithVisitor(instance.Get());
     std::vector<Object**> iteratorSlots = EnumerateWithIterator(instance.Get());
     Expect("NativeAOT pointer-free visitor is empty", visitorSlots.empty());
     Expect("NativeAOT pointer-free iterator is empty", iteratorSlots.empty());
     Expect("NativeAOT pointer-free scan avoids Object::GetSize", s_getSizeCalls == 0);
+    Expect(
+        "NativeAOT pointer-free scan avoids tagged Object::GetSize",
+        !s_getSizeSawMarkedMethodTable);
 }
 
 void TestPositiveMarkedObject()
@@ -173,6 +178,7 @@ void TestPositiveMarkedObject()
         reinterpret_cast<uint8_t*>(object) + 3 * sizeof(void*));
 
     s_getSizeCalls = 0;
+    s_getSizeSawMarkedMethodTable = false;
     std::vector<Object**> visitorSlots = EnumerateWithVisitor(object);
     std::vector<Object**> iteratorSlots = EnumerateWithIterator(object);
     Expect(
@@ -182,6 +188,9 @@ void TestPositiveMarkedObject()
         (visitorSlots[1] == second));
     Expect("NativeAOT positive marked iterator parity", iteratorSlots == visitorSlots);
     Expect("NativeAOT positive marked scan avoids Object::GetSize", s_getSizeCalls == 0);
+    Expect(
+        "NativeAOT positive marked scan avoids tagged Object::GetSize",
+        !s_getSizeSawMarkedMethodTable);
 }
 
 void TestRepeatingMarkedObject()
@@ -218,6 +227,7 @@ void TestRepeatingMarkedObject()
         reinterpret_cast<uint8_t*>(object) + DataOffset);
 
     s_getSizeCalls = 0;
+    s_getSizeSawMarkedMethodTable = false;
     std::vector<Object**> visitorSlots = EnumerateWithVisitor(object);
     std::vector<Object**> iteratorSlots = EnumerateWithIterator(object);
     Expect("NativeAOT repeating marked slot count", visitorSlots.size() == 6);
@@ -230,6 +240,9 @@ void TestRepeatingMarkedObject()
     }
     Expect("NativeAOT repeating marked iterator parity", iteratorSlots == visitorSlots);
     Expect("NativeAOT repeating marked scan avoids Object::GetSize", s_getSizeCalls == 0);
+    Expect(
+        "NativeAOT repeating marked scan avoids tagged Object::GetSize",
+        !s_getSizeSawMarkedMethodTable);
 }
 }
 
@@ -237,6 +250,11 @@ size_t Object::GetSize()
 {
     s_getSizeCalls++;
     MethodTable* methodTable = GetMethodTable();
+    if ((reinterpret_cast<uintptr_t>(methodTable) & MarkedBit) != 0)
+    {
+        s_getSizeSawMarkedMethodTable = true;
+        methodTable = GetGCSafeMethodTable();
+    }
     size_t objectSize = methodTable->GetBaseSize();
     if (methodTable->HasComponentSize())
     {

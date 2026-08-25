@@ -144,14 +144,14 @@ $finalExitCode = $LASTEXITCODE
 $finalOutput = Get-Content -LiteralPath (
     Join-Path $final.Directory 'run.log') -Raw
 if (($finalExitCode -ne 0) -or
-    ($finalOutput -notmatch '18/18 NativeAOT reference enumeration checks passed')) {
+    ($finalOutput -notmatch '21/21 NativeAOT reference enumeration checks passed')) {
     throw 'Final NativeAOT-flavor execution failed.'
 }
 $validationRows.Add([pscustomobject][ordered]@{
     Name = 'final-nativeaot-shared-gc'
     ProductCommit = $productCommit
-    Expected = 'compile and 18/18 execution'
-    Observed = '18/18 NativeAOT reference enumeration checks passed'
+    Expected = 'compile and 21/21 execution'
+    Observed = '21/21 NativeAOT reference enumeration checks passed'
     Result = 'PASS'
     ExitCode = $finalExitCode
     Evidence = 'final\compile.log; final\run.log'
