@@ -16,6 +16,18 @@ if (-not $OutputDirectory) {
 
 $summary = [Collections.Generic.List[object]]::new()
 $invocations = [Collections.Generic.List[object]]::new()
+$countingObservationsPath = Join-Path $InputDirectory 'counting-callback-observations.csv'
+$countingControlsPath = Join-Path $InputDirectory 'counting-callback-controls.csv'
+$runtimeIdentitiesPath = Join-Path $InputDirectory 'benchmark-runtime-identities.csv'
+foreach ($path in @(
+    $countingObservationsPath,
+    $countingControlsPath,
+    $runtimeIdentitiesPath
+)) {
+    if (-not (Test-Path -LiteralPath $path -PathType Leaf)) {
+        throw "Benchmark evidence is missing: $path"
+    }
+}
 
 foreach ($directory in Get-ChildItem -LiteralPath $InputDirectory -Directory) {
     if ($directory.Name -notmatch '^(wks|srv)-(.+)$') {
@@ -88,12 +100,9 @@ foreach ($directory in Get-ChildItem -LiteralPath $InputDirectory -Directory) {
     }
 }
 
-New-Item -ItemType Directory -Force -Path $OutputDirectory | Out-Null
-$summary |
-    Sort-Object GC, Variant, Method, Length |
-    Export-Csv -LiteralPath (Join-Path $OutputDirectory 'benchmark-summary.csv') -NoTypeInformation
-$invocations |
-    Export-Csv -LiteralPath (Join-Path $OutputDirectory 'benchmark-invocations.csv') -NoTypeInformation
+$countingObservations = @(Import-Csv -LiteralPath $countingObservationsPath)
+$countingControls = @(Import-Csv -LiteralPath $countingControlsPath)
+$benchmarkRuntimeIdentities = @(Import-Csv -LiteralPath $runtimeIdentitiesPath)
 
 $expectedInvocations = (
     $summary |
@@ -102,5 +111,45 @@ $expectedInvocations = (
 if ($invocations.Count -ne $expectedInvocations) {
     throw "Collected $($invocations.Count) invocation rows; expected $expectedInvocations."
 }
+foreach ($group in @($countingObservations | Group-Object GC)) {
+    $expectedObservations = @($group.Group.ExpectedObservations | Sort-Object -Unique)
+    if (($expectedObservations.Count -ne 1) -or
+        ($group.Count -ne [int]$expectedObservations[0])) {
+        throw "Counting callback observation cardinality is invalid for $($group.Name)."
+    }
+    foreach ($observation in $group.Group) {
+        if ([int64]$observation.Count -lt [int64]$observation.Minimum) {
+            throw "Counting callback delta is below its minimum for $($group.Name)."
+        }
+    }
+}
+if (($countingControls.Count -ne 3) -or
+    @($countingControls | Where-Object Result -ne 'PASS').Count -ne 0) {
+    throw 'Counting callback controls are incomplete or failed.'
+}
+if (($benchmarkRuntimeIdentities.Count -ne 5) -or
+    @($benchmarkRuntimeIdentities | Where-Object {
+        ($_.Sha256 -notmatch '^[0-9A-F]{64}$') -or ([int64]$_.Length -le 0)
+    }).Count -ne 0) {
+    throw 'Benchmark runtime identities are incomplete or malformed.'
+}
 
-Write-Host "Collected $($summary.Count) summaries and $($invocations.Count) invocation rows."
+New-Item -ItemType Directory -Force -Path $OutputDirectory | Out-Null
+$summary |
+    Sort-Object GC, Variant, Method, Length |
+    Export-Csv -LiteralPath (Join-Path $OutputDirectory 'benchmark-summary.csv') -NoTypeInformation
+$invocations |
+    Export-Csv -LiteralPath (Join-Path $OutputDirectory 'benchmark-invocations.csv') -NoTypeInformation
+$countingObservations |
+    Export-Csv -LiteralPath (
+        Join-Path $OutputDirectory 'counting-callback-observations.csv') -NoTypeInformation
+$countingControls |
+    Export-Csv -LiteralPath (
+        Join-Path $OutputDirectory 'counting-callback-controls.csv') -NoTypeInformation
+$benchmarkRuntimeIdentities |
+    Export-Csv -LiteralPath (
+        Join-Path $OutputDirectory 'benchmark-runtime-identities.csv') -NoTypeInformation
+
+Write-Host (
+    "Collected $($summary.Count) summaries, $($invocations.Count) invocation rows, " +
+    "$($countingObservations.Count) counting observations, and 3 counting controls.")

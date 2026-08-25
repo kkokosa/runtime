@@ -18,6 +18,16 @@ $archive = Join-Path $temporaryRoot 'tip.tar'
 $archiveRoot = Join-Path $temporaryRoot 'original'
 $perturbedRoot = Join-Path $temporaryRoot 'perturbed'
 $perturbationCount = 0
+$defaultAllocationNotificationImplementation = @'
+    virtual AllocationNotificationParameters* GetAllocationNotificationParameters()
+    {
+        static AllocationNotificationParameters parameters = {};
+        return &parameters;
+    }
+'@
+$pureVirtualAllocationNotificationImplementation = @'
+    virtual AllocationNotificationParameters* GetAllocationNotificationParameters() PURE_VIRTUAL;
+'@
 
 function Assert-LiteralCount(
     [string]$Text,
@@ -109,6 +119,36 @@ try {
         'if (g_pConfig->ReadyToRun())' `
         'if (false)' `
         'ReadyToRun fail-closed gate'
+    Invoke-Perturbation `
+        'src\coreclr\gc\gcinterface.h' `
+        $defaultAllocationNotificationImplementation `
+        $pureVirtualAllocationNotificationImplementation `
+        'old-source-compatible inherited descriptor'
+    Invoke-Perturbation `
+        'src\coreclr\gc\interface.cpp' `
+        'if (allocationNotification == nullptr)' `
+        'if (false)' `
+        'built-in null descriptor rejection'
+    Invoke-Perturbation `
+        'src\coreclr\gc\allocationnotificationtest.cpp' `
+        'Interlocked::Increment(&g_countOnly);' `
+        'UNREFERENCED_PARAMETER(g_countOnly);' `
+        'observable counting callback'
+    Invoke-Perturbation `
+        'docs\design\lxr-port\P1.4\run-allocation-benchmark.ps1' `
+        '$observations.Count -ne $expectedObservations' `
+        '$observations.Count -gt $expectedObservations' `
+        'counting callback observation cardinality'
+    Invoke-Perturbation `
+        'docs\design\lxr-port\P1.4\run-allocation-benchmark.ps1' `
+        'if ($expectedBenchmarks -le 0)' `
+        'if ($expectedBenchmarks -lt 0)' `
+        'nonzero benchmark cardinality'
+    Invoke-Perturbation `
+        'src\tests\profiler\native\gcallocateprofiler\gcallocateprofiler.cpp' `
+        '(actualAllocationFlags & expectedAllocationFlag) == 0' `
+        '(actualAllocationFlags & 0u) == 0' `
+        'profiler placement flag assertion'
 
     & pwsh -NoProfile -File $verifier -RepositoryRoot $archiveRoot
     if ($LASTEXITCODE -ne 0) {
