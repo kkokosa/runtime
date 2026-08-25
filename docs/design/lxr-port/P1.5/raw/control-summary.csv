@@ -1,0 +1,7 @@
+"Name","PerturbationCount","Expected","Result","ExitCode","Evidence"
+"positive-series-order","1","validation failure","PASS","1","positive-series-order\validation.log"
+"cursor-positive-count","1","validation failure","PASS","1","cursor-positive-count\validation.log"
+"visitor-positive-count","1","validation failure","PASS","1","visitor-positive-count\validation.log"
+"cursor-repeating-stride","1","validation failure","PASS","1","cursor-repeating-stride\validation.log"
+"visitor-repeating-stride","1","validation failure","PASS","1","visitor-repeating-stride\validation.log"
+"null-filtering","1","validation failure","PASS","1","null-filtering\validation.log"
