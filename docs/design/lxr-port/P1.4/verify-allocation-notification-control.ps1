@@ -92,12 +92,12 @@ try {
     Invoke-Perturbation `
         'src\coreclr\runtime\amd64\AllocFastNotification.asm' `
         'call        RhpAllocationComplete' `
-        'nop' `
+        'call        RhpNewObject' `
         'Windows fast-success notification'
     Invoke-Perturbation `
         'src\coreclr\runtime\amd64\AllocFastNotification.S' `
         'call        C_FUNC(RhpAllocationComplete)' `
-        'nop' `
+        'call        C_FUNC(RhpNewObject)' `
         'System V fast-success notification'
     Invoke-Perturbation `
         'src\coreclr\vm\runtimehandles.cpp' `
