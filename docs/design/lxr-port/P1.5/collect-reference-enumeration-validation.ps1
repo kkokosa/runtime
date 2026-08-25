@@ -189,14 +189,38 @@ $compatibilitySource = Join-Path $InputDirectory (
     'p15-reference-enumeration-compatibility\compatibility-summary.csv')
 $controlSource = Join-Path $InputDirectory (
     'p15-reference-enumeration-controls\control-summary.csv')
+$scenarioControlSource = Join-Path $InputDirectory (
+    'p15-reference-enumeration-scenarios\scenario-controls.csv')
+$shippedScenarioControlSource = Join-Path $OutputDirectory (
+    'scenario-controls.csv')
+$shippedScenarioControlDetail = Join-Path $OutputDirectory (
+    'scenario-control-detail.csv')
 $compatibilityRows = @(Import-Csv -LiteralPath $compatibilitySource)
 $coreControlRows = @(Import-Csv -LiteralPath $controlSource)
-$controlRows = @($coreControlRows) + @($nativeAotControlRows)
+$executedScenarioControlRows = @(
+    Import-Csv -LiteralPath $scenarioControlSource)
+if (-not (Test-Path -LiteralPath $shippedScenarioControlSource -PathType Leaf) -or
+    -not (Test-Path -LiteralPath $shippedScenarioControlDetail -PathType Leaf)) {
+    throw 'Collect scenario evidence before collecting aggregate validation evidence.'
+}
+$scenarioControlRows = @(
+    Import-Csv -LiteralPath $shippedScenarioControlSource)
+$controlRows = @($coreControlRows) +
+    @($nativeAotControlRows) +
+    @($scenarioControlRows)
 if (($compatibilityRows.Count -ne 7) -or
     (@($compatibilityRows | Where-Object Result -ne 'PASS').Count -ne 0)) {
     throw 'Compatibility evidence is incomplete.'
 }
-if (($controlRows.Count -ne 8) -or
+if (($scenarioControlRows.Count -ne 1) -or
+    ($scenarioControlRows[0].Name -ne 'native-mode-mismatch') -or
+    ($scenarioControlRows[0].Evidence -ne 'scenario-control-detail.csv') -or
+    ($executedScenarioControlRows.Count -ne 1) -or
+    ($executedScenarioControlRows[0].Name -ne
+     $scenarioControlRows[0].Name) -or
+    ($executedScenarioControlRows[0].Result -ne
+     $scenarioControlRows[0].Result) -or
+    ($controlRows.Count -ne 9) -or
     (@($controlRows | Where-Object Result -ne 'PASS').Count -ne 0) -or
     (@($controlRows | Where-Object PerturbationCount -ne '1').Count -ne 0)) {
     throw 'Perturbation evidence is incomplete.'

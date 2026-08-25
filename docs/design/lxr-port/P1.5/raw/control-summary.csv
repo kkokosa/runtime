@@ -7,3 +7,4 @@
 "null-filtering","1","validation failure","PASS","1","null-filtering\validation.log"
 "nativeaot-static-cast","1","NativeAOT compile failure","PASS","2","static-cast-control\compile.log"
 "nativeaot-unmasked-object-size","1","marked-MT executable validation failure","PASS","1","unmasked-size-control\compile.log; unmasked-size-control\run.log"
+"native-mode-mismatch","1","worker invalidates a native mode mismatch","PASS","1","scenario-control-detail.csv"
