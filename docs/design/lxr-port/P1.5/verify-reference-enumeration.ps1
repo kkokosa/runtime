@@ -145,14 +145,23 @@ Confirm (
     'The 5.14 IGCHeap method is pure virtual.')
 $referenceHeader = Get-Content -LiteralPath (
     Join-Path $RepositoryRoot 'src\coreclr\gc\gcref.h') -Raw
-$containsIndex = $referenceHeader.IndexOf(
-    'if (!methodTable->ContainsGCPointers())')
-$layoutIndex = $referenceHeader.IndexOf(
-    'GetGCReferenceObjectLayout(object, methodTable);')
+$containsMatches = [regex]::Matches(
+    $referenceHeader,
+    [regex]::Escape('if (!methodTable->ContainsGCPointers())'))
+$layoutMatches = [regex]::Matches(
+    $referenceHeader,
+    [regex]::Escape('GetGCReferenceObjectLayout(object, methodTable);'))
 Confirm (
-    ($containsIndex -ge 0) -and
-    ($layoutIndex -gt $containsIndex)) (
-    'Reference layout is computed before the no-reference early return.')
+    ($containsMatches.Count -eq 2) -and
+    ($layoutMatches.Count -eq 2)) (
+    'Reference visitor/iterator early-return markers are incomplete.')
+if (($containsMatches.Count -eq 2) -and ($layoutMatches.Count -eq 2)) {
+    for ($index = 0; $index -lt 2; $index++) {
+        Confirm (
+            $layoutMatches[$index].Index -gt $containsMatches[$index].Index) (
+            "Reference layout call $index precedes its no-reference early return.")
+    }
+}
 
 if (Test-Path -LiteralPath $validation) {
     $rows = @(Import-Csv -LiteralPath $validation)
@@ -342,6 +351,17 @@ if ((Test-Path -LiteralPath $benchmarkInvocations) -and
         "Benchmark raw data has $($rawRows.Count) rows; expected 216.")
     Confirm ($summaryRows.Count -eq 9) (
         "Benchmark summary has $($summaryRows.Count) rows; expected 9.")
+    foreach ($row in $summaryRows) {
+        if ($row.MedianSource -eq 'BenchmarkDotNet') {
+            Confirm ([double]$row.MedianNanoseconds -gt 0) (
+                "Benchmark median is invalid for $($row.Method)/$($row.Scenario).")
+        } else {
+            Confirm (
+                ($row.MedianSource -eq 'not-reported') -and
+                -not $row.MedianNanoseconds) (
+                "Missing median is not represented explicitly for $($row.Method)/$($row.Scenario).")
+        }
+    }
 
     foreach ($group in @($rawRows | Group-Object Method, Scenario)) {
         Confirm ($group.Count -eq 24) (

@@ -119,21 +119,26 @@ foreach ($row in Import-Csv -LiteralPath $report) {
     if ($row.Method -notin $expectedMethods) {
         continue
     }
-    $median = if (
+    $hasMedian = (
         ($row.PSObject.Properties.Name -contains 'Median') -and
         $row.Median
-    ) {
-        $row.Median
-    } else {
-        $row.Mean
-    }
+    )
     $summaryRows.Add([pscustomobject][ordered]@{
         Method = $row.Method
         Scenario = [int]$row.Scenario
         MeanNanoseconds = Convert-ToNanoseconds $row.Mean
         ErrorNanoseconds = Convert-ToNanoseconds $row.Error
         StdDevNanoseconds = Convert-ToNanoseconds $row.StdDev
-        MedianNanoseconds = Convert-ToNanoseconds $median
+        MedianNanoseconds = if ($hasMedian) {
+            Convert-ToNanoseconds $row.Median
+        } else {
+            ''
+        }
+        MedianSource = if ($hasMedian) {
+            'BenchmarkDotNet'
+        } else {
+            'not-reported'
+        }
         Ratio = [double]::Parse(
             $row.Ratio,
             [Globalization.CultureInfo]::InvariantCulture)
