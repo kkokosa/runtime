@@ -110,6 +110,10 @@ public:
     // Initializes a standalone GC.
     static HRESULT InitializeStandaloneGC();
 
+    // Accepts the disabled descriptor and rejects enabled allocation
+    // notification for precompiled NativeAOT images.
+    static HRESULT ConfigureAllocationNotification(IGCHeap* gcHeap);
+
     // Records a change in eventing state. This ultimately will inform the GC that it needs to be aware
     // of new events being enabled.
     static void RecordEventStateChange(bool isPublicProvider, GCEventKeyword keywords, GCEventLevel level);

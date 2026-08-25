@@ -75,8 +75,19 @@ public:
 #define WRITE_BARRIER_STANDARD_ABI_TEST_CONFIG
 #endif
 
+#ifdef FEATURE_ALLOCATION_NOTIFICATION_TEST
+#define ALLOCATION_NOTIFICATION_TEST_CONFIG \
+    BOOL_CONFIG  (AllocationNotificationTest,          "GCAllocationNotificationTest",          NULL, false, "Enable the allocation-complete validation callback") \
+    BOOL_CONFIG  (AllocationNotificationTestUncounted, "GCAllocationNotificationTestUncounted", NULL, false, "Use an empty allocation-complete validation callback") \
+    BOOL_CONFIG  (AllocationNotificationTestCountOnly, "GCAllocationNotificationTestCountOnly", NULL, false, "Count allocation-complete callbacks without recording arguments") \
+    INT_CONFIG   (AllocationNotificationTestMalformed, "GCAllocationNotificationTestMalformed", NULL, 0,     "Request malformed allocation notification parameters")
+#else
+#define ALLOCATION_NOTIFICATION_TEST_CONFIG
+#endif
+
 #define GC_CONFIGURATION_KEYS \
     WRITE_BARRIER_STANDARD_ABI_TEST_CONFIG \
+    ALLOCATION_NOTIFICATION_TEST_CONFIG \
     BOOL_CONFIG  (ServerGC,                  "gcServer",                  "System.GC.Server",                  false,              "Whether we should be using Server GC")                                                   \
     BOOL_CONFIG  (ConcurrentGC,              "gcConcurrent",              "System.GC.Concurrent",              true,               "Whether we should be using Concurrent GC")                                                \
     BOOL_CONFIG  (ConservativeGC,            "gcConservative",            NULL,                                false,              "Enables/Disables conservative GC")                                                       \

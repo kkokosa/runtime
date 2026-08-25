@@ -85,6 +85,7 @@ mechanisms share one oracle. `lxr-x/simplified` is explicitly excluded.
 | [`P1.1-write-barrier-shape-contract.md`](P1.1-write-barrier-shape-contract.md) | The generic GC-requested write-barrier shape, startup failure contract, ordinary-ABI slow-call strategy, compatibility matrix, and executable/codegen/performance evidence |
 | [`P1.2-x64-slot-log-barrier.md`](P1.2-x64-slot-log-barrier.md) | The generic Windows/System V x64 slot-log family, complete reference-store surface, oracle parity, execution matrix, and performance evidence |
 | [`P1.3-store-path-coverage-and-bulk-barrier.md`](P1.3-store-path-coverage-and-bulk-barrier.md) | The complete current-main store-path ledger and generic family-level metadata-word bulk operation |
+| [`P1.4-allocation-complete-notification.md`](P1.4-allocation-complete-notification.md) | The generic exact allocation-complete callback, complete managed-birth path ledger, x64 fast-helper family, fail-closed image contract, and performance evidence |
 | [`scripts/`](scripts/) | The clone, build, sanity, benchmark and probe scripts actually used, plus `verify-ledger.sh` (the ledger's gate) and `verify-gate.sh` (the gate's own positive control) |
 
 ## P0.1 outcome in one paragraph

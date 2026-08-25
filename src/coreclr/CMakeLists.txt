@@ -55,6 +55,8 @@ endif()
 OPTION(CLR_CMAKE_ENABLE_CODE_COVERAGE "Enable code coverage" OFF)
 OPTION(CLR_CMAKE_ENABLE_WRITE_BARRIER_STANDARD_ABI_TEST
   "Enable the AMD64 write-barrier standard-ABI validation path" OFF)
+OPTION(CLR_CMAKE_ENABLE_ALLOCATION_NOTIFICATION_TEST
+  "Enable the allocation-complete notification validation callback" OFF)
 
 if(CLR_CMAKE_ENABLE_WRITE_BARRIER_STANDARD_ABI_TEST)
   if(NOT CLR_CMAKE_TARGET_ARCH_AMD64)
