@@ -75,3 +75,4 @@ if (($controlExitCode -eq 0) -or
 
 Write-Host 'PASS: clean archive accepted'
 Write-Host 'PASS: exactly one deleted control row rejected'
+$global:LASTEXITCODE = 0
