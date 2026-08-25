@@ -48,6 +48,19 @@ function Require-PatternCount(
     }
 }
 
+function Forbid-Pattern(
+    [string]$relativePath,
+    [string]$pattern
+) {
+    $path = Join-Path $RepositoryRoot $relativePath
+    Confirm (Test-Path -LiteralPath $path -PathType Leaf) "Missing $relativePath"
+    if (Test-Path -LiteralPath $path -PathType Leaf) {
+        Confirm (-not [bool](
+            Select-String -LiteralPath $path -SimpleMatch $pattern -Quiet)) (
+            "$relativePath unexpectedly contains '$pattern'")
+    }
+}
+
 $document = Join-Path $RepositoryRoot (
     'docs\design\lxr-port\P1.5-object-reference-enumeration.md')
 $rawRoot = Join-Path $scriptRoot 'raw'
@@ -56,6 +69,9 @@ $compatibility = Join-Path $rawRoot 'compatibility-summary.csv'
 $controls = Join-Path $rawRoot 'control-summary.csv'
 $malformed = Join-Path $rawRoot 'malformed-summary.csv'
 $enabled = Join-Path $rawRoot 'enabled-summary.csv'
+$nativeAotValidation = Join-Path $rawRoot 'nativeaot-validation-summary.csv'
+$nativeAotControls = Join-Path $rawRoot 'nativeaot-control-summary.csv'
+$nativeAotIdentities = Join-Path $rawRoot 'nativeaot-identities.csv'
 $platforms = Join-Path $rawRoot 'platform-summary.csv'
 $runtimeIdentities = Join-Path $rawRoot 'runtime-identities.csv'
 $benchmarkInvocations = Join-Path $rawRoot 'benchmark-invocations.csv'
@@ -69,6 +85,9 @@ foreach ($path in @(
     $controls,
     $malformed,
     $enabled,
+    $nativeAotValidation,
+    $nativeAotControls,
+    $nativeAotIdentities,
     $platforms,
     $runtimeIdentities,
     $benchmarkInvocations,
@@ -94,6 +113,20 @@ Require-Pattern 'src\coreclr\gc\gcinterface.h' (
 Require-Pattern 'src\coreclr\gc\gcref.h' 'class GCReferenceRanges'
 Require-Pattern 'src\coreclr\gc\gcref.h' 'class GCReferenceRangeIterator'
 Require-Pattern 'src\coreclr\gc\gcref.h' '#ifndef DACCESS_COMPILE'
+Require-PatternCount 'src\coreclr\gc\gcref.h' (
+    'reinterpret_cast<ArrayBase*>(object)->GetNumComponents()') 1
+Require-PatternCount 'src\coreclr\gc\gcref.h' (
+    'GetGCReferenceObjectLayout(') 3
+Forbid-Pattern 'src\coreclr\gc\gcref.h' 'static_cast<ArrayBase*>(object)'
+Forbid-Pattern 'src\coreclr\gc\gcref.h' 'object->GetSize()'
+Require-Pattern (
+    'docs\design\lxr-port\P1.5\' +
+    'nativeaot-reference-enumeration-validation.cpp') (
+    'MethodTable* methodTable = GetMethodTable();')
+Require-Pattern (
+    'docs\design\lxr-port\P1.5\' +
+    'run-nativeaot-reference-enumeration-validation.ps1') (
+    'Exact pre-fix header did not reproduce the NativeAOT cast failure.')
 Require-Pattern 'src\coreclr\vm\gcheaputilities.cpp' (
     'ConfigureObjectReferenceEnumeration')
 Require-Pattern 'src\coreclr\nativeaot\Runtime\gcheaputilities.cpp' (
@@ -110,11 +143,21 @@ Confirm (
     $header -notmatch (
         'GetObjectReferenceEnumerationParameters\(\)\s+PURE_VIRTUAL')) (
     'The 5.14 IGCHeap method is pure virtual.')
+$referenceHeader = Get-Content -LiteralPath (
+    Join-Path $RepositoryRoot 'src\coreclr\gc\gcref.h') -Raw
+$containsIndex = $referenceHeader.IndexOf(
+    'if (!methodTable->ContainsGCPointers())')
+$layoutIndex = $referenceHeader.IndexOf(
+    'GetGCReferenceObjectLayout(object, methodTable);')
+Confirm (
+    ($containsIndex -ge 0) -and
+    ($layoutIndex -gt $containsIndex)) (
+    'Reference layout is computed before the no-reference early return.')
 
 if (Test-Path -LiteralPath $validation) {
     $rows = @(Import-Csv -LiteralPath $validation)
-    Confirm ($rows.Count -eq 8) (
-        "Validation summary has $($rows.Count) rows; expected 8.")
+    Confirm ($rows.Count -eq 10) (
+        "Validation summary has $($rows.Count) rows; expected 10.")
     Confirm (@($rows | Where-Object Result -ne 'PASS').Count -eq 0) (
         'A validation row is not PASS.')
     Confirm (@($rows | Where-Object Name -eq 'native-x64').Detail -eq '40/40') (
@@ -145,12 +188,60 @@ if (Test-Path -LiteralPath $compatibility) {
 
 if (Test-Path -LiteralPath $controls) {
     $rows = @(Import-Csv -LiteralPath $controls)
-    Confirm ($rows.Count -eq 6) (
-        "Control summary has $($rows.Count) rows; expected 6.")
+    Confirm ($rows.Count -eq 8) (
+        "Control summary has $($rows.Count) rows; expected 8.")
     Confirm (@($rows | Where-Object Result -ne 'PASS').Count -eq 0) (
         'A perturbation control is not PASS.')
     Confirm (@($rows | Where-Object PerturbationCount -ne '1').Count -eq 0) (
         'A perturbation does not have exact cardinality one.')
+    foreach ($name in @(
+        'nativeaot-static-cast',
+        'nativeaot-unmasked-object-size'
+    )) {
+        Confirm (@($rows | Where-Object Name -eq $name).Count -eq 1) (
+            "Control summary omits $name.")
+    }
+}
+
+if (Test-Path -LiteralPath $nativeAotValidation) {
+    $rows = @(Import-Csv -LiteralPath $nativeAotValidation)
+    Confirm ($rows.Count -eq 2) (
+        "NativeAOT validation summary has $($rows.Count) rows; expected 2.")
+    $final = @($rows | Where-Object Name -eq 'final-nativeaot-shared-gc')
+    $preFix = @($rows | Where-Object Name -eq 'pre-fix-nativeaot-compile')
+    Confirm (
+        ($final.Count -eq 1) -and
+        ($final[0].Result -eq 'PASS') -and
+        ($final[0].Observed -eq (
+            '21/21 NativeAOT reference enumeration checks passed')) -and
+        ($final[0].ProductCommit -match '^[0-9a-f]{40}$')) (
+        'Final NativeAOT compile/execution evidence is invalid.')
+    Confirm (
+        ($preFix.Count -eq 1) -and
+        ($preFix[0].Result -eq 'PASS') -and
+        ($preFix[0].Observed -match 'inaccessible') -and
+        ($preFix[0].ProductCommit -eq (
+            '04c9b4c959193b8adb29924abd4c1da2336c1014'))) (
+        'Pre-fix NativeAOT compile evidence is invalid.')
+}
+
+if (Test-Path -LiteralPath $nativeAotControls) {
+    $rows = @(Import-Csv -LiteralPath $nativeAotControls)
+    Confirm ($rows.Count -eq 2) (
+        "NativeAOT control summary has $($rows.Count) rows; expected 2.")
+    foreach ($name in @(
+        'nativeaot-static-cast',
+        'nativeaot-unmasked-object-size'
+    )) {
+        $match = @($rows | Where-Object Name -eq $name)
+        Confirm (
+            ($match.Count -eq 1) -and
+            ($match[0].ProductCommit -match '^[0-9a-f]{40}$') -and
+            ($match[0].PerturbationCount -eq '1') -and
+            ($match[0].Result -eq 'PASS') -and
+            [bool]$match[0].Observed) (
+            "NativeAOT control evidence is invalid for $name.")
+    }
 }
 
 if (Test-Path -LiteralPath $enabled) {
@@ -222,7 +313,11 @@ if (Test-Path -LiteralPath $platforms) {
     }).Count -eq 0) 'A platform result is invalid.'
 }
 
-foreach ($path in @($runtimeIdentities, $benchmarkIdentities)) {
+foreach ($path in @(
+    $runtimeIdentities,
+    $benchmarkIdentities,
+    $nativeAotIdentities
+)) {
     if (Test-Path -LiteralPath $path) {
         $rows = @(Import-Csv -LiteralPath $path)
         Confirm ($rows.Count -gt 0) "$path is empty."
@@ -231,6 +326,10 @@ foreach ($path in @($runtimeIdentities, $benchmarkIdentities)) {
                 "Invalid SHA-256 for $($row.Name).")
             Confirm ([int64]$row.Length -gt 0) (
                 "Invalid length for $($row.Name).")
+            if ($path -eq $nativeAotIdentities) {
+                Confirm ($row.ProductCommit -match '^[0-9a-f]{40}$') (
+                    "Invalid product commit for $($row.Name).")
+            }
         }
     }
 }

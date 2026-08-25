@@ -54,12 +54,12 @@ if ($LASTEXITCODE -ne 0) {
 $controlCsv = Join-Path $controlRoot (
     'docs\design\lxr-port\P1.5\raw\control-summary.csv')
 $lines = @(Get-Content -LiteralPath $controlCsv)
-if ($lines.Count -ne 7) {
-    throw "Control CSV has $($lines.Count) lines; expected 7 before perturbation."
+if ($lines.Count -ne 9) {
+    throw "Control CSV has $($lines.Count) lines; expected 9 before perturbation."
 }
-Set-Content -LiteralPath $controlCsv -Value $lines[0..5]
+Set-Content -LiteralPath $controlCsv -Value $lines[0..7]
 $perturbedLines = @(Get-Content -LiteralPath $controlCsv)
-if ($perturbedLines.Count -ne 6) {
+if ($perturbedLines.Count -ne 8) {
     throw 'Control perturbation did not delete exactly one row.'
 }
 
@@ -69,7 +69,7 @@ $controlLog = Join-Path $OutputDirectory 'missing-control-row.log'
 $controlExitCode = $LASTEXITCODE
 $controlOutput = Get-Content -LiteralPath $controlLog -Raw
 if (($controlExitCode -eq 0) -or
-    ($controlOutput -notmatch 'Control summary has 5 rows; expected 6')) {
+    ($controlOutput -notmatch 'Control summary has 7 rows; expected 8')) {
     throw 'Deleted-row perturbation did not fail for the expected reason.'
 }
 

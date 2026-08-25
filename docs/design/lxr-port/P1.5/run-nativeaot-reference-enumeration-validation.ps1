@@ -27,6 +27,8 @@ $controlSummary = Join-Path $OutputDirectory 'control-summary.csv'
 $identitySummary = Join-Path $OutputDirectory 'identities.csv'
 $validationRows = [Collections.Generic.List[object]]::new()
 $controlRows = [Collections.Generic.List[object]]::new()
+$repositoryPrefix = (
+    [IO.Path]::GetFullPath($RepositoryRoot).TrimEnd('\') + '\')
 
 $includeDirectories = @(
     'src\coreclr\nativeaot\Runtime',
@@ -98,6 +100,10 @@ function New-ControlHeader(
         Header = $controlHeader
         Wrapper = $wrapper
     }
+}
+
+function Normalize-EvidencePath([string]$text) {
+    return $text.Replace($repositoryPrefix, '')
 }
 
 function Invoke-Compile(
@@ -172,13 +178,13 @@ if (($previousCompile.ExitCode -eq 0) -or
         "cannot convert from 'Object \*' to 'ArrayBase \*'|inaccessible"))) {
     throw 'Exact pre-fix header did not reproduce the NativeAOT cast failure.'
 }
-$previousError = @(
+$previousError = Normalize-EvidencePath (@(
     $previousOutput -split '\r?\n' |
         Where-Object {
             $_ -match "cannot convert from 'Object \*' to 'ArrayBase \*'|inaccessible"
         } |
         Select-Object -First 1
-)[0].Trim()
+)[0].Trim())
 $validationRows.Add([pscustomobject][ordered]@{
     Name = 'pre-fix-nativeaot-compile'
     ProductCommit = $PreviousRevision
@@ -207,13 +213,13 @@ if (($castCompile.ExitCode -eq 0) -or
         "cannot convert from 'Object \*' to 'ArrayBase \*'|inaccessible"))) {
     throw 'Static-cast perturbation did not reproduce the NativeAOT failure.'
 }
-$castError = @(
+$castError = Normalize-EvidencePath (@(
     $castOutput -split '\r?\n' |
         Where-Object {
             $_ -match "cannot convert from 'Object \*' to 'ArrayBase \*'|inaccessible"
         } |
         Select-Object -First 1
-)[0].Trim()
+)[0].Trim())
 $controlRows.Add([pscustomobject][ordered]@{
     Name = 'nativeaot-static-cast'
     ProductCommit = $productCommit

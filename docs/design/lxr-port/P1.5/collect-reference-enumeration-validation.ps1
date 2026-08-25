@@ -49,9 +49,9 @@ function Require-LogPattern(
 $validationRows = [Collections.Generic.List[object]]::new()
 
 $nativeChecks = @(
-    @{ Name = 'native-x64'; Log = 'p15-validation-x64'; Pattern = '40/40' },
-    @{ Name = 'native-x86'; Log = 'p15-validation-x86'; Pattern = '40/40' },
-    @{ Name = 'native-linux-x64'; Log = 'p15-validation-linux-x64'; Pattern = '35/35' }
+    @{ Name = 'native-x64'; Log = 'p15-nativeaot-fix-validation-x64'; Pattern = '40/40' },
+    @{ Name = 'native-x86'; Log = 'p15-nativeaot-fix-validation-x86'; Pattern = '40/40' },
+    @{ Name = 'native-linux-x64'; Log = 'p15-nativeaot-fix-validation-linux-x64'; Pattern = '35/35' }
 )
 foreach ($check in $nativeChecks) {
     Require-LogPattern $check.Log $check.Pattern
@@ -63,24 +63,24 @@ foreach ($check in $nativeChecks) {
     })
 }
 
-if ((Read-Status 'p15-contract-build') -ne 0) {
+if ((Read-Status 'p15-nativeaot-fix-coreclr-build') -ne 0) {
     throw 'CoreCLR contract build did not pass.'
 }
 $validationRows.Add([pscustomobject][ordered]@{
     Name = 'coreclr-debug-build'
     Result = 'PASS'
-    Evidence = 'p15-contract-build.log'
+    Evidence = 'p15-nativeaot-fix-coreclr-build.log'
     Detail = '0 warnings, 0 errors'
 })
 
-if ((Read-Status 'p15-profiler-run') -ne 0) {
+if ((Read-Status 'p15-nativeaot-fix-profiler-run') -ne 0) {
     throw 'Real-layout profiler wrapper did not return zero.'
 }
-Require-LogPattern 'p15-profiler-run' 'END EXECUTION - PASSED'
+Require-LogPattern 'p15-nativeaot-fix-profiler-run' 'END EXECUTION - PASSED'
 $validationRows.Add([pscustomobject][ordered]@{
     Name = 'real-layout-profiler'
     Result = 'PASS'
-    Evidence = 'p15-profiler-run.log'
+    Evidence = 'p15-nativeaot-fix-profiler-run.log'
     Detail = '3/3 profiler scenarios; exact Debug parity assertions'
 })
 
@@ -132,17 +132,71 @@ $validationRows.Add([pscustomobject][ordered]@{
     Detail = '8/8 rejected before managed Main'
 })
 
+$nativeAotRoot = Join-Path $InputDirectory (
+    'p15-nativeaot-reference-enumeration')
+$nativeAotValidationSource = Join-Path $nativeAotRoot 'validation-summary.csv'
+$nativeAotControlSource = Join-Path $nativeAotRoot 'control-summary.csv'
+$nativeAotIdentitySource = Join-Path $nativeAotRoot 'identities.csv'
+$nativeAotValidationRows = @(Import-Csv -LiteralPath $nativeAotValidationSource)
+$nativeAotControlRows = @(Import-Csv -LiteralPath $nativeAotControlSource)
+$nativeAotIdentityRows = @(Import-Csv -LiteralPath $nativeAotIdentitySource)
+if ((Read-Status 'p15-nativeaot-fix-nativeaot-build') -ne 0) {
+    throw 'Corrected NativeAOT runtime build did not pass.'
+}
+if ((Read-Status 'p15-nativeaot-fix-smoke-build') -ne 0) {
+    throw 'Corrected NativeAOT smoke build did not pass.'
+}
+if ((Read-Status 'p15-nativeaot-fix-smoke-run') -ne 100) {
+    throw 'Corrected NativeAOT smoke execution did not return 100.'
+}
+if ((Read-Status 'p15-nativeaot-reference-enumeration') -ne 0) {
+    throw 'NativeAOT shared-GC validation runner did not pass.'
+}
+if (($nativeAotValidationRows.Count -ne 2) -or
+    (@($nativeAotValidationRows | Where-Object Result -ne 'PASS').Count -ne 0) -or
+    (@($nativeAotValidationRows | Where-Object {
+        -not $_.ProductCommit -or -not $_.Observed -or -not $_.Evidence
+    }).Count -ne 0)) {
+    throw 'NativeAOT validation evidence is incomplete.'
+}
+if (($nativeAotControlRows.Count -ne 2) -or
+    (@($nativeAotControlRows | Where-Object Result -ne 'PASS').Count -ne 0) -or
+    (@($nativeAotControlRows | Where-Object {
+        ($_.PerturbationCount -ne '1') -or
+        -not $_.ProductCommit -or
+        -not $_.Observed
+    }).Count -ne 0)) {
+    throw 'NativeAOT control evidence is incomplete.'
+}
+if (($nativeAotIdentityRows.Count -ne 3) -or
+    (@($nativeAotIdentityRows | Where-Object {
+        ($_.ProductCommit -notmatch '^[0-9a-f]{40}$') -or
+        ($_.Sha256 -notmatch '^[0-9A-F]{64}$') -or
+        ([int64]$_.Length -le 0)
+    }).Count -ne 0)) {
+    throw 'NativeAOT identity evidence is incomplete.'
+}
+foreach ($row in $nativeAotValidationRows) {
+    $validationRows.Add([pscustomobject][ordered]@{
+        Name = $row.Name
+        Result = $row.Result
+        Evidence = 'nativeaot-validation-summary.csv'
+        Detail = $row.Observed
+    })
+}
+
 $compatibilitySource = Join-Path $InputDirectory (
     'p15-reference-enumeration-compatibility\compatibility-summary.csv')
 $controlSource = Join-Path $InputDirectory (
     'p15-reference-enumeration-controls\control-summary.csv')
 $compatibilityRows = @(Import-Csv -LiteralPath $compatibilitySource)
-$controlRows = @(Import-Csv -LiteralPath $controlSource)
+$coreControlRows = @(Import-Csv -LiteralPath $controlSource)
+$controlRows = @($coreControlRows) + @($nativeAotControlRows)
 if (($compatibilityRows.Count -ne 7) -or
     (@($compatibilityRows | Where-Object Result -ne 'PASS').Count -ne 0)) {
     throw 'Compatibility evidence is incomplete.'
 }
-if (($controlRows.Count -ne 6) -or
+if (($controlRows.Count -ne 8) -or
     (@($controlRows | Where-Object Result -ne 'PASS').Count -ne 0) -or
     (@($controlRows | Where-Object PerturbationCount -ne '1').Count -ne 0)) {
     throw 'Perturbation evidence is incomplete.'
@@ -153,21 +207,21 @@ $platformRows = @(
         Platform = 'Windows x64 CoreCLR'
         Level = 'execution'
         Result = 'PASS'
-        Evidence = 'p15-profiler-run.log; p15-enabled-build.log'
+        Evidence = 'p15-nativeaot-fix-profiler-run.log; p15-enabled-build.log'
         Limitation = ''
     },
     [pscustomobject][ordered]@{
         Platform = 'Windows x86'
         Level = 'execution'
         Result = 'PASS'
-        Evidence = 'p15-validation-x86.log'
+        Evidence = 'p15-nativeaot-fix-validation-x86.log'
         Limitation = 'Full target build is blocked by unrelated generated thunk offsets in the installed preview toolchain.'
     },
     [pscustomobject][ordered]@{
         Platform = 'Linux x64'
         Level = 'execution'
         Result = 'PASS'
-        Evidence = 'p15-validation-linux-x64.log'
+        Evidence = 'p15-nativeaot-fix-validation-linux-x64.log'
         Limitation = 'Header/native validator; full CoreCLR Linux build not run in this Windows worktree.'
     },
     [pscustomobject][ordered]@{
@@ -181,14 +235,14 @@ $platformRows = @(
         Platform = 'Windows x64 NativeAOT'
         Level = 'execution'
         Result = 'PASS'
-        Evidence = 'p15-nativeaot-build.log; p15-nativeaot-test.log'
-        Limitation = 'NativeAOT has no collectible MethodTables; resolver returns null.'
+        Evidence = 'nativeaot-validation-summary.csv; nativeaot-identities.csv'
+        Limitation = 'Shared-GC compile and 21/21 marked-MT execution; NativeAOT has no collectible MethodTables.'
     },
     [pscustomobject][ordered]@{
         Platform = 'DAC'
         Level = 'build'
         Result = 'PASS'
-        Evidence = 'p15-contract-build.log'
+        Evidence = 'p15-nativeaot-fix-coreclr-build.log'
         Limitation = 'Raw iterator is excluded from DACCESS_COMPILE.'
     },
     [pscustomobject][ordered]@{
@@ -211,6 +265,12 @@ $malformedRows | Export-Csv -LiteralPath (
     Join-Path $OutputDirectory 'malformed-summary.csv') -NoTypeInformation
 $enabledRows | Export-Csv -LiteralPath (
     Join-Path $OutputDirectory 'enabled-summary.csv') -NoTypeInformation
+$nativeAotValidationRows | Export-Csv -LiteralPath (
+    Join-Path $OutputDirectory 'nativeaot-validation-summary.csv') -NoTypeInformation
+$nativeAotControlRows | Export-Csv -LiteralPath (
+    Join-Path $OutputDirectory 'nativeaot-control-summary.csv') -NoTypeInformation
+$nativeAotIdentityRows | Export-Csv -LiteralPath (
+    Join-Path $OutputDirectory 'nativeaot-identities.csv') -NoTypeInformation
 $platformRows | Export-Csv -LiteralPath (
     Join-Path $OutputDirectory 'platform-summary.csv') -NoTypeInformation
 
@@ -219,6 +279,8 @@ $identityFiles = @(
     'src\coreclr\gc\gcref.h',
     'artifacts\bin\coreclr\windows.x64.Debug\coreclr.dll',
     'artifacts\bin\coreclr\windows.x64.Debug\clrgc.dll',
+    'artifacts\bin\coreclr\windows.x64.Debug\aotsdk\Runtime.WorkstationGC.lib',
+    'artifacts\bin\coreclr\windows.x64.Debug\aotsdk\Runtime.ServerGC.lib',
     'artifacts\bin\coreclr\windows.arm64.Release\coreclr.dll',
     'artifacts\bin\coreclr\windows.arm64.Release\clrgc.dll'
 )
