@@ -114,6 +114,9 @@ public:
     // notification for precompiled NativeAOT images.
     static HRESULT ConfigureAllocationNotification(IGCHeap* gcHeap);
 
+    // Accepts object-reference enumeration. NativeAOT MethodTables are not collectible.
+    static HRESULT ConfigureObjectReferenceEnumeration(IGCHeap* gcHeap);
+
     // Records a change in eventing state. This ultimately will inform the GC that it needs to be aware
     // of new events being enabled.
     static void RecordEventStateChange(bool isPublicProvider, GCEventKeyword keywords, GCEventLevel level);

@@ -10,6 +10,7 @@
 #include "gc.h"
 #include "gcscan.h"
 #include "gcdesc.h"
+#include "gcref.h"
 #include "softwarewritewatch.h"
 #include "handletable.h"
 #include "handletable.inl"

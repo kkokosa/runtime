@@ -80,7 +80,9 @@ public:
     BOOL_CONFIG  (AllocationNotificationTest,          "GCAllocationNotificationTest",          NULL, false, "Enable the allocation-complete validation callback") \
     BOOL_CONFIG  (AllocationNotificationTestUncounted, "GCAllocationNotificationTestUncounted", NULL, false, "Use an empty allocation-complete validation callback") \
     BOOL_CONFIG  (AllocationNotificationTestCountOnly, "GCAllocationNotificationTestCountOnly", NULL, false, "Count allocation-complete callbacks without recording arguments") \
-    INT_CONFIG   (AllocationNotificationTestMalformed, "GCAllocationNotificationTestMalformed", NULL, 0,     "Request malformed allocation notification parameters")
+    INT_CONFIG   (AllocationNotificationTestMalformed, "GCAllocationNotificationTestMalformed", NULL, 0,     "Request malformed allocation notification parameters") \
+    BOOL_CONFIG  (ObjectReferenceEnumerationTest,          "GCObjectReferenceEnumerationTest",          NULL, false, "Enable object-reference enumeration validation") \
+    INT_CONFIG   (ObjectReferenceEnumerationTestMalformed, "GCObjectReferenceEnumerationTestMalformed", NULL, 0,     "Request malformed object-reference enumeration parameters")
 #else
 #define ALLOCATION_NOTIFICATION_TEST_CONFIG
 #endif

@@ -336,6 +336,7 @@ public:
     virtual void NullBridgeObjectsWeakRefs(size_t length, void* unreachableObjectHandles);
 
     virtual AllocationNotificationParameters* GetAllocationNotificationParameters();
+    virtual ObjectReferenceEnumerationParameters* GetObjectReferenceEnumerationParameters();
 };
 
 #endif  // GCIMPL_H_

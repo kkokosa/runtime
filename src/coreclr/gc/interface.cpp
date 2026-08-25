@@ -220,6 +220,20 @@ HRESULT GCHeap::Initialize()
         return E_NOTIMPL;
     }
 
+    ObjectReferenceEnumerationParameters* objectReferenceEnumeration =
+        GetObjectReferenceEnumerationParameters();
+    if (objectReferenceEnumeration == nullptr)
+    {
+        return E_FAIL;
+    }
+    if ((objectReferenceEnumeration->request == ObjectReferenceEnumerationRequest::Enabled) &&
+        ((objectReferenceEnumeration->request_status !=
+          ObjectReferenceEnumerationRequestStatus::Accepted) ||
+         (objectReferenceEnumeration->get_loader_allocator_object_slot == nullptr)))
+    {
+        return E_NOTIMPL;
+    }
+
     qpf = (uint64_t)GCToOSInterface::QueryPerformanceFrequency();
     qpf_ms = 1000.0 / (double)qpf;
     qpf_us = 1000.0 * 1000.0 / (double)qpf;
@@ -2594,6 +2608,60 @@ void GCHeap::SetFinalizationRun (Object* obj)
 
 #endif //FEATURE_PREMORTEM_FINALIZATION
 
+#ifdef _DEBUG
+void ValidateObjectReferenceRanges(Object* obj)
+{
+    uint8_t* object = reinterpret_cast<uint8_t*>(obj);
+    if (!header(object)->ContainsGCPointers())
+    {
+        return;
+    }
+
+    GCReferenceRangeIterator iterator(obj);
+    GCReferenceRange range = {};
+    bool hasRange = iterator.Next(&range);
+    size_t rangeIndex = 0;
+
+    go_through_object_nostart(method_table(object), object, size(object), slot,
+    {
+        _ASSERTE(hasRange);
+        _ASSERTE((range.start + rangeIndex) == reinterpret_cast<Object**>(slot));
+        _ASSERTE(*(range.start + rangeIndex) == reinterpret_cast<Object*>(*slot));
+
+        rangeIndex++;
+        if (rangeIndex == range.count)
+        {
+            rangeIndex = 0;
+            hasRange = iterator.Next(&range);
+        }
+    });
+
+    _ASSERTE(!hasRange);
+    _ASSERTE(range.start == nullptr);
+    _ASSERTE(range.count == 0);
+
+#if defined(FEATURE_ALLOCATION_NOTIFICATION_TEST) && !defined(FEATURE_NATIVEAOT)
+    if (GCConfig::GetObjectReferenceEnumerationTest() &&
+        header(object)->GetMethodTable()->Collectible())
+    {
+        ObjectReferenceEnumerationParameters* parameters =
+            g_theGCHeap->GetObjectReferenceEnumerationParameters();
+        _ASSERTE(
+            parameters->request_status ==
+            ObjectReferenceEnumerationRequestStatus::Accepted);
+        _ASSERTE(parameters->get_loader_allocator_object_slot != nullptr);
+
+        Object** loaderAllocatorSlot =
+            parameters->get_loader_allocator_object_slot(method_table(object));
+        _ASSERTE(loaderAllocatorSlot != nullptr);
+        _ASSERTE(
+            reinterpret_cast<uint8_t*>(*loaderAllocatorSlot) ==
+            get_class_object(object));
+    }
+#endif // FEATURE_ALLOCATION_NOTIFICATION_TEST && !FEATURE_NATIVEAOT
+}
+#endif // _DEBUG
+
 void GCHeap::DiagWalkObject (Object* obj, walk_fn fn, void* context)
 {
     uint8_t* o = (uint8_t*)obj;
@@ -2617,6 +2685,9 @@ void GCHeap::DiagWalkObject2 (Object* obj, walk_fn2 fn, void* context)
     uint8_t* o = (uint8_t*)obj;
     if (o)
     {
+#ifdef _DEBUG
+        ValidateObjectReferenceRanges(obj);
+#endif // _DEBUG
         go_through_object_cl (method_table (o), o, size(o), oo,
                                     {
                                         if (*oo)
@@ -2770,6 +2841,53 @@ AllocationNotificationParameters* GCHeap::GetAllocationNotificationParameters()
                 break;
             case 3:
                 return nullptr;
+            default:
+                break;
+        }
+    }
+#endif // FEATURE_ALLOCATION_NOTIFICATION_TEST
+
+    initialized = true;
+    return &parameters;
+}
+
+#ifdef FEATURE_ALLOCATION_NOTIFICATION_TEST
+namespace
+{
+Object** LOCALGC_CALLCONV InvalidLoaderAllocatorObjectSlot(MethodTable* methodTable)
+{
+    UNREFERENCED_PARAMETER(methodTable);
+    return nullptr;
+}
+}
+#endif // FEATURE_ALLOCATION_NOTIFICATION_TEST
+
+ObjectReferenceEnumerationParameters* GCHeap::GetObjectReferenceEnumerationParameters()
+{
+    static ObjectReferenceEnumerationParameters parameters = {};
+    static bool initialized;
+
+#ifdef FEATURE_ALLOCATION_NOTIFICATION_TEST
+    if (!initialized && GCConfig::GetObjectReferenceEnumerationTest())
+    {
+        parameters.request = ObjectReferenceEnumerationRequest::Enabled;
+
+        switch (GCConfig::GetObjectReferenceEnumerationTestMalformed())
+        {
+            case 1:
+                parameters.request_status =
+                    ObjectReferenceEnumerationRequestStatus::Accepted;
+                break;
+            case 2:
+                parameters.get_loader_allocator_object_slot =
+                    InvalidLoaderAllocatorObjectSlot;
+                break;
+            case 3:
+                return nullptr;
+            case 4:
+                parameters.request =
+                    static_cast<ObjectReferenceEnumerationRequest>(-1);
+                break;
             default:
                 break;
         }
