@@ -210,6 +210,10 @@ HRESULT GCHeap::Initialize()
     HRESULT hr = S_OK;
 
     AllocationNotificationParameters* allocationNotification = GetAllocationNotificationParameters();
+    if (allocationNotification == nullptr)
+    {
+        return E_FAIL;
+    }
     if ((allocationNotification->callback != nullptr) &&
         (allocationNotification->request_status != AllocationNotificationRequestStatus::Accepted))
     {
@@ -2764,6 +2768,8 @@ AllocationNotificationParameters* GCHeap::GetAllocationNotificationParameters()
             case 2:
                 parameters.request_status = AllocationNotificationRequestStatus::Accepted;
                 break;
+            case 3:
+                return nullptr;
             default:
                 break;
         }

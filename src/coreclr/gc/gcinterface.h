@@ -1233,8 +1233,13 @@ public:
     virtual void NullBridgeObjectsWeakRefs(size_t length, void* unreachableObjectHandles) PURE_VIRTUAL;
 
     // Returns the immutable allocation-complete notification request. The EE
-    // calls this only for GC interface version 5.13 or later.
-    virtual AllocationNotificationParameters* GetAllocationNotificationParameters() PURE_VIRTUAL;
+    // calls this only for GC interface version 5.13 or later. Collectors built
+    // from older source inherit a process-lifetime disabled request.
+    virtual AllocationNotificationParameters* GetAllocationNotificationParameters()
+    {
+        static AllocationNotificationParameters parameters = {};
+        return &parameters;
+    }
 };
 
 #ifdef WRITE_BARRIER_CHECK

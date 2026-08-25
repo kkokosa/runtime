@@ -71,6 +71,7 @@ if (NOT CLR_CMAKE_HOST_ARCH_WASM)
         target_link_options(coreclr PRIVATE
             "/EXPORT:GC_AllocationNotificationTest_Reset"
             "/EXPORT:GC_AllocationNotificationTest_GetCount"
+            "/EXPORT:GC_AllocationNotificationTest_GetCountOnly"
             "/EXPORT:GC_AllocationNotificationTest_GetErrorCount"
             "/EXPORT:GC_AllocationNotificationTest_GetObject"
             "/EXPORT:GC_AllocationNotificationTest_GetSize"

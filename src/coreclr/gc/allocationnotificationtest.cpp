@@ -135,6 +135,12 @@ extern "C" DLLEXPORT int64_t GC_AllocationNotificationTest_GetCount()
     return min(count, MaxRecords);
 }
 
+extern "C" DLLEXPORT int64_t GC_AllocationNotificationTest_GetCountOnly()
+{
+    int32_t count = VolatileLoad(&g_countOnly);
+    return count < 0 ? 0 : count;
+}
+
 extern "C" DLLEXPORT int64_t GC_AllocationNotificationTest_GetErrorCount()
 {
     return VolatileLoad(&g_errorCount);
