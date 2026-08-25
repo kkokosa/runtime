@@ -13,6 +13,33 @@ struct GCReferenceRange
     size_t count;
 };
 
+struct GCReferenceObjectLayout
+{
+    size_t objectSize;
+    uint32_t componentCount;
+};
+
+FORCEINLINE GCReferenceObjectLayout GetGCReferenceObjectLayout(
+    Object* object,
+    MethodTable* methodTable)
+{
+    GCReferenceObjectLayout layout = { methodTable->GetBaseSize(), 0 };
+    if (methodTable->HasComponentSize())
+    {
+        layout.componentCount =
+            reinterpret_cast<ArrayBase*>(object)->GetNumComponents();
+        size_t componentSize = methodTable->RawGetComponentSize();
+        _ASSERTE(
+            (componentSize == 0) ||
+            (layout.componentCount <=
+             ((static_cast<size_t>(-1) - layout.objectSize) / componentSize)));
+        layout.objectSize +=
+            static_cast<size_t>(layout.componentCount) * componentSize;
+    }
+
+    return layout;
+}
+
 class GCReferenceRanges
 {
 public:
@@ -27,7 +54,8 @@ public:
             return true;
         }
 
-        size_t objectSize = object->GetSize();
+        GCReferenceObjectLayout objectLayout =
+            GetGCReferenceObjectLayout(object, methodTable);
         CGCDesc* map = CGCDesc::GetCGCDescFromMT(methodTable);
         CGCDescSeries* current = map->GetHighestSeries();
         ptrdiff_t seriesCount = static_cast<ptrdiff_t>(map->GetNumSeries());
@@ -41,7 +69,8 @@ public:
                 Object** rangeStart = reinterpret_cast<Object**>(
                     reinterpret_cast<uint8_t*>(object) +
                     current->GetSeriesOffset());
-                size_t rangeSize = current->GetSeriesSize() + objectSize;
+                size_t rangeSize =
+                    current->GetSeriesSize() + objectLayout.objectSize;
                 size_t rangeCount = rangeSize / sizeof(Object*);
                 if ((rangeCount != 0) && !visitor(rangeStart, rangeCount))
                 {
@@ -59,9 +88,9 @@ public:
         Object** rangeStart = reinterpret_cast<Object**>(
             reinterpret_cast<uint8_t*>(object) +
             current->GetSeriesOffset());
-        uint32_t componentCount =
-            static_cast<ArrayBase*>(object)->GetNumComponents();
-        for (uint32_t component = 0; component < componentCount; component++)
+        for (uint32_t component = 0;
+             component < objectLayout.componentCount;
+             component++)
         {
             for (ptrdiff_t seriesIndex = 0;
                  seriesIndex > seriesCount;
@@ -101,16 +130,18 @@ public:
         _ASSERTE(object != nullptr);
 
         MethodTable* methodTable = object->GetGCSafeMethodTable();
-        m_objectSize = object->GetSize();
-#ifdef _DEBUG
-        _ASSERTE(m_objectSize >= sizeof(ObjHeader));
-        m_objectEnd = m_object + m_objectSize - sizeof(ObjHeader);
-#endif // _DEBUG
-
         if (!methodTable->ContainsGCPointers())
         {
             return;
         }
+
+        GCReferenceObjectLayout objectLayout =
+            GetGCReferenceObjectLayout(object, methodTable);
+        m_objectSize = objectLayout.objectSize;
+#ifdef _DEBUG
+        _ASSERTE(m_objectSize >= sizeof(ObjHeader));
+        m_objectEnd = m_object + m_objectSize - sizeof(ObjHeader);
+#endif // _DEBUG
 
         CGCDesc* map = CGCDesc::GetCGCDescFromMT(methodTable);
         m_currentSeries = map->GetHighestSeries();
@@ -124,7 +155,7 @@ public:
         else
         {
             m_repeatingCursor = m_object + m_currentSeries->GetSeriesOffset();
-            m_remainingComponents = static_cast<ArrayBase*>(object)->GetNumComponents();
+            m_remainingComponents = objectLayout.componentCount;
         }
     }
 
