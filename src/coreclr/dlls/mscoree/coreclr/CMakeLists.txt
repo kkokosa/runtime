@@ -79,6 +79,14 @@ if (NOT CLR_CMAKE_HOST_ARCH_WASM)
         )
     endif()
 
+    if(CLR_CMAKE_ENABLE_OBJECT_REFERENCE_ENUMERATION_TEST AND CLR_CMAKE_TARGET_WIN32)
+        target_link_options(coreclr PRIVATE
+            "/EXPORT:GC_ObjectReferenceEnumerationTest_Reset"
+            "/EXPORT:GC_ObjectReferenceEnumerationTest_Stop"
+            "/EXPORT:GC_ObjectReferenceEnumerationTest_GetSnapshot"
+        )
+    endif()
+
     add_custom_target(coreclr_exports DEPENDS ${EXPORTS_FILE})
     add_custom_target(coreclr_def DEPENDS ${DEF_FILE})
 

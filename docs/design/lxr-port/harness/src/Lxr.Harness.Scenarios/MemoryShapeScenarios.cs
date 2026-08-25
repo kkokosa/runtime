@@ -278,6 +278,8 @@ public sealed class PointerChasingScenario : IScenario
     private RefNode[] _nodes = [];
     private int _hops;
     private int _mutationsPerOperation;
+    private int _allocationBytesPerOperation;
+    private byte[]? _allocationSink;
     private long _operations;
     private long _hopsPerformed;
 
@@ -294,7 +296,12 @@ public sealed class PointerChasingScenario : IScenario
         DefaultTimeoutSeconds = 300,
         MinimumOperations = 500,
         ProvisionalBaselineHeapBytes = 256L * 1024 * 1024,
-        Axes = ["nodeCount", "hops", "mutationsPerOperation"],
+        Axes = [
+            "nodeCount",
+            "hops",
+            "mutationsPerOperation",
+            "allocationBytesPerOperation",
+        ],
     };
 
     public void Setup(ScenarioContext context)
@@ -302,6 +309,9 @@ public sealed class PointerChasingScenario : IScenario
         int nodeCount = context.Parameters.GetInt32("nodeCount", 1 << 18);
         _hops = context.Parameters.GetInt32("hops", 64);
         _mutationsPerOperation = context.Parameters.GetInt32("mutationsPerOperation", 16);
+        _allocationBytesPerOperation = Math.Max(
+            0,
+            context.Parameters.GetInt32("allocationBytesPerOperation", 0));
 
         _nodes = new RefNode[nodeCount];
         for (int i = 0; i < nodeCount; i++)
@@ -356,6 +366,14 @@ public sealed class PointerChasingScenario : IScenario
             current = node.Next!;
         }
 
+        if (_allocationBytesPerOperation != 0)
+        {
+            byte[] pressure = new byte[_allocationBytesPerOperation];
+            pressure[0] = unchecked((byte)index);
+            _allocationSink = pressure;
+            accumulator += pressure[0];
+        }
+
         Interlocked.Add(ref _hopsPerformed, _hops);
         return accumulator;
     }
@@ -389,12 +407,18 @@ public sealed class PointerChasingScenario : IScenario
         {
             Success = operations >= 500 && violations.Count == 0,
             Marker = $"pointer-chasing:hops={Interlocked.Read(ref _hopsPerformed)}",
-            Detail = $"operations={operations}, cycleLength={visited}",
+            Detail =
+                $"operations={operations}, cycleLength={visited}, " +
+                $"allocationBytesPerOperation={_allocationBytesPerOperation}",
             Violations = violations,
         };
     }
 
-    public void Teardown() => _nodes = [];
+    public void Teardown()
+    {
+        _nodes = [];
+        _allocationSink = null;
+    }
 }
 
 /// <summary>

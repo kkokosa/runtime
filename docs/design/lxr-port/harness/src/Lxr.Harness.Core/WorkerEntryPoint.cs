@@ -174,6 +174,18 @@ public static class WorkerEntryPoint
 
         scenario.Setup(context);
 
+        using ReferenceEnumerationProbe? referenceEnumerationProbe =
+            ReferenceEnumerationProbe.TryCreateFromEnvironment();
+        if (referenceEnumerationProbe is not null)
+        {
+            // The scenario graph must be mature and no setup collection may leak into the measured
+            // scan counters. Both collections are outside GcTelemetry's measurement window.
+            GC.Collect(2, GCCollectionMode.Forced, blocking: true, compacting: false);
+            GC.WaitForPendingFinalizers();
+            GC.Collect(2, GCCollectionMode.Forced, blocking: true, compacting: false);
+            referenceEnumerationProbe.Reset();
+        }
+
         using var telemetry = new GcTelemetry();
         telemetry.BeginMeasurement();
 
@@ -214,6 +226,10 @@ public static class WorkerEntryPoint
 
         // Measurement is over. Only now may anything force a collection.
         GcSummary gc = telemetry.EndMeasurement();
+        ReferenceEnumerationSnapshot? referenceEnumeration =
+            referenceEnumerationProbe?.CaptureAndStop();
+        IReadOnlyList<string> referenceEnumerationFailures =
+            referenceEnumeration?.Validate() ?? Array.Empty<string>();
         GCMemoryInfo memoryInfo = GC.GetGCMemoryInfo();
         long workingSet = Environment.WorkingSet;
 
@@ -240,12 +256,15 @@ public static class WorkerEntryPoint
             configPinFailures.Count == 0 &&
             verification.Success &&
             verification.Violations.Count == 0 &&
+            referenceEnumerationFailures.Count == 0 &&
             enoughWork &&
             inducedOk;
 
         string? invalidReason = !collectorConfirmed ? InvalidReason.CollectorIdentityMismatch
             : configPinFailures.Count > 0 ? InvalidReason.ConfigPinNotHonoured
             : verification.Violations.Count > 0 ? InvalidReason.SemanticViolation
+            : referenceEnumerationFailures.Count > 0
+                ? InvalidReason.ReferenceEnumerationProbeFailed
             : !enoughWork ? InvalidReason.InsufficientOps
             : !inducedOk ? InvalidReason.UnexpectedInducedCollections
             : !verification.Success ? InvalidReason.MarkerMissing
@@ -255,7 +274,8 @@ public static class WorkerEntryPoint
         {
             WriteReport(outputPath, options, descriptor, verification, gc, openLoop, throughput, knobs, gcConfig,
                 identityFailures, configPinFailures, unverifiedKnobs, runtime, machine, memoryInfo, workingSet,
-                collectorConfirmed, valid, invalidReason, operationsCompleted, steadySeconds);
+                collectorConfirmed, valid, invalidReason, operationsCompleted, steadySeconds,
+                referenceEnumeration, referenceEnumerationFailures);
         }
 
         // The marker is the deterministic success signal. It is printed only when the scenario itself
@@ -343,7 +363,9 @@ public static class WorkerEntryPoint
         bool valid,
         string? invalidReason,
         long operationsCompleted,
-        double steadySeconds)
+        double steadySeconds,
+        ReferenceEnumerationSnapshot? referenceEnumeration,
+        IReadOnlyList<string> referenceEnumerationFailures)
     {
         Directory.CreateDirectory(Path.GetDirectoryName(Path.GetFullPath(path))!);
         using FileStream stream = File.Create(path);
@@ -378,6 +400,10 @@ public static class WorkerEntryPoint
         WriteStringArray(writer, "identityFailures", identityFailures);
         WriteStringArray(writer, "configPinFailures", configPinFailures);
         WriteStringArray(writer, "unverifiedKnobs", unverifiedKnobs);
+        WriteStringArray(
+            writer,
+            "referenceEnumerationFailures",
+            referenceEnumerationFailures);
 
         writer.WriteStartObject("observedGcConfig");
         foreach (KeyValuePair<string, string> entry in gcConfig)
@@ -386,6 +412,40 @@ public static class WorkerEntryPoint
         }
 
         writer.WriteEndObject();
+
+        if (referenceEnumeration is null)
+        {
+            writer.WriteNull("referenceEnumeration");
+        }
+        else
+        {
+            writer.WriteStartObject("referenceEnumeration");
+            writer.WriteString(
+                "hookLibraryPath",
+                referenceEnumeration.HookLibraryPath);
+            writer.WriteString(
+                "hookLibrarySha256",
+                referenceEnumeration.HookLibrarySha256);
+            writer.WriteNumber(
+                "expectedMode",
+                referenceEnumeration.ExpectedMode);
+            writer.WriteString(
+                "expectedModeName",
+                referenceEnumeration.ExpectedModeName);
+            writer.WriteNumber("mode", referenceEnumeration.Mode);
+            writer.WriteNumber("errors", referenceEnumeration.Errors);
+            writer.WriteNumber(
+                "objectScans",
+                referenceEnumeration.ObjectScans);
+            writer.WriteNumber("ranges", referenceEnumeration.Ranges);
+            writer.WriteNumber("slots", referenceEnumeration.Slots);
+            writer.WriteNumber(
+                "nonNullSlots",
+                referenceEnumeration.NonNullSlots);
+            writer.WriteNumber("checksum", referenceEnumeration.Checksum);
+            writer.WriteString("window", "warmup+steady-state");
+            writer.WriteEndObject();
+        }
 
         writer.WriteStartObject("requestedConfig");
         foreach (KeyValuePair<string, string> entry in options.RequestedConfig)
