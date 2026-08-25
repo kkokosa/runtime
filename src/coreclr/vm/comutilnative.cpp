@@ -1182,6 +1182,11 @@ extern "C" void* QCALLTYPE GCInterface_RegisterFrozenSegment(void* pSection, SIZ
 
     GCX_COOP();
 
+    if (GCHeapUtilities::IsAllocationNotificationEnabled())
+    {
+        COMPlusThrow(kNotSupportedException);
+    }
+
     segment_info seginfo;
     seginfo.pvMem           = pSection;
     seginfo.ibFirstObject   = sizeof(ObjHeader);

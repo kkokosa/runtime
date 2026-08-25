@@ -684,6 +684,7 @@ elseif(CLR_CMAKE_TARGET_WIN32)
             ${ARCH_SOURCES_DIR}/VirtualCallStubAMD64.asm
             ${ARCH_SOURCES_DIR}/StubPrecodeDynamicHelpers.asm
             ${RUNTIME_DIR}/${ARCH_SOURCES_DIR}/AllocFast.asm
+            ${RUNTIME_DIR}/${ARCH_SOURCES_DIR}/AllocFastNotification.asm
             ${RUNTIME_DIR}/${ARCH_SOURCES_DIR}/WriteBarriers.asm
         )
 
@@ -753,6 +754,7 @@ else()
             ${ARCH_SOURCES_DIR}/umthunkstub.S
             ${ARCH_SOURCES_DIR}/virtualcallstubamd64.S
             ${RUNTIME_DIR}/${ARCH_SOURCES_DIR}/AllocFast.S
+            ${RUNTIME_DIR}/${ARCH_SOURCES_DIR}/AllocFastNotification.S
             ${RUNTIME_DIR}/${ARCH_SOURCES_DIR}/WriteBarriers.S
             ${ARCH_SOURCES_DIR}/StubPrecodeDynamicHelpers.S
         )
@@ -1026,6 +1028,12 @@ if(CLR_CMAKE_ENABLE_WRITE_BARRIER_STANDARD_ABI_TEST)
     endif()
 endif()
 
+if(CLR_CMAKE_ENABLE_ALLOCATION_NOTIFICATION_TEST)
+    list(APPEND VM_SOURCES_WKS
+        ../gc/allocationnotificationtest.cpp
+    )
+endif()
+
 list(APPEND VM_HEADERS_WKS
      ${GC_HEADERS_WKS}
 )
@@ -1118,6 +1126,13 @@ if(CLR_CMAKE_ENABLE_WRITE_BARRIER_STANDARD_ABI_TEST)
     target_compile_definitions(vm_gc_wks PRIVATE FEATURE_WRITE_BARRIER_STANDARD_ABI_TEST)
     if(FEATURE_SVR_GC)
         target_compile_definitions(vm_gc_svr PRIVATE FEATURE_WRITE_BARRIER_STANDARD_ABI_TEST)
+    endif()
+endif()
+
+if(CLR_CMAKE_ENABLE_ALLOCATION_NOTIFICATION_TEST)
+    target_compile_definitions(vm_gc_wks PRIVATE FEATURE_ALLOCATION_NOTIFICATION_TEST)
+    if(FEATURE_SVR_GC)
+        target_compile_definitions(vm_gc_svr PRIVATE FEATURE_ALLOCATION_NOTIFICATION_TEST)
     endif()
 endif()
 

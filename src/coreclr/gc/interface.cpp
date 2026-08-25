@@ -2,6 +2,7 @@
 // The .NET Foundation licenses this file to you under the MIT license.
 
 #include "gcinternal.h"
+#include "allocationnotificationtest.h"
 
 #ifdef SERVER_GC
 namespace SVR
@@ -207,6 +208,13 @@ HRESULT GCHeap::Initialize()
     STRESS_LOG_VA (1, (ThreadStressLog::gcLoggingIsOffMsg()));
 #endif
     HRESULT hr = S_OK;
+
+    AllocationNotificationParameters* allocationNotification = GetAllocationNotificationParameters();
+    if ((allocationNotification->callback != nullptr) &&
+        (allocationNotification->request_status != AllocationNotificationRequestStatus::Accepted))
+    {
+        return E_NOTIMPL;
+    }
 
     qpf = (uint64_t)GCToOSInterface::QueryPerformanceFrequency();
     qpf_ms = 1000.0 / (double)qpf;
@@ -2735,6 +2743,35 @@ void GCHeap::NullBridgeObjectsWeakRefs(size_t length, void* unreachableObjectHan
 #else
     assert(false);
 #endif
+}
+
+AllocationNotificationParameters* GCHeap::GetAllocationNotificationParameters()
+{
+    static AllocationNotificationParameters parameters = {};
+    static bool initialized;
+
+#ifdef FEATURE_ALLOCATION_NOTIFICATION_TEST
+    if (!initialized && GCConfig::GetAllocationNotificationTest())
+    {
+        parameters.callback = GetAllocationNotificationTestCallback();
+        parameters.context = GetAllocationNotificationTestContext();
+
+        switch (GCConfig::GetAllocationNotificationTestMalformed())
+        {
+            case 1:
+                parameters.callback = nullptr;
+                break;
+            case 2:
+                parameters.request_status = AllocationNotificationRequestStatus::Accepted;
+                break;
+            default:
+                break;
+        }
+    }
+#endif // FEATURE_ALLOCATION_NOTIFICATION_TEST
+
+    initialized = true;
+    return &parameters;
 }
 
 HRESULT GCHeap::WaitUntilConcurrentGCCompleteAsync(int millisecondsTimeout)

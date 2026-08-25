@@ -67,6 +67,17 @@ if (NOT CLR_CMAKE_HOST_ARCH_WASM)
         )
     endif()
 
+    if(CLR_CMAKE_ENABLE_ALLOCATION_NOTIFICATION_TEST AND CLR_CMAKE_TARGET_WIN32)
+        target_link_options(coreclr PRIVATE
+            "/EXPORT:GC_AllocationNotificationTest_Reset"
+            "/EXPORT:GC_AllocationNotificationTest_GetCount"
+            "/EXPORT:GC_AllocationNotificationTest_GetErrorCount"
+            "/EXPORT:GC_AllocationNotificationTest_GetObject"
+            "/EXPORT:GC_AllocationNotificationTest_GetSize"
+            "/EXPORT:GC_AllocationNotificationTest_GetFlags"
+        )
+    endif()
+
     add_custom_target(coreclr_exports DEPENDS ${EXPORTS_FILE})
     add_custom_target(coreclr_def DEPENDS ${DEF_FILE})
 

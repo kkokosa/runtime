@@ -17,9 +17,17 @@ set (DEF_SOURCES
   mscorwks_ntdef.src
 )
 else()
-if(CLR_CMAKE_ENABLE_WRITE_BARRIER_STANDARD_ABI_TEST)
+if(CLR_CMAKE_ENABLE_WRITE_BARRIER_STANDARD_ABI_TEST AND CLR_CMAKE_ENABLE_ALLOCATION_NOTIFICATION_TEST)
+  set (DEF_SOURCES
+    mscorwks_validation_unixexports.src
+  )
+elseif(CLR_CMAKE_ENABLE_WRITE_BARRIER_STANDARD_ABI_TEST)
   set (DEF_SOURCES
     mscorwks_writebarriertest_unixexports.src
+  )
+elseif(CLR_CMAKE_ENABLE_ALLOCATION_NOTIFICATION_TEST)
+  set (DEF_SOURCES
+    mscorwks_allocationnotificationtest_unixexports.src
   )
 else()
   set (DEF_SOURCES

@@ -64,6 +64,29 @@ HRESULT InitializeDefaultGC()
     return GCHeapUtilities::InitializeDefaultGC();
 }
 
+HRESULT GCHeapUtilities::ConfigureAllocationNotification(IGCHeap* gcHeap)
+{
+    AllocationNotificationParameters* parameters = gcHeap->GetAllocationNotificationParameters();
+    if ((parameters == nullptr) ||
+        (parameters->request_status != AllocationNotificationRequestStatus::NotProcessed))
+    {
+        if (parameters != nullptr)
+        {
+            parameters->request_status = AllocationNotificationRequestStatus::Unsupported;
+        }
+        return E_FAIL;
+    }
+
+    if ((parameters->callback != nullptr) || (parameters->context != nullptr))
+    {
+        parameters->request_status = AllocationNotificationRequestStatus::Unsupported;
+        return E_NOTIMPL;
+    }
+
+    parameters->request_status = AllocationNotificationRequestStatus::Accepted;
+    return S_OK;
+}
+
 // Initializes a non-standalone GC. The protocol for initializing a non-standalone GC
 // is similar to loading a standalone one, except that the GC_VersionInfo and
 // GC_Initialize symbols are linked to directory and thus don't need to be loaded.
@@ -83,6 +106,11 @@ HRESULT GCHeapUtilities::InitializeDefaultGC()
     g_gc_dac_vars.major_version_number = GC_INTERFACE_MAJOR_VERSION;
     g_gc_dac_vars.minor_version_number = GC_INTERFACE_MINOR_VERSION;
     HRESULT initResult = GC_Initialize(nullptr, &heap, &manager, &g_gc_dac_vars);
+
+    if (initResult == S_OK)
+    {
+        initResult = ConfigureAllocationNotification(heap);
+    }
 
     if (initResult == S_OK)
     {
