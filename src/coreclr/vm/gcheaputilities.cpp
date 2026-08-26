@@ -262,6 +262,72 @@ HRESULT GCHeapUtilities::ConfigureAllocationNotification(IGCHeap* gcHeap, const 
 
 namespace
 {
+Object** LOCALGC_CALLCONV GetLoaderAllocatorObjectSlotForGC(MethodTable* methodTable)
+{
+    LIMITED_METHOD_CONTRACT;
+
+    if (!methodTable->Collectible())
+    {
+        return nullptr;
+    }
+
+    return reinterpret_cast<Object**>(methodTable->GetLoaderAllocatorObjectHandle());
+}
+}
+
+HRESULT GCHeapUtilities::ConfigureObjectReferenceEnumeration(IGCHeap* gcHeap, const VersionInfo& version)
+{
+    if ((version.MajorVersion != GC_INTERFACE_MAJOR_VERSION) ||
+        (version.MinorVersion < GC_OBJECT_REFERENCE_ENUMERATION_INTERFACE_MINOR_VERSION))
+    {
+        return S_OK;
+    }
+
+    ObjectReferenceEnumerationParameters* parameters =
+        gcHeap->GetObjectReferenceEnumerationParameters();
+    if (parameters == nullptr)
+    {
+        LogErrorToHost("GC object-reference enumeration descriptor is null.");
+        return E_FAIL;
+    }
+
+    if (parameters->request_status != ObjectReferenceEnumerationRequestStatus::NotProcessed)
+    {
+        LogErrorToHost(
+            "GC object-reference enumeration descriptor was not initialized to NotProcessed.");
+        parameters->request_status = ObjectReferenceEnumerationRequestStatus::Unsupported;
+        return E_FAIL;
+    }
+
+    if (parameters->get_loader_allocator_object_slot != nullptr)
+    {
+        LogErrorToHost(
+            "GC object-reference enumeration resolver must be initialized to null.");
+        parameters->request_status = ObjectReferenceEnumerationRequestStatus::Unsupported;
+        return E_INVALIDARG;
+    }
+
+    switch (parameters->request)
+    {
+        case ObjectReferenceEnumerationRequest::Disabled:
+            parameters->request_status = ObjectReferenceEnumerationRequestStatus::Accepted;
+            return S_OK;
+
+        case ObjectReferenceEnumerationRequest::Enabled:
+            parameters->get_loader_allocator_object_slot =
+                GetLoaderAllocatorObjectSlotForGC;
+            parameters->request_status = ObjectReferenceEnumerationRequestStatus::Accepted;
+            return S_OK;
+
+        default:
+            LogErrorToHost("GC object-reference enumeration request is invalid.");
+            parameters->request_status = ObjectReferenceEnumerationRequestStatus::Unsupported;
+            return E_INVALIDARG;
+    }
+}
+
+namespace
+{
 
 // This block of code contains all of the state necessary to handle incoming
 // EtwCallbacks before the GC has been initialized. This is a tricky problem
@@ -295,6 +361,13 @@ HRESULT FinalizeLoad(
     if (FAILED(notificationResult))
     {
         return notificationResult;
+    }
+
+    HRESULT enumerationResult =
+        GCHeapUtilities::ConfigureObjectReferenceEnumeration(gcHeap, version);
+    if (FAILED(enumerationResult))
+    {
+        return enumerationResult;
     }
 
     g_pGCHeap = gcHeap;

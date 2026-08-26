@@ -10,6 +10,10 @@
 #include "gc.h"
 #include "gcscan.h"
 #include "gcdesc.h"
+#include "gcref.h"
+#ifdef FEATURE_OBJECT_REFERENCE_ENUMERATION_TEST
+#include "objectreferenceenumerationtest.h"
+#endif
 #include "softwarewritewatch.h"
 #include "handletable.h"
 #include "handletable.inl"
@@ -2816,6 +2820,13 @@ void destroy_card_table (uint32_t* c_table);
 #define ignore_start 0
 #define use_start 1
 
+#ifdef FEATURE_OBJECT_REFERENCE_ENUMERATION_TEST
+#define object_reference_enumeration_test_scan(o) \
+    ObjectReferenceEnumerationTestScanIfEnabled(reinterpret_cast<Object*>(o))
+#else
+#define object_reference_enumeration_test_scan(o)
+#endif
+
 #define go_through_object(mt,o,size,parm,start,start_useful,limit,exp)      \
 {                                                                           \
     CGCDesc* map = CGCDesc::GetCGCDescFromMT((MethodTable*)(mt));           \
@@ -2883,6 +2894,7 @@ void destroy_card_table (uint32_t* c_table);
 {                                                                           \
     if (header(o)->ContainsGCPointers())                                    \
     {                                                                       \
+        object_reference_enumeration_test_scan(o);                          \
         go_through_object_nostart(mt,o,size,parm,exp);                      \
     }                                                                       \
 }
@@ -2897,6 +2909,7 @@ void destroy_card_table (uint32_t* c_table);
     }                                                                       \
     if (header(o)->ContainsGCPointers())                                    \
     {                                                                       \
+        object_reference_enumeration_test_scan(o);                          \
         go_through_object_nostart(mt,o,size,parm,exp);                      \
     }                                                                       \
 }

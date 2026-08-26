@@ -30,6 +30,8 @@ public static class InvalidReason
     public const string Timeout = "timeout";
     public const string Crashed = "crashed";
     public const string WorkerError = "worker-error";
+    public const string ReferenceEnumerationProbeFailed =
+        "reference-enumeration-probe-failed";
 
     /// <summary>
     /// The open-loop dispatcher could not keep the arrival schedule, so the reported latency is its

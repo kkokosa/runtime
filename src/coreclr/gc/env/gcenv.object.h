@@ -178,6 +178,8 @@ public:
 #endif //HOST_64BIT
     }
 
+    size_t GetSize() const;
+
     void RawSetMethodTable(MethodTable * pMT)
     {
         m_pMethTab = pMT;
@@ -190,7 +192,7 @@ class ArrayBase : public Object
     uint32_t m_dwLength;
 
 public:
-    uint32_t GetNumComponents()
+    uint32_t GetNumComponents() const
     {
         return m_dwLength;
     }
@@ -200,5 +202,19 @@ public:
         return offsetof(ArrayBase, m_dwLength);
     }
 };
+
+inline size_t Object::GetSize() const
+{
+    MethodTable* methodTable = GetGCSafeMethodTable();
+    size_t objectSize = methodTable->GetBaseSize();
+    if (methodTable->HasComponentSize())
+    {
+        objectSize +=
+            static_cast<size_t>(static_cast<const ArrayBase*>(this)->GetNumComponents()) *
+            methodTable->RawGetComponentSize();
+    }
+
+    return objectSize;
+}
 
 #endif // __GCENV_OBJECT_H__

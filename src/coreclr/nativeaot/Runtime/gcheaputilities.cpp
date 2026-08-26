@@ -87,6 +87,53 @@ HRESULT GCHeapUtilities::ConfigureAllocationNotification(IGCHeap* gcHeap)
     return S_OK;
 }
 
+namespace
+{
+Object** LOCALGC_CALLCONV GetLoaderAllocatorObjectSlotForGC(MethodTable* methodTable)
+{
+    UNREFERENCED_PARAMETER(methodTable);
+    return nullptr;
+}
+}
+
+HRESULT GCHeapUtilities::ConfigureObjectReferenceEnumeration(IGCHeap* gcHeap)
+{
+    ObjectReferenceEnumerationParameters* parameters =
+        gcHeap->GetObjectReferenceEnumerationParameters();
+    if ((parameters == nullptr) ||
+        (parameters->request_status != ObjectReferenceEnumerationRequestStatus::NotProcessed))
+    {
+        if (parameters != nullptr)
+        {
+            parameters->request_status = ObjectReferenceEnumerationRequestStatus::Unsupported;
+        }
+        return E_FAIL;
+    }
+
+    if (parameters->get_loader_allocator_object_slot != nullptr)
+    {
+        parameters->request_status = ObjectReferenceEnumerationRequestStatus::Unsupported;
+        return E_INVALIDARG;
+    }
+
+    switch (parameters->request)
+    {
+        case ObjectReferenceEnumerationRequest::Disabled:
+            parameters->request_status = ObjectReferenceEnumerationRequestStatus::Accepted;
+            return S_OK;
+
+        case ObjectReferenceEnumerationRequest::Enabled:
+            parameters->get_loader_allocator_object_slot =
+                GetLoaderAllocatorObjectSlotForGC;
+            parameters->request_status = ObjectReferenceEnumerationRequestStatus::Accepted;
+            return S_OK;
+
+        default:
+            parameters->request_status = ObjectReferenceEnumerationRequestStatus::Unsupported;
+            return E_INVALIDARG;
+    }
+}
+
 // Initializes a non-standalone GC. The protocol for initializing a non-standalone GC
 // is similar to loading a standalone one, except that the GC_VersionInfo and
 // GC_Initialize symbols are linked to directory and thus don't need to be loaded.
@@ -110,6 +157,11 @@ HRESULT GCHeapUtilities::InitializeDefaultGC()
     if (initResult == S_OK)
     {
         initResult = ConfigureAllocationNotification(heap);
+    }
+
+    if (initResult == S_OK)
+    {
+        initResult = ConfigureObjectReferenceEnumeration(heap);
     }
 
     if (initResult == S_OK)

@@ -354,6 +354,9 @@ public:
     // Validates and freezes the collector's allocation notification request.
     static HRESULT ConfigureAllocationNotification(IGCHeap* gcHeap, const VersionInfo& version);
 
+    // Validates and completes the collector's object-reference enumeration request.
+    static HRESULT ConfigureObjectReferenceEnumeration(IGCHeap* gcHeap, const VersionInfo& version);
+
     // Returns whether the collector requested exact allocation-complete
     // notifications during startup.
     inline static bool IsAllocationNotificationEnabled()

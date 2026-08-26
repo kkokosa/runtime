@@ -11,13 +11,14 @@
 // The minor version of the IGCHeap interface. Non-breaking changes are required
 // to bump the minor version number. GCs and EEs with minor version number
 // mismatches can still interoperate correctly, with some care.
-#define GC_INTERFACE_MINOR_VERSION 13
+#define GC_INTERFACE_MINOR_VERSION 14
 
 #define GC_WRITE_BARRIER_SHAPE_INTERFACE_MINOR_VERSION 9
 #define GC_WRITE_BARRIER_COMPLETE_STORE_INTERFACE_MINOR_VERSION 10
 #define GC_WRITE_BARRIER_EPOCH_RESET_INTERFACE_MINOR_VERSION 11
 #define GC_WRITE_BARRIER_BULK_SCAN_INTERFACE_MINOR_VERSION 12
 #define GC_ALLOCATION_NOTIFICATION_INTERFACE_MINOR_VERSION 13
+#define GC_OBJECT_REFERENCE_ENUMERATION_INTERFACE_MINOR_VERSION 14
 
 // The major version of the IGCToCLR interface. Breaking changes to this interface
 // require bumps in the major version number.
@@ -32,6 +33,7 @@
 struct ScanContext;
 struct gc_alloc_context;
 class CrawlFrame;
+class MethodTable;
 class Object;
 
 // Callback passed to GcScanRoots.
@@ -186,6 +188,37 @@ struct AllocationNotificationParameters
 
     // Immutable process-lifetime state passed to every callback.
     void* context;
+};
+
+enum class ObjectReferenceEnumerationRequestStatus : uint32_t
+{
+    NotProcessed = 0,
+    Accepted = 1,
+    Unsupported = 2,
+};
+
+enum class ObjectReferenceEnumerationRequest : uint32_t
+{
+    Disabled = 0,
+    Enabled = 1,
+};
+
+// Returns the handle-table slot containing the LoaderAllocator object for a
+// collectible MethodTable. The returned slot is read-only to the caller.
+typedef Object** (LOCALGC_CALLCONV *GetLoaderAllocatorObjectSlot)(
+    MethodTable* method_table);
+
+struct ObjectReferenceEnumerationParameters
+{
+    // The collector initializes this to NotProcessed. The EE writes Accepted
+    // or Unsupported before IGCHeap::Initialize.
+    ObjectReferenceEnumerationRequestStatus request_status;
+
+    // Disabled is the backwards-compatible request.
+    ObjectReferenceEnumerationRequest request;
+
+    // Written by the EE for an accepted Enabled request.
+    alignas(void*) GetLoaderAllocatorObjectSlot get_loader_allocator_object_slot;
 };
 
 // Arguments to GCToEEInterface::StompWriteBarrier
@@ -1238,6 +1271,15 @@ public:
     virtual AllocationNotificationParameters* GetAllocationNotificationParameters()
     {
         static AllocationNotificationParameters parameters = {};
+        return &parameters;
+    }
+
+    // Returns the object-reference enumeration request. The EE calls this only
+    // for GC interface version 5.14 or later. Collectors built from older
+    // source inherit a process-lifetime disabled request.
+    virtual ObjectReferenceEnumerationParameters* GetObjectReferenceEnumerationParameters()
+    {
+        static ObjectReferenceEnumerationParameters parameters = {};
         return &parameters;
     }
 };

@@ -57,10 +57,18 @@ OPTION(CLR_CMAKE_ENABLE_WRITE_BARRIER_STANDARD_ABI_TEST
   "Enable the AMD64 write-barrier standard-ABI validation path" OFF)
 OPTION(CLR_CMAKE_ENABLE_ALLOCATION_NOTIFICATION_TEST
   "Enable the allocation-complete notification validation callback" OFF)
+OPTION(CLR_CMAKE_ENABLE_OBJECT_REFERENCE_ENUMERATION_TEST
+  "Enable object-reference enumeration scan validation" OFF)
 
 if(CLR_CMAKE_ENABLE_WRITE_BARRIER_STANDARD_ABI_TEST)
   if(NOT CLR_CMAKE_TARGET_ARCH_AMD64)
     message(FATAL_ERROR "The write-barrier standard-ABI validation path requires AMD64")
+  endif()
+endif()
+
+if(CLR_CMAKE_ENABLE_OBJECT_REFERENCE_ENUMERATION_TEST)
+  if(NOT CLR_CMAKE_TARGET_WIN32 OR NOT CLR_CMAKE_TARGET_ARCH_AMD64)
+    message(FATAL_ERROR "The object-reference enumeration validation path requires Windows AMD64")
   endif()
 endif()
 
