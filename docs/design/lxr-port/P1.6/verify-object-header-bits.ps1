@@ -14,17 +14,17 @@ if (-not $RepositoryRoot) {
 }
 
 $raw = Join-Path $scriptRoot 'raw'
-$runtime = Import-Csv (Join-Path $raw 'runtime-summary.csv')
-$fullTests = Import-Csv (Join-Path $raw 'full-test-summary.csv')
-$native = Import-Csv (Join-Path $raw 'native-validation-summary.csv')
-$compatibility = Import-Csv (Join-Path $raw 'compatibility-summary.csv')
-$malformed = Import-Csv (Join-Path $raw 'malformed-summary.csv')
-$x86 = Import-Csv (Join-Path $raw 'x86-negotiation.csv')
-$platform = Import-Csv (Join-Path $raw 'platform-summary.csv')
-$identities = Import-Csv (Join-Path $raw 'source-identities.csv')
-$benchmarks = Import-Csv (Join-Path $raw 'benchmark-summary.csv')
-$stateBenchmarks = Import-Csv (Join-Path $raw 'state-lock-hash-benchmark.csv')
-$codegen = Import-Csv (Join-Path $raw 'hot-function-codegen.csv')
+$runtime = @(Import-Csv (Join-Path $raw 'runtime-summary.csv'))
+$fullTests = @(Import-Csv (Join-Path $raw 'full-test-summary.csv'))
+$native = @(Import-Csv (Join-Path $raw 'native-validation-summary.csv'))
+$compatibility = @(Import-Csv (Join-Path $raw 'compatibility-summary.csv'))
+$malformed = @(Import-Csv (Join-Path $raw 'malformed-summary.csv'))
+$x86 = @(Import-Csv (Join-Path $raw 'x86-negotiation.csv'))
+$platform = @(Import-Csv (Join-Path $raw 'platform-summary.csv'))
+$identities = @(Import-Csv (Join-Path $raw 'source-identities.csv'))
+$benchmarks = @(Import-Csv (Join-Path $raw 'benchmark-summary.csv'))
+$stateBenchmarks = @(Import-Csv (Join-Path $raw 'state-lock-hash-benchmark.csv'))
+$codegen = @(Import-Csv (Join-Path $raw 'hot-function-codegen.csv'))
 
 if (($runtime.Count -ne 3) -or
     (@($runtime | Where-Object {
