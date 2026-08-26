@@ -15,6 +15,7 @@
 #include "MethodTable.h"
 #include "ObjectLayout.h"
 #include "MethodTable.inl"
+#include "volatile.h"
 
 uint32_t Array::GetArrayLength()
 {
@@ -42,6 +43,91 @@ void ObjHeader::SetBit(uint32_t uBit)
 void ObjHeader::ClrBit(uint32_t uBit)
 {
     PalInterlockedAnd(&m_uSyncBlockValue, ~uBit);
+}
+
+uint32_t ObjHeader::GetGCReservedBits(uint32_t mask, uint32_t shift)
+{
+#ifdef HOST_64BIT
+    ASSERT(mask != 0);
+    ASSERT(shift < 32);
+    uint32_t value = VolatileLoad(&m_uGCReservedBits);
+    return (value & mask) >> shift;
+#else
+    UNREFERENCED_PARAMETER(mask);
+    UNREFERENCED_PARAMETER(shift);
+    return 0;
+#endif
+}
+
+uint32_t ObjHeader::CompareExchangeGCReservedBits(
+    uint32_t mask,
+    uint32_t shift,
+    uint32_t value,
+    uint32_t comparand)
+{
+#ifdef HOST_64BIT
+    ASSERT(mask != 0);
+    ASSERT(shift < 32);
+    ASSERT((value & ~(mask >> shift)) == 0);
+    ASSERT((comparand & ~(mask >> shift)) == 0);
+
+    uint32_t oldWord = VolatileLoad(&m_uGCReservedBits);
+    while (true)
+    {
+        uint32_t oldValue = (oldWord & mask) >> shift;
+        if (oldValue != comparand)
+        {
+            return oldValue;
+        }
+
+        uint32_t newWord = (oldWord & ~mask) | ((value << shift) & mask);
+        uint32_t observed = static_cast<uint32_t>(PalInterlockedCompareExchange(
+                reinterpret_cast<volatile int32_t*>(&m_uGCReservedBits),
+                static_cast<int32_t>(newWord),
+                static_cast<int32_t>(oldWord)));
+        if (observed == oldWord)
+        {
+            return comparand;
+        }
+        oldWord = observed;
+    }
+#else
+    UNREFERENCED_PARAMETER(mask);
+    UNREFERENCED_PARAMETER(shift);
+    UNREFERENCED_PARAMETER(value);
+    UNREFERENCED_PARAMETER(comparand);
+    return 0;
+#endif
+}
+
+uint32_t ObjHeader::SetGCReservedBits(uint32_t mask, uint32_t shift, uint32_t value)
+{
+#ifdef HOST_64BIT
+    ASSERT(mask != 0);
+    ASSERT(shift < 32);
+    ASSERT((value & ~(mask >> shift)) == 0);
+
+    uint32_t oldWord = VolatileLoad(&m_uGCReservedBits);
+    while (true)
+    {
+        uint32_t oldValue = (oldWord & mask) >> shift;
+        uint32_t newWord = (oldWord & ~mask) | ((value << shift) & mask);
+        uint32_t observed = static_cast<uint32_t>(PalInterlockedCompareExchange(
+            reinterpret_cast<volatile int32_t*>(&m_uGCReservedBits),
+            static_cast<int32_t>(newWord),
+            static_cast<int32_t>(oldWord)));
+        if (observed == oldWord)
+        {
+            return oldValue;
+        }
+        oldWord = observed;
+    }
+#else
+    UNREFERENCED_PARAMETER(mask);
+    UNREFERENCED_PARAMETER(shift);
+    UNREFERENCED_PARAMETER(value);
+    return 0;
+#endif
 }
 
 size_t Object::GetSize()

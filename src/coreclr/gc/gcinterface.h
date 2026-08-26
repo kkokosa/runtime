@@ -11,7 +11,7 @@
 // The minor version of the IGCHeap interface. Non-breaking changes are required
 // to bump the minor version number. GCs and EEs with minor version number
 // mismatches can still interoperate correctly, with some care.
-#define GC_INTERFACE_MINOR_VERSION 14
+#define GC_INTERFACE_MINOR_VERSION 15
 
 #define GC_WRITE_BARRIER_SHAPE_INTERFACE_MINOR_VERSION 9
 #define GC_WRITE_BARRIER_COMPLETE_STORE_INTERFACE_MINOR_VERSION 10
@@ -19,6 +19,8 @@
 #define GC_WRITE_BARRIER_BULK_SCAN_INTERFACE_MINOR_VERSION 12
 #define GC_ALLOCATION_NOTIFICATION_INTERFACE_MINOR_VERSION 13
 #define GC_OBJECT_REFERENCE_ENUMERATION_INTERFACE_MINOR_VERSION 14
+#define GC_OBJECT_HEADER_BITS_INTERFACE_MINOR_VERSION 15
+#define GC_OBJECT_HEADER_BITS_PARAMETERS_VERSION 1
 
 // The major version of the IGCToCLR interface. Breaking changes to this interface
 // require bumps in the major version number.
@@ -219,6 +221,67 @@ struct ObjectReferenceEnumerationParameters
 
     // Written by the EE for an accepted Enabled request.
     alignas(void*) GetLoaderAllocatorObjectSlot get_loader_allocator_object_slot;
+};
+
+enum class ObjectHeaderBitsRequestStatus : uint32_t
+{
+    NotProcessed = 0,
+    Accepted = 1,
+    Unsupported = 2,
+};
+
+enum class ObjectHeaderBitsRequest : uint32_t
+{
+    Disabled = 0,
+    Enabled = 1,
+};
+
+enum class ObjectHeaderBitsProtocol : uint32_t
+{
+    None = 0,
+    ClaimAndPublish = 1,
+};
+
+enum class ObjectHeaderBitsAtomicOperation : uint32_t
+{
+    None = 0,
+    Load = 1 << 0,
+    CompareExchange = 1 << 1,
+    Store = 1 << 2,
+    Wait = 1 << 3,
+};
+
+struct ObjectHeaderBitsParameters
+{
+    // The collector initializes this to NotProcessed. The EE writes Accepted
+    // or Unsupported before IGCHeap::Initialize.
+    ObjectHeaderBitsRequestStatus request_status;
+
+    // Disabled is the backwards-compatible request.
+    ObjectHeaderBitsRequest request;
+
+    // Enabled requests identify the descriptor shape they were built against.
+    uint32_t version;
+    uint32_t size;
+
+    // Collector requirements.
+    uint32_t requested_bit_count;
+    uint32_t requested_state_count;
+    ObjectHeaderBitsProtocol requested_protocol;
+    uint32_t required_atomic_operations;
+
+    // Runtime-selected placement and protocol. The collector initializes all
+    // output fields to zero.
+    int32_t object_byte_offset;
+    uint32_t storage_word_size;
+    uint32_t bit_mask;
+    uint32_t bit_shift;
+    ObjectHeaderBitsProtocol granted_protocol;
+    uint32_t granted_atomic_operations;
+    uint32_t clear_state;
+    uint32_t invalid_state;
+    uint32_t transition_state;
+    uint32_t published_state;
 };
 
 // Arguments to GCToEEInterface::StompWriteBarrier
@@ -1280,6 +1343,15 @@ public:
     virtual ObjectReferenceEnumerationParameters* GetObjectReferenceEnumerationParameters()
     {
         static ObjectReferenceEnumerationParameters parameters = {};
+        return &parameters;
+    }
+
+    // Returns the object-header bit request. The EE calls this only for GC
+    // interface version 5.15 or later. Collectors built from older source
+    // inherit a process-lifetime disabled request.
+    virtual ObjectHeaderBitsParameters* GetObjectHeaderBitsParameters()
+    {
+        static ObjectHeaderBitsParameters parameters = {};
         return &parameters;
     }
 };

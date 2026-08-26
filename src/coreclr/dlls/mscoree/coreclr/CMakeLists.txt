@@ -87,6 +87,19 @@ if (NOT CLR_CMAKE_HOST_ARCH_WASM)
         )
     endif()
 
+    if(CLR_CMAKE_ENABLE_OBJECT_HEADER_BITS_TEST AND CLR_CMAKE_TARGET_WIN32)
+        target_link_options(coreclr PRIVATE
+            "/EXPORT:GC_ObjectHeaderBitsTest_GetParameters"
+            "/EXPORT:GC_ObjectHeaderBitsTest_Load"
+            "/EXPORT:GC_ObjectHeaderBitsTest_CompareExchange"
+            "/EXPORT:GC_ObjectHeaderBitsTest_Set"
+            "/EXPORT:GC_ObjectHeaderBitsTest_LoadRaw"
+            "/EXPORT:GC_ObjectHeaderBitsTest_SetRaw"
+            "/EXPORT:GC_ObjectHeaderBitsTest_GetSyncBlockValue"
+            "/EXPORT:GC_ObjectHeaderBitsTest_GetObjectAddress"
+        )
+    endif()
+
     add_custom_target(coreclr_exports DEPENDS ${EXPORTS_FILE})
     add_custom_target(coreclr_def DEPENDS ${DEF_FILE})
 

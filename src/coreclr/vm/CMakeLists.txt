@@ -1040,6 +1040,12 @@ if(CLR_CMAKE_ENABLE_OBJECT_REFERENCE_ENUMERATION_TEST)
     )
 endif()
 
+if(CLR_CMAKE_ENABLE_OBJECT_HEADER_BITS_TEST)
+    list(APPEND VM_SOURCES_WKS
+        objectheaderbitstest.cpp
+    )
+endif()
+
 list(APPEND VM_HEADERS_WKS
      ${GC_HEADERS_WKS}
 )
@@ -1146,6 +1152,13 @@ if(CLR_CMAKE_ENABLE_OBJECT_REFERENCE_ENUMERATION_TEST)
     target_compile_definitions(vm_gc_wks PRIVATE FEATURE_OBJECT_REFERENCE_ENUMERATION_TEST)
     if(FEATURE_SVR_GC)
         target_compile_definitions(vm_gc_svr PRIVATE FEATURE_OBJECT_REFERENCE_ENUMERATION_TEST)
+    endif()
+endif()
+
+if(CLR_CMAKE_ENABLE_OBJECT_HEADER_BITS_TEST)
+    target_compile_definitions(vm_gc_wks PRIVATE FEATURE_OBJECT_HEADER_BITS_TEST)
+    if(FEATURE_SVR_GC)
+        target_compile_definitions(vm_gc_svr PRIVATE FEATURE_OBJECT_HEADER_BITS_TEST)
     endif()
 endif()
 

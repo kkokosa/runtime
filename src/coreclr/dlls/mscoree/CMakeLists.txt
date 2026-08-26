@@ -34,6 +34,11 @@ else()
     mscorwks_unixexports.src
   )
 endif()
+if(CLR_CMAKE_ENABLE_OBJECT_HEADER_BITS_TEST)
+  list(APPEND DEF_SOURCES
+    mscorwks_objectheaderbitstest_unixexports.src
+  )
+endif()
 if(FEATURE_GDBJIT)
   list(APPEND DEF_SOURCES
     gdbjit_unixexports.src
