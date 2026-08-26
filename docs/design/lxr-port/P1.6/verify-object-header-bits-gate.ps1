@@ -57,6 +57,31 @@ function Invoke-Verifier(
     })
 }
 
+function New-PerturbationTree([string]$Destination) {
+    $paths = @(
+        'docs\design\lxr-port\P1.6',
+        'docs\design\lxr-port\P1.6-gc-reserved-object-header-bits.md',
+        'src\coreclr\gc\gcinterface.h',
+        'src\coreclr\gc\env\gcenv.object.h',
+        'src\coreclr\vm\syncblk.h',
+        'src\coreclr\vm\gcheaputilities.cpp',
+        'src\coreclr\nativeaot\Runtime\ObjectLayout.h',
+        'src\coreclr\nativeaot\Runtime\gcheaputilities.cpp'
+    )
+
+    foreach ($path in $paths) {
+        $source = Join-Path $clean $path
+        $target = Join-Path $Destination $path
+        $targetParent = Split-Path -Parent $target
+        New-Item -ItemType Directory -Path $targetParent -Force | Out-Null
+        if (Test-Path -LiteralPath $source -PathType Container) {
+            Copy-Item -LiteralPath $source -Destination $targetParent -Recurse
+        } else {
+            Copy-Item -LiteralPath $source -Destination $target
+        }
+    }
+}
+
 git -C $RepositoryRoot diff --quiet HEAD
 if ($LASTEXITCODE -ne 0) {
     throw 'The archive gate requires a clean committed worktree.'
@@ -78,7 +103,7 @@ if ($LASTEXITCODE -ne 0) {
 Invoke-Verifier 'clean' $clean $true ''
 
 $missingRuntimeRow = Join-Path $runRoot 'missing-runtime-row'
-Copy-Item -LiteralPath $clean -Destination $missingRuntimeRow -Recurse
+New-PerturbationTree $missingRuntimeRow
 $runtimePath = Join-Path $missingRuntimeRow (
     'docs\design\lxr-port\P1.6\raw\runtime-summary.csv')
 $runtimeRows = @(Import-Csv $runtimePath)
@@ -88,7 +113,7 @@ Invoke-Verifier 'missing-runtime-row' $missingRuntimeRow $false (
     'Runtime scenario evidence is incomplete')
 
 $changedCodegen = Join-Path $runRoot 'changed-codegen'
-Copy-Item -LiteralPath $clean -Destination $changedCodegen -Recurse
+New-PerturbationTree $changedCodegen
 $codegenPath = Join-Path $changedCodegen (
     'docs\design\lxr-port\P1.6\raw\hot-function-codegen.csv')
 $codegenRows = @(Import-Csv $codegenPath)
@@ -98,7 +123,7 @@ Invoke-Verifier 'changed-codegen' $changedCodegen $false (
     'Hot-function codegen changed')
 
 $x86FalsePositive = Join-Path $runRoot 'x86-false-positive'
-Copy-Item -LiteralPath $clean -Destination $x86FalsePositive -Recurse
+New-PerturbationTree $x86FalsePositive
 $x86Path = Join-Path $x86FalsePositive (
     'docs\design\lxr-port\P1.6\raw\x86-negotiation.csv')
 $x86Rows = @(Import-Csv $x86Path)
