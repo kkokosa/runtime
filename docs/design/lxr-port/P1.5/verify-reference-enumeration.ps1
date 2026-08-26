@@ -205,6 +205,40 @@ Require-Pattern (
     'docs\design\lxr-port\P1.5\' +
     'run-reference-enumeration-scenarios.ps1') (
     'status --porcelain -- @sourceScopes')
+Require-Pattern (
+    'docs\design\lxr-port\P1.5\' +
+    'verify-reference-enumeration-gate.ps1') (
+    "[Guid]::NewGuid().ToString('N')")
+Require-Pattern (
+    'docs\design\lxr-port\P1.5\' +
+    'verify-reference-enumeration-gate.ps1') (
+    'GATE_OUTPUT_CLEANED: $runRoot')
+Require-Pattern (
+    'docs\design\lxr-port\P1.5\' +
+    'verify-reference-enumeration-gate.ps1') (
+    'GATE_OUTPUT_PRESERVED: $runRoot')
+Require-Pattern (
+    'docs\design\lxr-port\P1.5\' +
+    'verify-reference-enumeration-gate.ps1') '} finally {'
+Forbid-Pattern (
+    'docs\design\lxr-port\P1.5\' +
+    'verify-reference-enumeration-gate.ps1') (
+    'artifacts\p15-reference-enumeration-gate')
+Forbid-Pattern (
+    'docs\design\lxr-port\P1.5\' +
+    'verify-reference-enumeration-gate.ps1') (
+    'Remove-Item -LiteralPath $OutputDirectory')
+Require-Pattern (
+    'docs\design\lxr-port\P1.5\' +
+    'verify-reference-enumeration-gate-rerun.ps1') (
+    'foreach ($run in 1..2)')
+Require-Pattern (
+    'docs\design\lxr-port\P1.5\' +
+    'verify-reference-enumeration-gate-rerun.ps1') (
+    'two default gate runs used two unique temporary directories')
+Forbid-Pattern (
+    'docs\design\lxr-port\P1.5\' +
+    'verify-reference-enumeration-gate-rerun.ps1') '-OutputDirectory'
 
 $header = Get-Content -LiteralPath (
     Join-Path $RepositoryRoot 'src\coreclr\gc\gcinterface.h') -Raw

@@ -13,24 +13,41 @@ $scriptRoot = Split-Path -Parent $MyInvocation.MyCommand.Path
 if (-not $RepositoryRoot) {
     $RepositoryRoot = (Resolve-Path (Join-Path $scriptRoot '..\..\..\..')).Path
 }
-if (-not $OutputDirectory) {
-    $OutputDirectory = Join-Path $RepositoryRoot (
-        'artifacts\p15-reference-enumeration-gate')
+$preserveOutput = -not [string]::IsNullOrWhiteSpace($OutputDirectory)
+$runName = (
+    'p15-reference-enumeration-gate-' +
+    [Guid]::NewGuid().ToString('N'))
+if ($preserveOutput) {
+    $outputParent = [IO.Path]::GetFullPath($OutputDirectory)
+    if (Test-Path -LiteralPath $outputParent -PathType Leaf) {
+        throw "Explicit output path is a file: $outputParent"
+    }
+    New-Item -ItemType Directory -Path $outputParent -Force | Out-Null
+    $runRoot = Join-Path $outputParent $runName
+} else {
+    $runRoot = Join-Path ([IO.Path]::GetTempPath()) $runName
+}
+if (Test-Path -LiteralPath $runRoot) {
+    throw "Unique gate output already exists: $runRoot"
 }
 
-$archive = Join-Path $OutputDirectory 'source.tar'
-$cleanRoot = Join-Path $OutputDirectory 'clean'
-$controlRoot = Join-Path $OutputDirectory 'missing-control-row'
-$scenarioRoot = Join-Path $OutputDirectory 'missing-scenario-row'
-$collectionRoot = Join-Path $OutputDirectory 'wrong-induced-count'
+$createdRunRoot = $false
+$verificationSucceeded = $false
+try {
+    New-Item -ItemType Directory -Path $runRoot | Out-Null
+    $createdRunRoot = $true
+    Write-Host "GATE_OUTPUT_DIRECTORY: $runRoot"
 
-if (Test-Path -LiteralPath $OutputDirectory) {
-    Remove-Item -LiteralPath $OutputDirectory -Recurse -Force
-}
-New-Item -ItemType Directory -Path $cleanRoot -Force | Out-Null
-New-Item -ItemType Directory -Path $controlRoot -Force | Out-Null
-New-Item -ItemType Directory -Path $scenarioRoot -Force | Out-Null
-New-Item -ItemType Directory -Path $collectionRoot -Force | Out-Null
+    $archive = Join-Path $runRoot 'source.tar'
+    $cleanRoot = Join-Path $runRoot 'clean'
+    $controlRoot = Join-Path $runRoot 'missing-control-row'
+    $scenarioRoot = Join-Path $runRoot 'missing-scenario-row'
+    $collectionRoot = Join-Path $runRoot 'wrong-induced-count'
+
+    New-Item -ItemType Directory -Path $cleanRoot | Out-Null
+    New-Item -ItemType Directory -Path $controlRoot | Out-Null
+    New-Item -ItemType Directory -Path $scenarioRoot | Out-Null
+    New-Item -ItemType Directory -Path $collectionRoot | Out-Null
 
 git -C $RepositoryRoot archive --format=tar --output=$archive $Revision
 if ($LASTEXITCODE -ne 0) {
@@ -77,7 +94,7 @@ if ($perturbedLines.Count -ne 9) {
     throw 'Control perturbation did not delete exactly one row.'
 }
 
-$controlLog = Join-Path $OutputDirectory 'missing-control-row.log'
+$controlLog = Join-Path $runRoot 'missing-control-row.log'
 & $powerShell -NoProfile -File $controlVerifier `
     -RepositoryRoot $controlRoot *> $controlLog
 $controlExitCode = $LASTEXITCODE
@@ -99,7 +116,7 @@ if ($perturbedLines.Count -ne 90) {
     throw 'Scenario perturbation did not delete exactly one row.'
 }
 
-$scenarioLog = Join-Path $OutputDirectory 'missing-scenario-row.log'
+$scenarioLog = Join-Path $runRoot 'missing-scenario-row.log'
 & $powerShell -NoProfile -File $scenarioVerifier `
     -RepositoryRoot $scenarioRoot *> $scenarioLog
 $scenarioExitCode = $LASTEXITCODE
@@ -140,7 +157,7 @@ if ($differenceCount -ne 1) {
     throw "Induced-count perturbation changed $differenceCount fields; expected one."
 }
 
-$collectionLog = Join-Path $OutputDirectory 'wrong-induced-count.log'
+$collectionLog = Join-Path $runRoot 'wrong-induced-count.log'
 & $powerShell -NoProfile -File $collectionVerifier `
     -RepositoryRoot $collectionRoot *> $collectionLog
 $collectionExitCode = $LASTEXITCODE
@@ -155,4 +172,25 @@ Write-Host 'PASS: clean archive accepted'
 Write-Host 'PASS: exactly one deleted control row rejected'
 Write-Host 'PASS: exactly one deleted scenario invocation row rejected'
 Write-Host 'PASS: exactly one altered induced count rejected'
-$global:LASTEXITCODE = 0
+$verificationSucceeded = $true
+} finally {
+    if ($createdRunRoot -and -not $preserveOutput) {
+        try {
+            if (Test-Path -LiteralPath $runRoot) {
+                Remove-Item -LiteralPath $runRoot -Recurse -Force `
+                    -ErrorAction Stop
+            }
+            Write-Host "GATE_OUTPUT_CLEANED: $runRoot"
+        } catch {
+            Write-Warning (
+                "Unable to clean temporary gate output '$runRoot': " +
+                $_.Exception.Message)
+        }
+    } elseif ($createdRunRoot) {
+        Write-Host "GATE_OUTPUT_PRESERVED: $runRoot"
+    }
+}
+
+if ($verificationSucceeded) {
+    $global:LASTEXITCODE = 0
+}
