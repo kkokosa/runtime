@@ -89,7 +89,7 @@ foreach ($path in @(
     Confirm (Test-Path -LiteralPath $path -PathType Leaf) "Missing shipped artifact $path"
 }
 
-Require-Pattern 'src\coreclr\gc\gcinterface.h' 'GC_INTERFACE_MINOR_VERSION 14'
+Require-Pattern 'src\coreclr\gc\gcinterface.h' 'GC_INTERFACE_MINOR_VERSION 15'
 Require-Pattern 'src\coreclr\gc\gcinterface.h' 'GC_ALLOCATION_NOTIFICATION_INTERFACE_MINOR_VERSION 13'
 Require-Pattern 'src\coreclr\gc\gcinterface.h' 'AllocationCompleteCallback'
 Require-Pattern 'src\coreclr\gc\gcinterface.h' 'GetAllocationNotificationParameters()'

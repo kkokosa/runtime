@@ -137,7 +137,7 @@ foreach ($path in @(
 }
 
 Require-Pattern 'src\coreclr\gc\gcinterface.h' (
-    '#define GC_INTERFACE_MINOR_VERSION 14')
+    '#define GC_INTERFACE_MINOR_VERSION 15')
 Require-Pattern 'src\coreclr\gc\gcinterface.h' (
     '#define GC_OBJECT_REFERENCE_ENUMERATION_INTERFACE_MINOR_VERSION 14')
 Require-Pattern 'src\coreclr\gc\gcinterface.h' (
