@@ -44,7 +44,8 @@ function Invoke-Verifier(
             ($text -notmatch 'PASS: P1.6 object-header bit evidence')) {
             throw "Clean archive verification failed. See $log."
         }
-    } elseif (($exitCode -eq 0) -or ($text -notmatch $ExpectedFailure)) {
+    } elseif (($exitCode -eq 0) -or
+        ($text -notmatch [regex]::Escape($ExpectedFailure))) {
         throw "Perturbation '$Name' did not fail for '$ExpectedFailure'. See $log."
     }
 
