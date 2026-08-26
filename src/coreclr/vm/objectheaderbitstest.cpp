@@ -16,6 +16,8 @@
 
 namespace
 {
+alignas(ObjHeader) uint8_t g_object_header_bits_test_storage[sizeof(ObjHeader)];
+
 ObjectHeaderBitsParameters* GetParameters()
 {
     ObjectHeaderBitsParameters* parameters =
@@ -34,6 +36,11 @@ Object* GetObject(void* handle)
 {
     OBJECTREF object = ObjectFromHandle(reinterpret_cast<OBJECTHANDLE>(handle));
     return OBJECTREFToObject(object);
+}
+
+ObjHeader* GetSyntheticHeader()
+{
+    return reinterpret_cast<ObjHeader*>(g_object_header_bits_test_storage);
 }
 }
 
@@ -100,6 +107,34 @@ extern "C" DLLEXPORT uint32_t GC_ObjectHeaderBitsTest_Set(
     }
 
     return GetObject(handle)->GetHeader()->SetGCReservedBits(
+        parameters->bit_mask,
+        parameters->bit_shift,
+        value);
+}
+
+extern "C" DLLEXPORT uint32_t GC_ObjectHeaderBitsTest_SetSynthetic(uint32_t value)
+{
+    ObjectHeaderBitsParameters* parameters = GetParameters();
+    if (parameters == nullptr)
+    {
+        return UINT32_MAX;
+    }
+
+    return GetSyntheticHeader()->SetGCReservedBits(
+        parameters->bit_mask,
+        parameters->bit_shift,
+        value);
+}
+
+extern "C" DLLEXPORT uint32_t GC_ObjectHeaderBitsTest_WaitSynthetic(uint32_t value)
+{
+    ObjectHeaderBitsParameters* parameters = GetParameters();
+    if (parameters == nullptr)
+    {
+        return UINT32_MAX;
+    }
+
+    return GetSyntheticHeader()->WaitWhileGCReservedBits(
         parameters->bit_mask,
         parameters->bit_shift,
         value);

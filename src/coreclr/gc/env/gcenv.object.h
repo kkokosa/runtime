@@ -48,7 +48,7 @@ public:
 #ifdef HOST_64BIT
         assert(mask != 0);
         assert(shift < 32);
-        uint32_t value = VolatileLoad(&m_uGCReservedBits);
+        uint32_t value = Interlocked::CompareExchange(&m_uGCReservedBits, 0u, 0u);
         return (value & mask) >> shift;
 #else
         UNREFERENCED_PARAMETER(mask);
@@ -69,7 +69,7 @@ public:
         assert((value & ~(mask >> shift)) == 0);
         assert((comparand & ~(mask >> shift)) == 0);
 
-        uint32_t oldWord = VolatileLoad(&m_uGCReservedBits);
+        uint32_t oldWord = Interlocked::CompareExchange(&m_uGCReservedBits, 0u, 0u);
         while (true)
         {
             uint32_t oldValue = (oldWord & mask) >> shift;
@@ -103,7 +103,7 @@ public:
         assert(shift < 32);
         assert((value & ~(mask >> shift)) == 0);
 
-        uint32_t oldWord = VolatileLoad(&m_uGCReservedBits);
+        uint32_t oldWord = Interlocked::CompareExchange(&m_uGCReservedBits, 0u, 0u);
         while (true)
         {
             uint32_t oldValue = (oldWord & mask) >> shift;
@@ -128,10 +128,18 @@ public:
     {
 #ifdef HOST_64BIT
         uint32_t switchCount = 0;
+        uint32_t iteration = 0;
         uint32_t current;
         while ((current = GetGCReservedBits(mask, shift)) == value)
         {
-            GCToOSInterface::YieldThread(++switchCount);
+            if ((++iteration % 1024) != 0)
+            {
+                YieldProcessor();
+            }
+            else
+            {
+                GCToOSInterface::YieldThread(++switchCount);
+            }
         }
         return current;
 #else

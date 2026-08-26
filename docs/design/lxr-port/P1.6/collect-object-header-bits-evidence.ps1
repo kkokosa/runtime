@@ -29,22 +29,48 @@ function Read-Match(
     return $match
 }
 
-$runtimeRows = foreach ($item in @(
-    @('Workstation', 'p1.6-runtime-workstation-reviewed.log', 'none'),
-    @('Server', 'p1.6-runtime-server-reviewed.log', 'none'),
-    @('Workstation', 'p1.6-runtime-gcstress0xc-reviewed.log', '0xC')
-)) {
+$runtimeInputs = @(
+    @('Workstation', 'p1.6-seqcst-reuse-wks.log', 'none', 'linked'),
+    @('Server', 'p1.6-seqcst-reuse-server.log', 'none', 'linked'),
+    @('Workstation', 'p1.6-seqcst-reuse-gcstress.log', '0xC', 'linked'),
+    @('Workstation', 'p1.6-seqcst-standalone.log', 'none', 'standalone')
+)
+$runtimeRows = foreach ($item in $runtimeInputs) {
     $path = Join-Path $artifacts $item[1]
     $match = Read-Match $path '(\d+) object-header runtime checks passed'
     [pscustomobject][ordered]@{
         gc_mode = $item[0]
         gc_stress = $item[2]
+        gc_linkage = $item[3]
         checks = [int]$match.Groups[1].Value
         result = 'PASS'
         evidence = $item[1]
     }
 }
 $runtimeRows | Export-Csv (Join-Path $raw 'runtime-summary.csv') -NoTypeInformation
+
+$reuseRows = foreach ($item in $runtimeInputs) {
+    $path = Join-Path $artifacts $item[1]
+    $text = Get-Content -LiteralPath $path -Raw
+    $matches = @([regex]::Matches(
+        $text,
+        'P16_REUSE=(Small|Large|Pinned);OBSERVED=([01]);BOUND=(\d+)'))
+    if ($matches.Count -ne 3) {
+        throw "Reuse evidence is incomplete in $path"
+    }
+    foreach ($match in $matches) {
+        [pscustomobject][ordered]@{
+            gc_mode = $item[0]
+            gc_stress = $item[2]
+            gc_linkage = $item[3]
+            heap = $match.Groups[1].Value
+            observed = [int]$match.Groups[2].Value
+            bound = [int]$match.Groups[3].Value
+            evidence = $item[1]
+        }
+    }
+}
+$reuseRows | Export-Csv (Join-Path $raw 'reuse-summary.csv') -NoTypeInformation
 
 $fullTestLog = Join-Path $artifacts 'p1.6-full-tests-run.log'
 $fullTestMatch = Read-Match $fullTestLog (
@@ -61,12 +87,13 @@ $fullTestMatch = Read-Match $fullTestLog (
 } | Export-Csv (Join-Path $raw 'full-test-summary.csv') -NoTypeInformation
 
 $nativeRows = foreach ($item in @(
-    @('x64', 'p1.6-native-x64-final.log'),
-    @('x86', 'p1.6-native-x86.log'),
-    @('linux-x64', 'p1.6-native-linux-x64.log')
+    @('x64', 'p1.6-seqcst-native-x64-2.log', '(\d+)/(\d+) object-header bit checks passed'),
+    @('x86', 'p1.6-seqcst-native-x86.log', '(\d+)/(\d+) object-header bit checks passed'),
+    @('linux-x64', 'p1.6-seqcst-native-linux.log', '(\d+)/(\d+) object-header bit checks passed'),
+    @('nativeaot-x64', 'p1.6-nativeaot-validation-driver-2.log', '(\d+)/(\d+) NativeAOT object-header bit checks passed')
 )) {
     $path = Join-Path $artifacts $item[1]
-    $match = Read-Match $path '(\d+)/(\d+) object-header bit checks passed'
+    $match = Read-Match $path $item[2]
     [pscustomobject][ordered]@{
         architecture = $item[0]
         passed = [int]$match.Groups[1].Value
@@ -85,6 +112,16 @@ Copy-Item -LiteralPath (
     -Destination (Join-Path $raw 'malformed-summary.csv') -Force
 Copy-Item -LiteralPath (Join-Path $artifacts 'p1.6-x86-negotiation.csv') `
     -Destination (Join-Path $raw 'x86-negotiation.csv') -Force
+
+$controlMatch = Read-Match (
+    Join-Path $artifacts 'p1.6-seqcst-controls.log') (
+    '(\d+)/(\d+) object-header bit controls failed as expected')
+[pscustomobject][ordered]@{
+    passed = [int]$controlMatch.Groups[1].Value
+    total = [int]$controlMatch.Groups[2].Value
+    result = 'PASS'
+    evidence = 'p1.6-seqcst-controls.log'
+} | Export-Csv (Join-Path $raw 'control-summary.csv') -NoTypeInformation
 
 $platformRows = @(
     [pscustomobject][ordered]@{
@@ -113,9 +150,9 @@ $platformRows = @(
     },
     [pscustomobject][ordered]@{
         platform = 'NativeAOT x64'
-        scope = 'Debug/Checked/Release runtime compilation'
+        scope = 'Debug/Checked/Release runtime compilation and ObjHeader atomic execution'
         result = 'PASS'
-        limitation = 'No separate NativeAOT application execution.'
+        limitation = ''
     },
     [pscustomobject][ordered]@{
         platform = 'DAC/cDAC'
@@ -133,15 +170,51 @@ $platformRows = @(
 $platformRows | Export-Csv (Join-Path $raw 'platform-summary.csv') -NoTypeInformation
 
 $identitySources = @(
-    'src\coreclr\gc\gcinterface.h',
-    'src\coreclr\gc\env\gcenv.object.h',
-    'src\coreclr\vm\syncblk.h',
-    'src\coreclr\vm\gcheaputilities.cpp',
-    'src\coreclr\nativeaot\Runtime\ObjectLayout.h',
-    'src\coreclr\nativeaot\Runtime\gcheaputilities.cpp',
+    'docs\design\lxr-port\P1.4\verify-allocation-notification.ps1',
+    'docs\design\lxr-port\P1.5\reference-enumeration-validation.cpp',
+    'docs\design\lxr-port\P1.5\verify-reference-enumeration.ps1',
     'docs\design\lxr-port\P1.6-gc-reserved-object-header-bits.md',
+    'docs\design\lxr-port\P1.6\collect-object-header-bits-evidence.ps1',
+    'docs\design\lxr-port\P1.6\lock-hash-benchmark\Program.cs',
+    'docs\design\lxr-port\P1.6\lock-hash-benchmark\lock-hash-benchmark.csproj',
+    'docs\design\lxr-port\P1.6\nativeaot-object-header-bits-validation.cpp',
     'docs\design\lxr-port\P1.6\object-header-bits-validation.cpp',
-    'docs\design\lxr-port\P1.6\runtime-smoke\Program.cs'
+    'docs\design\lxr-port\P1.6\run-object-header-bits-compatibility.ps1',
+    'docs\design\lxr-port\P1.6\run-object-header-bits-malformed.ps1',
+    'docs\design\lxr-port\P1.6\run-object-header-bits-runtime.ps1',
+    'docs\design\lxr-port\P1.6\run-object-header-bits-validation.ps1',
+    'docs\design\lxr-port\P1.6\run-nativeaot-object-header-bits-validation.ps1',
+    'docs\design\lxr-port\P1.6\runtime-smoke\Program.cs',
+    'docs\design\lxr-port\P1.6\runtime-smoke\runtime-smoke.csproj',
+    'docs\design\lxr-port\P1.6\startup-smoke\Program.cs',
+    'docs\design\lxr-port\P1.6\startup-smoke\startup-smoke.csproj',
+    'docs\design\lxr-port\P1.6\verify-object-header-bits-controls.ps1',
+    'docs\design\lxr-port\P1.6\verify-object-header-bits-gate.ps1',
+    'docs\design\lxr-port\P1.6\verify-object-header-bits.ps1',
+    'docs\design\lxr-port\README.md',
+    'src\coreclr\CMakeLists.txt',
+    'src\coreclr\dlls\mscoree\CMakeLists.txt',
+    'src\coreclr\dlls\mscoree\coreclr\CMakeLists.txt',
+    'src\coreclr\dlls\mscoree\mscorwks_objectheaderbitstest_unixexports.src',
+    'src\coreclr\gc\CMakeLists.txt',
+    'src\coreclr\gc\env\gcenv.object.h',
+    'src\coreclr\gc\gcconfig.h',
+    'src\coreclr\gc\gcimpl.h',
+    'src\coreclr\gc\gcinterface.h',
+    'src\coreclr\gc\interface.cpp',
+    'src\coreclr\nativeaot\Runtime\ObjectLayout.cpp',
+    'src\coreclr\nativeaot\Runtime\ObjectLayout.h',
+    'src\coreclr\nativeaot\Runtime\clrgc.enabled.cpp',
+    'src\coreclr\nativeaot\Runtime\gcheaputilities.cpp',
+    'src\coreclr\nativeaot\Runtime\gcheaputilities.h',
+    'src\coreclr\vm\CMakeLists.txt',
+    'src\coreclr\vm\gcheaputilities.cpp',
+    'src\coreclr\vm\gcheaputilities.h',
+    'src\coreclr\vm\object.h',
+    'src\coreclr\vm\objectheaderbitstest.cpp',
+    'src\coreclr\vm\syncblk.cpp',
+    'src\coreclr\vm\syncblk.h',
+    'src\coreclr\vm\wks\CMakeLists.txt'
 )
 $productCommit = (git -C $RepositoryRoot rev-parse HEAD).Trim()
 $identityRows = foreach ($source in $identitySources) {
@@ -228,7 +301,7 @@ foreach ($file in $benchmarkClasses) {
 $benchmarkRows | Export-Csv (Join-Path $raw 'benchmark-summary.csv') -NoTypeInformation
 
 $stateBenchmark = Join-Path $artifacts (
-    'p16-benchmark-states-final\results\P16.StateLockHashBenchmarks-report.csv')
+    'p16-benchmark-seqcst-states\results\P16.StateLockHashBenchmarks-report.csv')
 Copy-Item $stateBenchmark (Join-Path $raw 'state-lock-hash-benchmark.csv') -Force
 
 Copy-Item (Join-Path $artifacts 'p1.6-binary-identity.csv') `

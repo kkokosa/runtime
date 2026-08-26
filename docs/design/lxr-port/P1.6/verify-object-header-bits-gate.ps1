@@ -59,14 +59,35 @@ function Invoke-Verifier(
 
 function New-PerturbationTree([string]$Destination) {
     $paths = @(
+        'docs\design\lxr-port\P1.4\verify-allocation-notification.ps1',
+        'docs\design\lxr-port\P1.5\reference-enumeration-validation.cpp',
+        'docs\design\lxr-port\P1.5\verify-reference-enumeration.ps1',
         'docs\design\lxr-port\P1.6',
         'docs\design\lxr-port\P1.6-gc-reserved-object-header-bits.md',
-        'src\coreclr\gc\gcinterface.h',
+        'docs\design\lxr-port\README.md',
+        'src\coreclr\CMakeLists.txt',
+        'src\coreclr\dlls\mscoree\CMakeLists.txt',
+        'src\coreclr\dlls\mscoree\coreclr\CMakeLists.txt',
+        'src\coreclr\dlls\mscoree\mscorwks_objectheaderbitstest_unixexports.src',
+        'src\coreclr\gc\CMakeLists.txt',
         'src\coreclr\gc\env\gcenv.object.h',
-        'src\coreclr\vm\syncblk.h',
-        'src\coreclr\vm\gcheaputilities.cpp',
+        'src\coreclr\gc\gcconfig.h',
+        'src\coreclr\gc\gcimpl.h',
+        'src\coreclr\gc\gcinterface.h',
+        'src\coreclr\gc\interface.cpp',
+        'src\coreclr\nativeaot\Runtime\ObjectLayout.cpp',
         'src\coreclr\nativeaot\Runtime\ObjectLayout.h',
-        'src\coreclr\nativeaot\Runtime\gcheaputilities.cpp'
+        'src\coreclr\nativeaot\Runtime\clrgc.enabled.cpp',
+        'src\coreclr\nativeaot\Runtime\gcheaputilities.cpp',
+        'src\coreclr\nativeaot\Runtime\gcheaputilities.h',
+        'src\coreclr\vm\CMakeLists.txt',
+        'src\coreclr\vm\gcheaputilities.cpp',
+        'src\coreclr\vm\gcheaputilities.h',
+        'src\coreclr\vm\object.h',
+        'src\coreclr\vm\objectheaderbitstest.cpp',
+        'src\coreclr\vm\syncblk.cpp',
+        'src\coreclr\vm\syncblk.h',
+        'src\coreclr\vm\wks\CMakeLists.txt'
     )
 
     foreach ($path in $paths) {
@@ -132,7 +153,42 @@ $x86Rows | Export-Csv $x86Path -NoTypeInformation
 Invoke-Verifier 'x86-false-positive' $x86FalsePositive $false (
     'x86 fail-closed evidence is incomplete')
 
+$missingIdentityRow = Join-Path $runRoot 'missing-identity-row'
+New-PerturbationTree $missingIdentityRow
+$identityPath = Join-Path $missingIdentityRow (
+    'docs\design\lxr-port\P1.6\raw\source-identities.csv')
+$identityRows = @(Import-Csv $identityPath)
+$identityRows[0..($identityRows.Count - 2)] |
+    Export-Csv $identityPath -NoTypeInformation
+Invoke-Verifier 'missing-identity-row' $missingIdentityRow $false (
+    'Identity manifest path set mismatch')
+
+$changedImplementation = Join-Path $runRoot 'changed-implementation'
+New-PerturbationTree $changedImplementation
+$implementationPath = Join-Path $changedImplementation (
+    'src\coreclr\nativeaot\Runtime\ObjectLayout.cpp')
+$implementationText = Get-Content -LiteralPath $implementationPath -Raw
+$seqCstLoad = @'
+    uint32_t value = static_cast<uint32_t>(PalInterlockedCompareExchange(
+        reinterpret_cast<volatile int32_t*>(&m_uGCReservedBits),
+        0,
+        0));
+'@
+$plainLoad = @'
+    uint32_t value = m_uGCReservedBits;
+'@
+$implementationMatches = [regex]::Matches(
+    $implementationText,
+    [regex]::Escape($seqCstLoad)).Count
+if ($implementationMatches -ne 1) {
+    throw "SeqCst implementation control matched $implementationMatches sites; expected one."
+}
+Set-Content -LiteralPath $implementationPath -Value (
+    $implementationText.Replace($seqCstLoad, $plainLoad)) -NoNewline
+Invoke-Verifier 'changed-implementation' $changedImplementation $false (
+    'Identity mismatch: src\coreclr\nativeaot\Runtime\ObjectLayout.cpp')
+
 $summary | Export-Csv (Join-Path $runRoot 'gate-summary.csv') -NoTypeInformation
-Write-Host "PASS: exact archive and 3 perturbation controls"
+Write-Host "PASS: exact archive and 5 perturbation controls"
 Write-Host "Output: $runRoot"
 exit 0

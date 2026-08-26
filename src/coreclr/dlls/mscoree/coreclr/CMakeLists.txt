@@ -93,6 +93,8 @@ if (NOT CLR_CMAKE_HOST_ARCH_WASM)
             "/EXPORT:GC_ObjectHeaderBitsTest_Load"
             "/EXPORT:GC_ObjectHeaderBitsTest_CompareExchange"
             "/EXPORT:GC_ObjectHeaderBitsTest_Set"
+            "/EXPORT:GC_ObjectHeaderBitsTest_SetSynthetic"
+            "/EXPORT:GC_ObjectHeaderBitsTest_WaitSynthetic"
             "/EXPORT:GC_ObjectHeaderBitsTest_LoadRaw"
             "/EXPORT:GC_ObjectHeaderBitsTest_SetRaw"
             "/EXPORT:GC_ObjectHeaderBitsTest_GetSyncBlockValue"

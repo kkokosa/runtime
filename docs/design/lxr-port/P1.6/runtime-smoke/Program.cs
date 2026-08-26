@@ -2,7 +2,9 @@
 // The .NET Foundation licenses this file to you under the MIT license.
 
 using System;
+using System.Diagnostics;
 using System.Reflection;
+using System.Runtime;
 using System.Runtime.CompilerServices;
 using System.Runtime.InteropServices;
 using System.Runtime.Loader;
@@ -16,6 +18,7 @@ internal static class Program
     private static int s_checks;
     private static int s_finalizationCount;
     private static int s_clearControlApplied;
+    private static int s_reuseControlApplied;
 
     private static int Main()
     {
@@ -31,9 +34,11 @@ internal static class Program
         Check(parameters.Size == (uint)Marshal.SizeOf<ObjectHeaderBitsParameters>(), "descriptor size");
         Check(parameters.RequestedBitCount == 2, "requested bit count");
         Check(parameters.RequestedStateCount == 3, "requested state count");
+        Check(parameters.RequiredMemoryOrder == 1, "required SeqCst order");
         Check(parameters.ObjectByteOffset == -8, "object byte offset");
         Check(parameters.StorageWordSize == sizeof(uint), "storage word size");
         Check(parameters.BitMask == StateMask, "state mask");
+        Check(parameters.GrantedMemoryOrder == 1, "granted SeqCst order");
         Check(parameters.ClearState == 0, "clear state");
         Check(parameters.InvalidState == 1, "invalid state");
         Check(parameters.TransitionState == 2, "transition state");
@@ -63,6 +68,7 @@ internal static class Program
         ExerciseFinalizationBits(hooks);
         ExercisePinnedCompaction(hooks);
         ExerciseCollectible(hooks);
+        ExerciseRecycledAllocationClearing(hooks);
 
         Console.WriteLine($"{s_checks} object-header runtime checks passed");
         return 100;
@@ -206,27 +212,125 @@ internal static class Program
 
     private static void ExercisePublication(NativeHooks hooks)
     {
-        object value = new();
-        using Handle handle = new(value);
         int payload = 0;
-        hooks.Set(handle, 2);
+        hooks.SetSynthetic(2);
 
         Task waiter = Task.Run(
             () =>
             {
-                while (hooks.Load(handle) == 2)
-                {
-                    Thread.Yield();
-                }
+                Check(hooks.WaitSynthetic(2) == 3, "wait observes published state");
                 Check(Volatile.Read(ref payload) == 42, "publication exposes payload");
             });
 
         Volatile.Write(ref payload, 42);
-        Check(hooks.CompareExchange(handle, 3, 2) == 2, "transition publishes");
+        Check(hooks.SetSynthetic(3) == 2, "transition publishes");
         waiter.Wait();
-        Check(hooks.Load(handle) == 3, "publication state observed");
-        hooks.SetRaw(handle, 0);
+        Check(hooks.SetSynthetic(0) == 3, "publication state observed");
     }
+
+    private enum ReuseHeap
+    {
+        Small,
+        Large,
+        Pinned,
+    }
+
+    private static void ExerciseRecycledAllocationClearing(NativeHooks hooks)
+    {
+        foreach (ReuseHeap heap in Enum.GetValues<ReuseHeap>())
+        {
+            bool observed = ObserveRecycledAllocation(hooks, heap);
+            int bound = GetReuseAttemptsPerCycle(heap) * 8;
+            Console.WriteLine(
+                $"P16_REUSE={heap};OBSERVED={(observed ? 1 : 0)};BOUND={bound}");
+            if (heap != ReuseHeap.Small)
+            {
+                Check(observed, $"{heap} allocation reuses marked address");
+            }
+        }
+    }
+
+    private static bool ObserveRecycledAllocation(NativeHooks hooks, ReuseHeap heap)
+    {
+        nuint markedAddress = AllocateMarkedAndRelease(hooks, heap);
+        int attemptsPerCycle = GetReuseAttemptsPerCycle(heap);
+
+        for (int cycle = 0; cycle < 8; cycle++)
+        {
+            if (heap == ReuseHeap.Large)
+            {
+                GCSettings.LargeObjectHeapCompactionMode =
+                    GCLargeObjectHeapCompactionMode.CompactOnce;
+            }
+            GC.Collect(2, GCCollectionMode.Forced, blocking: true, compacting: true);
+            GC.WaitForPendingFinalizers();
+
+            for (int attempt = 0; attempt < attemptsPerCycle; attempt++)
+            {
+                if (AllocateAndCheckForReuse(hooks, heap, markedAddress))
+                {
+                    return true;
+                }
+            }
+        }
+
+        return false;
+    }
+
+    private static int GetReuseAttemptsPerCycle(ReuseHeap heap) =>
+        heap switch
+        {
+            ReuseHeap.Small =>
+                string.IsNullOrEmpty(Environment.GetEnvironmentVariable("DOTNET_GCStress"))
+                    ? 20_000
+                    : 128,
+            ReuseHeap.Large => 128,
+            ReuseHeap.Pinned => 1_024,
+            _ => throw new UnreachableException(),
+        };
+
+    [MethodImpl(MethodImplOptions.NoInlining)]
+    private static nuint AllocateMarkedAndRelease(NativeHooks hooks, ReuseHeap heap)
+    {
+        byte[] value = AllocateReuseObject(heap);
+        using Handle handle = new(value);
+        hooks.Set(handle, 3);
+        Check(hooks.Load(handle) == 3, $"{heap} dying allocation is marked");
+        return hooks.GetObjectAddress(handle);
+    }
+
+    [MethodImpl(MethodImplOptions.NoInlining)]
+    private static bool AllocateAndCheckForReuse(
+        NativeHooks hooks,
+        ReuseHeap heap,
+        nuint markedAddress)
+    {
+        byte[] value = AllocateReuseObject(heap);
+        using Handle handle = new(value);
+        if (hooks.GetObjectAddress(handle) != markedAddress)
+        {
+            return false;
+        }
+
+        if ((heap == ReuseHeap.Large) &&
+            (Environment.GetEnvironmentVariable("P16_STALE_REUSE_CONTROL") == "1") &&
+            (Interlocked.Exchange(ref s_reuseControlApplied, 1) == 0))
+        {
+            hooks.Set(handle, 3);
+        }
+
+        Check(hooks.Load(handle) == 0, $"recycled {heap} header starts clear");
+        return true;
+    }
+
+    private static byte[] AllocateReuseObject(ReuseHeap heap) =>
+        heap switch
+        {
+            ReuseHeap.Small => new byte[512],
+            ReuseHeap.Large => new byte[100_000],
+            ReuseHeap.Pinned => GC.AllocateArray<byte>(4_096, pinned: true),
+            _ => throw new UnreachableException(),
+        };
 
     private static void ExerciseClone(NativeHooks hooks)
     {
@@ -304,7 +408,7 @@ internal static class Program
         {
             throw new InvalidOperationException(message);
         }
-        s_checks++;
+        Interlocked.Increment(ref s_checks);
     }
 
     private sealed class Cloneable
@@ -331,12 +435,14 @@ internal static class Program
         public uint RequestedStateCount;
         public uint RequestedProtocol;
         public uint RequiredAtomicOperations;
+        public uint RequiredMemoryOrder;
         public int ObjectByteOffset;
         public uint StorageWordSize;
         public uint BitMask;
         public uint BitShift;
         public uint GrantedProtocol;
         public uint GrantedAtomicOperations;
+        public uint GrantedMemoryOrder;
         public uint ClearState;
         public uint InvalidState;
         public uint TransitionState;
@@ -370,6 +476,8 @@ internal static class Program
         private readonly LoadDelegate _load;
         private readonly CompareExchangeDelegate _compareExchange;
         private readonly SetDelegate _set;
+        private readonly SyntheticStateDelegate _setSynthetic;
+        private readonly SyntheticStateDelegate _waitSynthetic;
         private readonly LoadDelegate _loadRaw;
         private readonly SetDelegate _setRaw;
         private readonly LoadDelegate _getSyncBlockValue;
@@ -383,6 +491,10 @@ internal static class Program
             _compareExchange =
                 GetDelegate<CompareExchangeDelegate>("GC_ObjectHeaderBitsTest_CompareExchange");
             _set = GetDelegate<SetDelegate>("GC_ObjectHeaderBitsTest_Set");
+            _setSynthetic =
+                GetDelegate<SyntheticStateDelegate>("GC_ObjectHeaderBitsTest_SetSynthetic");
+            _waitSynthetic =
+                GetDelegate<SyntheticStateDelegate>("GC_ObjectHeaderBitsTest_WaitSynthetic");
             _loadRaw = GetDelegate<LoadDelegate>("GC_ObjectHeaderBitsTest_LoadRaw");
             _setRaw = GetDelegate<SetDelegate>("GC_ObjectHeaderBitsTest_SetRaw");
             _getSyncBlockValue =
@@ -405,6 +517,10 @@ internal static class Program
             _compareExchange(handle.Value, value, comparand);
 
         public uint Set(Handle handle, uint value) => _set(handle.Value, value);
+
+        public uint SetSynthetic(uint value) => _setSynthetic(value);
+
+        public uint WaitSynthetic(uint value) => _waitSynthetic(value);
 
         public uint LoadRaw(Handle handle) => _loadRaw(handle.Value);
 
@@ -431,6 +547,9 @@ internal static class Program
 
         [UnmanagedFunctionPointer(CallingConvention.Cdecl)]
         private delegate uint SetDelegate(nint handle, uint value);
+
+        [UnmanagedFunctionPointer(CallingConvention.Cdecl)]
+        private delegate uint SyntheticStateDelegate(uint value);
 
         [UnmanagedFunctionPointer(CallingConvention.Cdecl)]
         private delegate nuint GetObjectAddressDelegate(nint handle);

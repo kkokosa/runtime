@@ -150,6 +150,7 @@ void ClearObjectHeaderBitsRuntimeOutputs(ObjectHeaderBitsParameters* parameters)
     parameters->bit_shift = 0;
     parameters->granted_protocol = ObjectHeaderBitsProtocol::None;
     parameters->granted_atomic_operations = 0;
+    parameters->granted_memory_order = ObjectHeaderBitsMemoryOrder::None;
     parameters->clear_state = 0;
     parameters->invalid_state = 0;
     parameters->transition_state = 0;
@@ -165,6 +166,7 @@ bool ObjectHeaderBitsRuntimeOutputsAreZero(const ObjectHeaderBitsParameters* par
         (parameters->bit_shift == 0) &&
         (parameters->granted_protocol == ObjectHeaderBitsProtocol::None) &&
         (parameters->granted_atomic_operations == 0) &&
+        (parameters->granted_memory_order == ObjectHeaderBitsMemoryOrder::None) &&
         (parameters->clear_state == 0) &&
         (parameters->invalid_state == 0) &&
         (parameters->transition_state == 0) &&
@@ -202,7 +204,8 @@ HRESULT GCHeapUtilities::ConfigureObjectHeaderBits(IGCHeap* gcHeap)
                 (parameters->requested_bit_count != 0) ||
                 (parameters->requested_state_count != 0) ||
                 (parameters->requested_protocol != ObjectHeaderBitsProtocol::None) ||
-                (parameters->required_atomic_operations != 0))
+                (parameters->required_atomic_operations != 0) ||
+                (parameters->required_memory_order != ObjectHeaderBitsMemoryOrder::None))
             {
                 parameters->request_status = ObjectHeaderBitsRequestStatus::Unsupported;
                 return E_INVALIDARG;
@@ -224,7 +227,8 @@ HRESULT GCHeapUtilities::ConfigureObjectHeaderBits(IGCHeap* gcHeap)
         (parameters->requested_bit_count == 0) ||
         (parameters->requested_state_count == 0) ||
         (parameters->requested_protocol == ObjectHeaderBitsProtocol::None) ||
-        ((parameters->required_atomic_operations & ~ObjectHeaderBitsSupportedAtomicOperations) != 0))
+        ((parameters->required_atomic_operations & ~ObjectHeaderBitsSupportedAtomicOperations) != 0) ||
+        (parameters->required_memory_order != ObjectHeaderBitsMemoryOrder::SequentiallyConsistent))
     {
         parameters->request_status = ObjectHeaderBitsRequestStatus::Unsupported;
         return E_INVALIDARG;
@@ -233,7 +237,8 @@ HRESULT GCHeapUtilities::ConfigureObjectHeaderBits(IGCHeap* gcHeap)
     if ((parameters->requested_bit_count != 2) ||
         (parameters->requested_state_count != 3) ||
         (parameters->requested_protocol != ObjectHeaderBitsProtocol::ClaimAndPublish) ||
-        (parameters->required_atomic_operations != ObjectHeaderBitsSupportedAtomicOperations))
+        (parameters->required_atomic_operations != ObjectHeaderBitsSupportedAtomicOperations) ||
+        (parameters->required_memory_order != ObjectHeaderBitsMemoryOrder::SequentiallyConsistent))
     {
         parameters->request_status = ObjectHeaderBitsRequestStatus::Unsupported;
         return E_NOTIMPL;
@@ -250,6 +255,7 @@ HRESULT GCHeapUtilities::ConfigureObjectHeaderBits(IGCHeap* gcHeap)
     parameters->bit_shift = 0;
     parameters->granted_protocol = ObjectHeaderBitsProtocol::ClaimAndPublish;
     parameters->granted_atomic_operations = ObjectHeaderBitsSupportedAtomicOperations;
+    parameters->granted_memory_order = ObjectHeaderBitsMemoryOrder::SequentiallyConsistent;
     parameters->clear_state = 0b00;
     parameters->invalid_state = 0b01;
     parameters->transition_state = 0b10;

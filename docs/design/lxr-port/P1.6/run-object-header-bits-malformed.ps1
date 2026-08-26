@@ -42,7 +42,7 @@ function Invoke-Startup {
             $(if ($Enabled) { '1' } else { $null }))
         [Environment]::SetEnvironmentVariable(
             'DOTNET_GCObjectHeaderBitsTestMalformed',
-            $(if ($Malformed -eq 0) { $null } else { "$Malformed" }))
+            $(if ($Malformed -eq 0) { $null } else { $Malformed.ToString('X') }))
 
         $log = Join-Path $output "startup-$Enabled-$Malformed.log"
         & $corerun $assembly *> $log
@@ -79,7 +79,7 @@ function Invoke-Startup {
 
 Invoke-Startup -Enabled $false -Malformed 0 -ExpectSuccess $true
 Invoke-Startup -Enabled $true -Malformed 0 -ExpectSuccess $true
-foreach ($malformed in 1..9) {
+foreach ($malformed in 1..10) {
     Invoke-Startup -Enabled $true -Malformed $malformed -ExpectSuccess $false
 }
 

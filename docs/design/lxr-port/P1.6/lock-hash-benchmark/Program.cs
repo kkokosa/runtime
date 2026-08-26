@@ -135,6 +135,8 @@ public class StateLockHashBenchmarks
     private object _gate = null!;
     private GCHandle _handle;
     private nint _library;
+    private LoadDelegate _load = null!;
+    private CompareExchangeDelegate _compareExchange = null!;
     private SetDelegate _set = null!;
 
     [Params(0u, 2u, 3u)]
@@ -147,6 +149,10 @@ public class StateLockHashBenchmarks
             Environment.GetEnvironmentVariable("P16_NATIVE_HOOK_LIBRARY")
             ?? throw new InvalidOperationException("P16_NATIVE_HOOK_LIBRARY is required.");
         _library = NativeLibrary.Load(libraryPath);
+        _load = Marshal.GetDelegateForFunctionPointer<LoadDelegate>(
+            NativeLibrary.GetExport(_library, "GC_ObjectHeaderBitsTest_Load"));
+        _compareExchange = Marshal.GetDelegateForFunctionPointer<CompareExchangeDelegate>(
+            NativeLibrary.GetExport(_library, "GC_ObjectHeaderBitsTest_CompareExchange"));
         _set = Marshal.GetDelegateForFunctionPointer<SetDelegate>(
             NativeLibrary.GetExport(_library, "GC_ObjectHeaderBitsTest_Set"));
         _gate = new object();
@@ -173,6 +179,24 @@ public class StateLockHashBenchmarks
 
     [Benchmark]
     public int CachedHash() => RuntimeHelpers.GetHashCode(_gate);
+
+    [Benchmark]
+    public uint StateLoad() => _load(GCHandle.ToIntPtr(_handle));
+
+    [Benchmark]
+    public uint StateRoundTrip()
+    {
+        uint alternate = State == 2 ? 3u : 2u;
+        uint observed = _compareExchange(GCHandle.ToIntPtr(_handle), alternate, State);
+        _compareExchange(GCHandle.ToIntPtr(_handle), State, alternate);
+        return observed;
+    }
+
+    [UnmanagedFunctionPointer(CallingConvention.Cdecl)]
+    private delegate uint LoadDelegate(nint handle);
+
+    [UnmanagedFunctionPointer(CallingConvention.Cdecl)]
+    private delegate uint CompareExchangeDelegate(nint handle, uint value, uint comparand);
 
     [UnmanagedFunctionPointer(CallingConvention.Cdecl)]
     private delegate uint SetDelegate(nint handle, uint value);

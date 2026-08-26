@@ -244,7 +244,9 @@ HRESULT GCHeap::Initialize()
          (objectHeaderBits->object_byte_offset == 0) ||
          (objectHeaderBits->storage_word_size != sizeof(uint32_t)) ||
          (objectHeaderBits->bit_mask == 0) ||
-         (objectHeaderBits->granted_protocol != ObjectHeaderBitsProtocol::ClaimAndPublish)))
+         (objectHeaderBits->granted_protocol != ObjectHeaderBitsProtocol::ClaimAndPublish) ||
+         (objectHeaderBits->granted_memory_order !=
+          ObjectHeaderBitsMemoryOrder::SequentiallyConsistent)))
     {
         return E_NOTIMPL;
     }
@@ -2934,6 +2936,8 @@ ObjectHeaderBitsParameters* GCHeap::GetObjectHeaderBitsParameters()
         parameters.requested_state_count = 3;
         parameters.requested_protocol = ObjectHeaderBitsProtocol::ClaimAndPublish;
         parameters.required_atomic_operations = RequiredAtomicOperations;
+        parameters.required_memory_order =
+            ObjectHeaderBitsMemoryOrder::SequentiallyConsistent;
 
         switch (GCConfig::GetObjectHeaderBitsTestMalformed())
         {
@@ -2963,6 +2967,10 @@ ObjectHeaderBitsParameters* GCHeap::GetObjectHeaderBitsParameters()
                 break;
             case 9:
                 parameters.request = static_cast<ObjectHeaderBitsRequest>(-1);
+                break;
+            case 10:
+                parameters.required_memory_order =
+                    static_cast<ObjectHeaderBitsMemoryOrder>(-1);
                 break;
             default:
                 break;

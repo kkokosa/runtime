@@ -50,7 +50,10 @@ uint32_t ObjHeader::GetGCReservedBits(uint32_t mask, uint32_t shift)
 #ifdef HOST_64BIT
     ASSERT(mask != 0);
     ASSERT(shift < 32);
-    uint32_t value = VolatileLoad(&m_uGCReservedBits);
+    uint32_t value = static_cast<uint32_t>(PalInterlockedCompareExchange(
+        reinterpret_cast<volatile int32_t*>(&m_uGCReservedBits),
+        0,
+        0));
     return (value & mask) >> shift;
 #else
     UNREFERENCED_PARAMETER(mask);
@@ -71,7 +74,10 @@ uint32_t ObjHeader::CompareExchangeGCReservedBits(
     ASSERT((value & ~(mask >> shift)) == 0);
     ASSERT((comparand & ~(mask >> shift)) == 0);
 
-    uint32_t oldWord = VolatileLoad(&m_uGCReservedBits);
+    uint32_t oldWord = static_cast<uint32_t>(PalInterlockedCompareExchange(
+        reinterpret_cast<volatile int32_t*>(&m_uGCReservedBits),
+        0,
+        0));
     while (true)
     {
         uint32_t oldValue = (oldWord & mask) >> shift;
@@ -107,7 +113,10 @@ uint32_t ObjHeader::SetGCReservedBits(uint32_t mask, uint32_t shift, uint32_t va
     ASSERT(shift < 32);
     ASSERT((value & ~(mask >> shift)) == 0);
 
-    uint32_t oldWord = VolatileLoad(&m_uGCReservedBits);
+    uint32_t oldWord = static_cast<uint32_t>(PalInterlockedCompareExchange(
+        reinterpret_cast<volatile int32_t*>(&m_uGCReservedBits),
+        0,
+        0));
     while (true)
     {
         uint32_t oldValue = (oldWord & mask) >> shift;
@@ -122,6 +131,31 @@ uint32_t ObjHeader::SetGCReservedBits(uint32_t mask, uint32_t shift, uint32_t va
         }
         oldWord = observed;
     }
+#else
+    UNREFERENCED_PARAMETER(mask);
+    UNREFERENCED_PARAMETER(shift);
+    UNREFERENCED_PARAMETER(value);
+    return 0;
+#endif
+}
+
+uint32_t ObjHeader::WaitWhileGCReservedBits(uint32_t mask, uint32_t shift, uint32_t value)
+{
+#ifdef HOST_64BIT
+    uint32_t iteration = 0;
+    uint32_t current;
+    while ((current = GetGCReservedBits(mask, shift)) == value)
+    {
+        if ((++iteration % 1024) != 0)
+        {
+            PalYieldProcessor();
+        }
+        else
+        {
+            PalSwitchToThread();
+        }
+    }
+    return current;
 #else
     UNREFERENCED_PARAMETER(mask);
     UNREFERENCED_PARAMETER(shift);

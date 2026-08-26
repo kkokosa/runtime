@@ -342,6 +342,7 @@ void ClearObjectHeaderBitsRuntimeOutputs(ObjectHeaderBitsParameters* parameters)
     parameters->bit_shift = 0;
     parameters->granted_protocol = ObjectHeaderBitsProtocol::None;
     parameters->granted_atomic_operations = 0;
+    parameters->granted_memory_order = ObjectHeaderBitsMemoryOrder::None;
     parameters->clear_state = 0;
     parameters->invalid_state = 0;
     parameters->transition_state = 0;
@@ -357,6 +358,7 @@ bool ObjectHeaderBitsRuntimeOutputsAreZero(const ObjectHeaderBitsParameters* par
         (parameters->bit_shift == 0) &&
         (parameters->granted_protocol == ObjectHeaderBitsProtocol::None) &&
         (parameters->granted_atomic_operations == 0) &&
+        (parameters->granted_memory_order == ObjectHeaderBitsMemoryOrder::None) &&
         (parameters->clear_state == 0) &&
         (parameters->invalid_state == 0) &&
         (parameters->transition_state == 0) &&
@@ -403,7 +405,8 @@ HRESULT GCHeapUtilities::ConfigureObjectHeaderBits(IGCHeap* gcHeap, const Versio
                 (parameters->requested_bit_count != 0) ||
                 (parameters->requested_state_count != 0) ||
                 (parameters->requested_protocol != ObjectHeaderBitsProtocol::None) ||
-                (parameters->required_atomic_operations != 0))
+                (parameters->required_atomic_operations != 0) ||
+                (parameters->required_memory_order != ObjectHeaderBitsMemoryOrder::None))
             {
                 LogErrorToHost("Disabled GC object-header bit request has nonzero requirements.");
                 parameters->request_status = ObjectHeaderBitsRequestStatus::Unsupported;
@@ -427,7 +430,8 @@ HRESULT GCHeapUtilities::ConfigureObjectHeaderBits(IGCHeap* gcHeap, const Versio
         (parameters->requested_bit_count == 0) ||
         (parameters->requested_state_count == 0) ||
         (parameters->requested_protocol == ObjectHeaderBitsProtocol::None) ||
-        ((parameters->required_atomic_operations & ~ObjectHeaderBitsSupportedAtomicOperations) != 0))
+        ((parameters->required_atomic_operations & ~ObjectHeaderBitsSupportedAtomicOperations) != 0) ||
+        (parameters->required_memory_order != ObjectHeaderBitsMemoryOrder::SequentiallyConsistent))
     {
         LogErrorToHost("GC object-header bit requirements are malformed.");
         parameters->request_status = ObjectHeaderBitsRequestStatus::Unsupported;
@@ -437,7 +441,8 @@ HRESULT GCHeapUtilities::ConfigureObjectHeaderBits(IGCHeap* gcHeap, const Versio
     if ((parameters->requested_bit_count != 2) ||
         (parameters->requested_state_count != 3) ||
         (parameters->requested_protocol != ObjectHeaderBitsProtocol::ClaimAndPublish) ||
-        (parameters->required_atomic_operations != ObjectHeaderBitsSupportedAtomicOperations))
+        (parameters->required_atomic_operations != ObjectHeaderBitsSupportedAtomicOperations) ||
+        (parameters->required_memory_order != ObjectHeaderBitsMemoryOrder::SequentiallyConsistent))
     {
         LogErrorToHost("GC object-header bit requirements are unsupported.");
         parameters->request_status = ObjectHeaderBitsRequestStatus::Unsupported;
@@ -456,6 +461,7 @@ HRESULT GCHeapUtilities::ConfigureObjectHeaderBits(IGCHeap* gcHeap, const Versio
     parameters->bit_shift = 0;
     parameters->granted_protocol = ObjectHeaderBitsProtocol::ClaimAndPublish;
     parameters->granted_atomic_operations = ObjectHeaderBitsSupportedAtomicOperations;
+    parameters->granted_memory_order = ObjectHeaderBitsMemoryOrder::SequentiallyConsistent;
     parameters->clear_state = 0b00;
     parameters->invalid_state = 0b01;
     parameters->transition_state = 0b10;

@@ -863,7 +863,8 @@ class ObjHeader
 #ifdef HOST_64BIT
         _ASSERTE(mask != 0);
         _ASSERTE(shift < 32);
-        DWORD value = m_GCReservedBits.Load();
+        DWORD value = static_cast<DWORD>(
+            InterlockedCompareExchange((LONG*)&m_GCReservedBits, 0, 0));
         return (value & mask) >> shift;
 #else
         UNREFERENCED_PARAMETER(mask);
@@ -882,7 +883,8 @@ class ObjHeader
         _ASSERTE((value & ~(mask >> shift)) == 0);
         _ASSERTE((comparand & ~(mask >> shift)) == 0);
 
-        DWORD oldWord = m_GCReservedBits.Load();
+        DWORD oldWord = static_cast<DWORD>(
+            InterlockedCompareExchange((LONG*)&m_GCReservedBits, 0, 0));
         while (true)
         {
             DWORD oldValue = (oldWord & mask) >> shift;
@@ -918,7 +920,8 @@ class ObjHeader
         _ASSERTE(shift < 32);
         _ASSERTE((value & ~(mask >> shift)) == 0);
 
-        DWORD oldWord = m_GCReservedBits.Load();
+        DWORD oldWord = static_cast<DWORD>(
+            InterlockedCompareExchange((LONG*)&m_GCReservedBits, 0, 0));
         while (true)
         {
             DWORD oldValue = (oldWord & mask) >> shift;
@@ -931,6 +934,34 @@ class ObjHeader
             }
             oldWord = observed;
         }
+#else
+        UNREFERENCED_PARAMETER(mask);
+        UNREFERENCED_PARAMETER(shift);
+        UNREFERENCED_PARAMETER(value);
+        return 0;
+#endif
+    }
+
+    DWORD WaitWhileGCReservedBits(DWORD mask, DWORD shift, DWORD value)
+    {
+        LIMITED_METHOD_CONTRACT;
+
+#ifdef HOST_64BIT
+        DWORD switchCount = 0;
+        DWORD current;
+        DWORD iteration = 0;
+        while ((current = GetGCReservedBits(mask, shift)) == value)
+        {
+            if (((++iteration % 1024) != 0) && (g_SystemInfo.dwNumberOfProcessors > 1))
+            {
+                YieldProcessorNormalized();
+            }
+            else
+            {
+                __SwitchToThread(0, ++switchCount);
+            }
+        }
+        return current;
 #else
         UNREFERENCED_PARAMETER(mask);
         UNREFERENCED_PARAMETER(shift);

@@ -251,6 +251,12 @@ enum class ObjectHeaderBitsAtomicOperation : uint32_t
     Wait = 1 << 3,
 };
 
+enum class ObjectHeaderBitsMemoryOrder : uint32_t
+{
+    None = 0,
+    SequentiallyConsistent = 1,
+};
+
 struct ObjectHeaderBitsParameters
 {
     // The collector initializes this to NotProcessed. The EE writes Accepted
@@ -269,6 +275,7 @@ struct ObjectHeaderBitsParameters
     uint32_t requested_state_count;
     ObjectHeaderBitsProtocol requested_protocol;
     uint32_t required_atomic_operations;
+    ObjectHeaderBitsMemoryOrder required_memory_order;
 
     // Runtime-selected placement and protocol. The collector initializes all
     // output fields to zero.
@@ -278,6 +285,7 @@ struct ObjectHeaderBitsParameters
     uint32_t bit_shift;
     ObjectHeaderBitsProtocol granted_protocol;
     uint32_t granted_atomic_operations;
+    ObjectHeaderBitsMemoryOrder granted_memory_order;
     uint32_t clear_state;
     uint32_t invalid_state;
     uint32_t transition_state;

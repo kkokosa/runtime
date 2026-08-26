@@ -33,6 +33,7 @@ public:
         uint32_t value,
         uint32_t comparand);
     uint32_t SetGCReservedBits(uint32_t mask, uint32_t shift, uint32_t value);
+    uint32_t WaitWhileGCReservedBits(uint32_t mask, uint32_t shift, uint32_t value);
 };
 
 //-------------------------------------------------------------------------------------------------

@@ -10,6 +10,11 @@
 #include <thread>
 #include <vector>
 
+void GCToOSInterface::YieldThread(uint32_t)
+{
+    std::this_thread::yield();
+}
+
 static_assert(GC_INTERFACE_MAJOR_VERSION == 5);
 static_assert(GC_INTERFACE_MINOR_VERSION == 15);
 static_assert(GC_OBJECT_HEADER_BITS_INTERFACE_MINOR_VERSION == 15);
@@ -22,10 +27,12 @@ static_assert(static_cast<uint32_t>(ObjectHeaderBitsRequestStatus::Accepted) == 
 static_assert(static_cast<uint32_t>(ObjectHeaderBitsRequestStatus::Unsupported) == 2);
 static_assert(static_cast<uint32_t>(ObjectHeaderBitsRequest::Disabled) == 0);
 static_assert(static_cast<uint32_t>(ObjectHeaderBitsProtocol::None) == 0);
-static_assert(sizeof(ObjectHeaderBitsParameters) == 72);
+static_assert(
+    static_cast<uint32_t>(ObjectHeaderBitsMemoryOrder::SequentiallyConsistent) == 1);
+static_assert(sizeof(ObjectHeaderBitsParameters) == 80);
 static_assert(offsetof(ObjectHeaderBitsParameters, request_status) == 0);
-static_assert(offsetof(ObjectHeaderBitsParameters, object_byte_offset) == 32);
-static_assert(offsetof(ObjectHeaderBitsParameters, published_state) == 68);
+static_assert(offsetof(ObjectHeaderBitsParameters, object_byte_offset) == 36);
+static_assert(offsetof(ObjectHeaderBitsParameters, published_state) == 76);
 
 static_assert(sizeof(AllocationNotificationParameters) == (sizeof(void*) == 8 ? 24 : 12));
 static_assert(sizeof(ObjectReferenceEnumerationParameters) == (sizeof(void*) == 8 ? 16 : 12));
@@ -178,6 +185,38 @@ void TestSingleClaimWinner()
         "race preserves upper bits",
         (header->GetGCReservedBits(UINT32_MAX, 0) & ~StateMask) == Sentinel);
 }
+
+void TestWaitAndPublication()
+{
+    TestObject instance;
+    ObjHeader* header = instance.Get()->GetHeader();
+    header->SetGCReservedBits(StateMask, StateShift, 2);
+
+    std::atomic<bool> ready = false;
+    std::atomic<uint32_t> payload = 0;
+    uint32_t observed = 0;
+    uint32_t observedPayload = 0;
+    std::thread waiter(
+        [&]()
+        {
+            ready.store(true, std::memory_order_seq_cst);
+            observed = header->WaitWhileGCReservedBits(StateMask, StateShift, 2);
+            observedPayload = payload.load(std::memory_order_seq_cst);
+        });
+
+    while (!ready.load(std::memory_order_seq_cst))
+    {
+        std::this_thread::yield();
+    }
+    payload.store(42, std::memory_order_seq_cst);
+    Expect(
+        "publication CAS observes transition",
+        header->CompareExchangeGCReservedBits(StateMask, StateShift, 3, 2) == 2);
+    waiter.join();
+
+    Expect("wait observes published state", observed == 3);
+    Expect("wait observes published payload", observedPayload == 42);
+}
 #endif
 }
 
@@ -188,6 +227,7 @@ int main()
 #ifdef HOST_64BIT
     TestStatesAndPreservation();
     TestSingleClaimWinner();
+    TestWaitAndPublication();
 #endif
 
     printf("%d/%d object-header bit checks passed\n", s_checks - s_failures, s_checks);
