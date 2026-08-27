@@ -234,6 +234,23 @@ HRESULT GCHeap::Initialize()
         return E_NOTIMPL;
     }
 
+    ObjectHeaderBitsParameters* objectHeaderBits = GetObjectHeaderBitsParameters();
+    if (objectHeaderBits == nullptr)
+    {
+        return E_FAIL;
+    }
+    if ((objectHeaderBits->request == ObjectHeaderBitsRequest::Enabled) &&
+        ((objectHeaderBits->request_status != ObjectHeaderBitsRequestStatus::Accepted) ||
+         (objectHeaderBits->object_byte_offset == 0) ||
+         (objectHeaderBits->storage_word_size != sizeof(uint32_t)) ||
+         (objectHeaderBits->bit_mask == 0) ||
+         (objectHeaderBits->granted_protocol != ObjectHeaderBitsProtocol::ClaimAndPublish) ||
+         (objectHeaderBits->granted_memory_order !=
+          ObjectHeaderBitsMemoryOrder::SequentiallyConsistent)))
+    {
+        return E_NOTIMPL;
+    }
+
     qpf = (uint64_t)GCToOSInterface::QueryPerformanceFrequency();
     qpf_ms = 1000.0 / (double)qpf;
     qpf_us = 1000.0 * 1000.0 / (double)qpf;
@@ -2893,6 +2910,73 @@ ObjectReferenceEnumerationParameters* GCHeap::GetObjectReferenceEnumerationParam
         }
     }
 #endif // FEATURE_ALLOCATION_NOTIFICATION_TEST
+
+    initialized = true;
+    return &parameters;
+}
+
+ObjectHeaderBitsParameters* GCHeap::GetObjectHeaderBitsParameters()
+{
+    static ObjectHeaderBitsParameters parameters = {};
+    static bool initialized;
+
+#ifdef FEATURE_OBJECT_HEADER_BITS_TEST
+    if (!initialized && GCConfig::GetObjectHeaderBitsTest())
+    {
+        constexpr uint32_t RequiredAtomicOperations =
+            static_cast<uint32_t>(ObjectHeaderBitsAtomicOperation::Load) |
+            static_cast<uint32_t>(ObjectHeaderBitsAtomicOperation::CompareExchange) |
+            static_cast<uint32_t>(ObjectHeaderBitsAtomicOperation::Store) |
+            static_cast<uint32_t>(ObjectHeaderBitsAtomicOperation::Wait);
+
+        parameters.request = ObjectHeaderBitsRequest::Enabled;
+        parameters.version = GC_OBJECT_HEADER_BITS_PARAMETERS_VERSION;
+        parameters.size = sizeof(ObjectHeaderBitsParameters);
+        parameters.requested_bit_count = 2;
+        parameters.requested_state_count = 3;
+        parameters.requested_protocol = ObjectHeaderBitsProtocol::ClaimAndPublish;
+        parameters.required_atomic_operations = RequiredAtomicOperations;
+        parameters.required_memory_order =
+            ObjectHeaderBitsMemoryOrder::SequentiallyConsistent;
+
+        switch (GCConfig::GetObjectHeaderBitsTestMalformed())
+        {
+            case 1:
+                parameters.request_status = ObjectHeaderBitsRequestStatus::Accepted;
+                break;
+            case 2:
+                parameters.version++;
+                break;
+            case 3:
+                parameters.size--;
+                break;
+            case 4:
+                parameters.object_byte_offset = -4;
+                break;
+            case 5:
+                parameters.requested_bit_count++;
+                break;
+            case 6:
+                parameters.required_atomic_operations |= 0x80000000;
+                break;
+            case 7:
+                return nullptr;
+            case 8:
+                parameters.requested_protocol =
+                    static_cast<ObjectHeaderBitsProtocol>(-1);
+                break;
+            case 9:
+                parameters.request = static_cast<ObjectHeaderBitsRequest>(-1);
+                break;
+            case 10:
+                parameters.required_memory_order =
+                    static_cast<ObjectHeaderBitsMemoryOrder>(-1);
+                break;
+            default:
+                break;
+        }
+    }
+#endif // FEATURE_OBJECT_HEADER_BITS_TEST
 
     initialized = true;
     return &parameters;

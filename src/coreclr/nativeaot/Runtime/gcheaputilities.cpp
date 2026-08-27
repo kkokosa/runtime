@@ -134,6 +134,137 @@ HRESULT GCHeapUtilities::ConfigureObjectReferenceEnumeration(IGCHeap* gcHeap)
     }
 }
 
+namespace
+{
+constexpr uint32_t ObjectHeaderBitsSupportedAtomicOperations =
+    static_cast<uint32_t>(ObjectHeaderBitsAtomicOperation::Load) |
+    static_cast<uint32_t>(ObjectHeaderBitsAtomicOperation::CompareExchange) |
+    static_cast<uint32_t>(ObjectHeaderBitsAtomicOperation::Store) |
+    static_cast<uint32_t>(ObjectHeaderBitsAtomicOperation::Wait);
+
+void ClearObjectHeaderBitsRuntimeOutputs(ObjectHeaderBitsParameters* parameters)
+{
+    parameters->object_byte_offset = 0;
+    parameters->storage_word_size = 0;
+    parameters->bit_mask = 0;
+    parameters->bit_shift = 0;
+    parameters->granted_protocol = ObjectHeaderBitsProtocol::None;
+    parameters->granted_atomic_operations = 0;
+    parameters->granted_memory_order = ObjectHeaderBitsMemoryOrder::None;
+    parameters->clear_state = 0;
+    parameters->invalid_state = 0;
+    parameters->transition_state = 0;
+    parameters->published_state = 0;
+}
+
+bool ObjectHeaderBitsRuntimeOutputsAreZero(const ObjectHeaderBitsParameters* parameters)
+{
+    return
+        (parameters->object_byte_offset == 0) &&
+        (parameters->storage_word_size == 0) &&
+        (parameters->bit_mask == 0) &&
+        (parameters->bit_shift == 0) &&
+        (parameters->granted_protocol == ObjectHeaderBitsProtocol::None) &&
+        (parameters->granted_atomic_operations == 0) &&
+        (parameters->granted_memory_order == ObjectHeaderBitsMemoryOrder::None) &&
+        (parameters->clear_state == 0) &&
+        (parameters->invalid_state == 0) &&
+        (parameters->transition_state == 0) &&
+        (parameters->published_state == 0);
+}
+}
+
+HRESULT GCHeapUtilities::ConfigureObjectHeaderBits(IGCHeap* gcHeap)
+{
+    ObjectHeaderBitsParameters* parameters = gcHeap->GetObjectHeaderBitsParameters();
+    if (parameters == nullptr)
+    {
+        return E_FAIL;
+    }
+
+    if (parameters->request_status != ObjectHeaderBitsRequestStatus::NotProcessed)
+    {
+        parameters->request_status = ObjectHeaderBitsRequestStatus::Unsupported;
+        ClearObjectHeaderBitsRuntimeOutputs(parameters);
+        return E_FAIL;
+    }
+
+    if (!ObjectHeaderBitsRuntimeOutputsAreZero(parameters))
+    {
+        parameters->request_status = ObjectHeaderBitsRequestStatus::Unsupported;
+        ClearObjectHeaderBitsRuntimeOutputs(parameters);
+        return E_INVALIDARG;
+    }
+
+    switch (parameters->request)
+    {
+        case ObjectHeaderBitsRequest::Disabled:
+            if ((parameters->version != 0) ||
+                (parameters->size != 0) ||
+                (parameters->requested_bit_count != 0) ||
+                (parameters->requested_state_count != 0) ||
+                (parameters->requested_protocol != ObjectHeaderBitsProtocol::None) ||
+                (parameters->required_atomic_operations != 0) ||
+                (parameters->required_memory_order != ObjectHeaderBitsMemoryOrder::None))
+            {
+                parameters->request_status = ObjectHeaderBitsRequestStatus::Unsupported;
+                return E_INVALIDARG;
+            }
+
+            parameters->request_status = ObjectHeaderBitsRequestStatus::Accepted;
+            return S_OK;
+
+        case ObjectHeaderBitsRequest::Enabled:
+            break;
+
+        default:
+            parameters->request_status = ObjectHeaderBitsRequestStatus::Unsupported;
+            return E_INVALIDARG;
+    }
+
+    if ((parameters->version != GC_OBJECT_HEADER_BITS_PARAMETERS_VERSION) ||
+        (parameters->size != sizeof(ObjectHeaderBitsParameters)) ||
+        (parameters->requested_bit_count == 0) ||
+        (parameters->requested_state_count == 0) ||
+        (parameters->requested_protocol == ObjectHeaderBitsProtocol::None) ||
+        ((parameters->required_atomic_operations & ~ObjectHeaderBitsSupportedAtomicOperations) != 0) ||
+        (parameters->required_memory_order != ObjectHeaderBitsMemoryOrder::SequentiallyConsistent))
+    {
+        parameters->request_status = ObjectHeaderBitsRequestStatus::Unsupported;
+        return E_INVALIDARG;
+    }
+
+    if ((parameters->requested_bit_count != 2) ||
+        (parameters->requested_state_count != 3) ||
+        (parameters->requested_protocol != ObjectHeaderBitsProtocol::ClaimAndPublish) ||
+        (parameters->required_atomic_operations != ObjectHeaderBitsSupportedAtomicOperations) ||
+        (parameters->required_memory_order != ObjectHeaderBitsMemoryOrder::SequentiallyConsistent))
+    {
+        parameters->request_status = ObjectHeaderBitsRequestStatus::Unsupported;
+        return E_NOTIMPL;
+    }
+
+#ifndef TARGET_64BIT
+    parameters->request_status = ObjectHeaderBitsRequestStatus::Unsupported;
+    return E_NOTIMPL;
+#else
+    static_assert(sizeof(ObjHeader) == sizeof(void*));
+    parameters->object_byte_offset = -static_cast<int32_t>(sizeof(ObjHeader));
+    parameters->storage_word_size = sizeof(uint32_t);
+    parameters->bit_mask = 0x00000003;
+    parameters->bit_shift = 0;
+    parameters->granted_protocol = ObjectHeaderBitsProtocol::ClaimAndPublish;
+    parameters->granted_atomic_operations = ObjectHeaderBitsSupportedAtomicOperations;
+    parameters->granted_memory_order = ObjectHeaderBitsMemoryOrder::SequentiallyConsistent;
+    parameters->clear_state = 0b00;
+    parameters->invalid_state = 0b01;
+    parameters->transition_state = 0b10;
+    parameters->published_state = 0b11;
+    parameters->request_status = ObjectHeaderBitsRequestStatus::Accepted;
+    return S_OK;
+#endif
+}
+
 // Initializes a non-standalone GC. The protocol for initializing a non-standalone GC
 // is similar to loading a standalone one, except that the GC_VersionInfo and
 // GC_Initialize symbols are linked to directory and thus don't need to be loaded.
@@ -162,6 +293,11 @@ HRESULT GCHeapUtilities::InitializeDefaultGC()
     if (initResult == S_OK)
     {
         initResult = ConfigureObjectReferenceEnumeration(heap);
+    }
+
+    if (initResult == S_OK)
+    {
+        initResult = ConfigureObjectHeaderBits(heap);
     }
 
     if (initResult == S_OK)

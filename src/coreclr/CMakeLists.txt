@@ -59,6 +59,8 @@ OPTION(CLR_CMAKE_ENABLE_ALLOCATION_NOTIFICATION_TEST
   "Enable the allocation-complete notification validation callback" OFF)
 OPTION(CLR_CMAKE_ENABLE_OBJECT_REFERENCE_ENUMERATION_TEST
   "Enable object-reference enumeration scan validation" OFF)
+OPTION(CLR_CMAKE_ENABLE_OBJECT_HEADER_BITS_TEST
+  "Enable GC object-header bit validation" OFF)
 
 if(CLR_CMAKE_ENABLE_WRITE_BARRIER_STANDARD_ABI_TEST)
   if(NOT CLR_CMAKE_TARGET_ARCH_AMD64)

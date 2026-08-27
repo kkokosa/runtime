@@ -337,6 +337,7 @@ public:
 
     virtual AllocationNotificationParameters* GetAllocationNotificationParameters();
     virtual ObjectReferenceEnumerationParameters* GetObjectReferenceEnumerationParameters();
+    virtual ObjectHeaderBitsParameters* GetObjectHeaderBitsParameters();
 };
 
 #endif  // GCIMPL_H_
