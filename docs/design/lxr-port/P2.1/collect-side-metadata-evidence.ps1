@@ -36,7 +36,9 @@ $linuxRows = @(
 $validation = [Collections.Generic.List[object]]::new()
 foreach ($row in $windowsRows) {
     $logName = "validation-$($row.platform).log"
-    Copy-Item -LiteralPath $row.log -Destination (Join-Path $logs $logName) -Force
+    $architecture = $row.platform -replace '^windows-', ''
+    $sourceLog = Join-Path $WindowsValidation "$architecture\run.log"
+    Copy-Item -LiteralPath $sourceLog -Destination (Join-Path $logs $logName) -Force
     $validation.Add([pscustomobject][ordered]@{
         platform = $row.platform
         passed = $row.passed
