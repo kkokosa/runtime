@@ -18,3 +18,6 @@
 "17","provider-portability-archive-gate","True","0","source/instrument commits verified; 2 clean, 19 evidence perturbations, 1 behavioral neighboring-field control passed","record pass and rerun on raw-only tip"
 "18","psdrive-provider-public-wrapper","True","0","Non-subst PSDrive roots converted to provider paths; relative Windows/Linux output contained; all 4 stages passed","bind evidence and run final archive gate"
 "19","psdrive-provider-archive-gate","True","0","Source/instrument commits verified; 2 clean, 19 evidence perturbations, 1 behavioral neighboring-field control passed","record pass and rerun on raw-only tip"
+"20","focused-review-final-path-gaps","True","1","Review found subst Linux output, validation provider path, and evidence corroboration gaps","fix and rerun"
+"21","subst-public-wrapper","True","4","All 4 wrapper stages passed; external containment assertion concatenated root without separator","correct external assertion and verify output"
+"22","subst-linux-containment-check","True","0","Linux validation summary exists under requested physical wrapper output; R removed","bind evidence and run archive gate"
