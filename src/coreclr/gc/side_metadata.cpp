@@ -1123,21 +1123,29 @@ SideMetadataResult SideMetadataManager::AddDataRange(uintptr_t start, uintptr_t 
         return SideMetadataResult::OutOfMemory;
     }
 
-    DataRange** current = &m_data_ranges;
-    while (*current != nullptr)
+    bool merged;
+    do
     {
-        DataRange* range = *current;
-        if ((end < range->start) || (start > range->end))
+        merged = false;
+        DataRange** current = &m_data_ranges;
+        while (*current != nullptr)
         {
-            current = &range->next;
-            continue;
-        }
+            DataRange* range = *current;
+            if ((end < range->start) || (start > range->end))
+            {
+                current = &range->next;
+                continue;
+            }
 
-        start = min(start, range->start);
-        end = max(end, range->end);
-        *current = range->next;
-        delete range;
+            start = min(start, range->start);
+            end = max(end, range->end);
+            *current = range->next;
+            delete range;
+            merged = true;
+            break;
+        }
     }
+    while (merged);
 
     mergedRange->start = start;
     mergedRange->end = end;
@@ -1233,7 +1241,7 @@ uintptr_t SideMetadataManager::ComputeFirstWordCoverageForByteOrder(
     uint32_t bitInByte = location.shift - byteShift;
     uintptr_t laterBytes = LowBits(byteShift);
     uintptr_t currentByte =
-        (static_cast<uintptr_t>(UINT8_MAX) << bitInByte) << byteShift;
+        ((static_cast<uintptr_t>(UINT8_MAX) << bitInByte) & UINT8_MAX) << byteShift;
     return laterBytes | currentByte;
 }
 

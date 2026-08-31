@@ -159,6 +159,27 @@ void TestLayout()
     bigRangeLast.shift = static_cast<uint8_t>(bigShift + 5);
     bigLast = SideMetadataManager::ComputeLastWordCoverageForByteOrder(bigRangeLast, true);
     Expect("big-endian same-byte range coverage", (bigFirst & bigLast) == bigExpected);
+
+    uint32_t middleBigShift = SideMetadataManager::ComputeWordShiftForByteOrder(
+        1,
+        1,
+        BitShift,
+        true);
+    SideMetadataLocation middleBig = {
+        nullptr,
+        static_cast<uintptr_t>(1) << middleBigShift,
+        static_cast<uint8_t>(middleBigShift),
+        1,
+    };
+    uint32_t middleByteShift = middleBigShift & ~7u;
+    uintptr_t middleExpected =
+        ((static_cast<uintptr_t>(1) << middleByteShift) - 1) |
+        ((((static_cast<uintptr_t>(UINT8_MAX) << BitShift) & UINT8_MAX)) <<
+         middleByteShift);
+    Expect(
+        "big-endian middle-byte first coverage does not spill",
+        SideMetadataManager::ComputeFirstWordCoverageForByteOrder(middleBig, true) ==
+            middleExpected);
 }
 
 void TestCollisionAndCleanup(const LxrSideMetadataLayout& layout)
@@ -714,6 +735,38 @@ void TestRangeEdges()
     manager.Shutdown();
 }
 
+void TestOwnedRangeFixedPointMerge()
+{
+    LxrSideMetadataLayout layout;
+    ExpectResult(
+        "create range-merge layout",
+        LxrSideMetadataLayout::Create(1, &layout),
+        SideMetadataResult::Success);
+    SideMetadataManager manager;
+    ExpectResult(
+        "reserve range-merge shadows",
+        manager.Initialize(&layout),
+        SideMetadataResult::Success);
+
+    constexpr uintptr_t Base = UINT64_C(0x0000000400000000);
+    ExpectResult(
+        "commit middle range",
+        manager.CommitDataRange(Base + 250 * 8, 200 * 8),
+        SideMetadataResult::Success);
+    ExpectResult(
+        "commit high range",
+        manager.CommitDataRange(Base + 500 * 8, 100 * 8),
+        SideMetadataResult::Success);
+    ExpectResult(
+        "commit bridging range",
+        manager.CommitDataRange(Base + 400 * 8, 120 * 8),
+        SideMetadataResult::Success);
+    Expect(
+        "grown range is merged to a fixed point",
+        manager.IsDataRangeOwned(Base + 300 * 8, 250 * 8));
+    manager.Shutdown();
+}
+
 #else
 void TestUnsupported32Bit()
 {
@@ -744,6 +797,7 @@ int main()
     }
     TestDeterministicBrokenControls();
     TestRangeEdges();
+    TestOwnedRangeFixedPointMerge();
 #else
     TestUnsupported32Bit();
 #endif
