@@ -703,6 +703,25 @@ void* GCToOSInterface::VirtualReserve(size_t size, size_t alignment, uint32_t fl
     }
 }
 
+void* GCToOSInterface::VirtualReserveAt(void* address, size_t size, uint32_t flags, uint16_t node)
+{
+    assert(address != nullptr);
+    assert((flags & ~(VirtualReserveFlags::WriteWatch | VirtualReserveFlags::NoReserve)) == 0);
+
+    DWORD memFlags = (flags & VirtualReserveFlags::WriteWatch) ? (MEM_RESERVE | MEM_WRITE_WATCH) : MEM_RESERVE;
+    void* result = node == NUMA_NODE_UNDEFINED
+        ? ::VirtualAlloc(address, size, memFlags, PAGE_READWRITE)
+        : ::VirtualAllocExNuma(::GetCurrentProcess(), address, size, memFlags, PAGE_READWRITE, node);
+
+    if ((result != nullptr) && (result != address))
+    {
+        ::VirtualFree(result, 0, MEM_RELEASE);
+        return nullptr;
+    }
+
+    return result;
+}
+
 // Release virtual memory range previously reserved using VirtualReserve
 // Parameters:
 //  address - starting virtual address
