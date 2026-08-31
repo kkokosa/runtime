@@ -1,2 +1,2 @@
-"missing_file","result","log"
-"System.Runtime.dll","PASS","invalid-coreroot-control.log"
+"missing_file","exit_code","result","log"
+"System.Runtime.dll","1","PASS","invalid-coreroot-control.log"
