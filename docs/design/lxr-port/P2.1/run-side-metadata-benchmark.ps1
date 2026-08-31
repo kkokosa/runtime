@@ -18,9 +18,12 @@ $scriptRoot = Split-Path -Parent $MyInvocation.MyCommand.Path
 if (-not $RepositoryRoot) {
     $RepositoryRoot = (Resolve-Path (Join-Path $scriptRoot '..\..\..\..')).Path
 }
+$RepositoryRoot = (Resolve-Path -LiteralPath $RepositoryRoot).Path
 if (-not $OutputDirectory) {
     $OutputDirectory = Join-Path $RepositoryRoot (
         'artifacts\P2.1\benchmark\' + [guid]::NewGuid().ToString('N'))
+} else {
+    $OutputDirectory = [IO.Path]::GetFullPath($OutputDirectory)
 }
 
 $gcRoot = Join-Path $RepositoryRoot 'src\coreclr\gc'
@@ -52,7 +55,9 @@ if ($LASTEXITCODE -ne 0) {
 
 $savedPath = $env:PATH
 $savedRoot = $env:DOTNET_ROOT
+$savedLocation = Get-Location
 try {
+    Set-Location -LiteralPath (Split-Path -Parent $project)
     $env:PATH = "$(Join-Path $RepositoryRoot '.dotnet');$env:PATH"
     $env:DOTNET_ROOT = Join-Path $RepositoryRoot '.dotnet'
     $env:P21_NATIVE_BENCHMARK = $nativeLibrary
@@ -66,6 +71,7 @@ try {
         throw "Benchmark run failed. See $benchmarkLog."
     }
 } finally {
+    Set-Location -LiteralPath $savedLocation.Path
     $env:PATH = $savedPath
     $env:DOTNET_ROOT = $savedRoot
     Remove-Item Env:\P21_NATIVE_BENCHMARK -ErrorAction SilentlyContinue

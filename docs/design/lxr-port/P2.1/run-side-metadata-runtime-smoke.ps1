@@ -14,9 +14,13 @@ $scriptRoot = Split-Path -Parent $MyInvocation.MyCommand.Path
 if (-not $RepositoryRoot) {
     $RepositoryRoot = (Resolve-Path (Join-Path $scriptRoot '..\..\..\..')).Path
 }
+$RepositoryRoot = (Resolve-Path -LiteralPath $RepositoryRoot).Path
+$RuntimeRoot = (Resolve-Path -LiteralPath $RuntimeRoot).Path
 if (-not $OutputDirectory) {
     $OutputDirectory = Join-Path $RepositoryRoot (
         'artifacts\P2.1\runtime-smoke\' + [guid]::NewGuid().ToString('N'))
+} else {
+    $OutputDirectory = [IO.Path]::GetFullPath($OutputDirectory)
 }
 
 $dotnet = Join-Path $RepositoryRoot '.dotnet\dotnet.exe'
@@ -26,9 +30,22 @@ $standalone = Join-Path $RuntimeRoot 'clrgc.dll'
 $project = Join-Path $RepositoryRoot 'docs\design\lxr-port\P1.1\runtime-smoke\runtime-smoke.csproj'
 $managed = Join-Path $OutputDirectory 'managed'
 $assembly = Join-Path $managed 'runtime-smoke.dll'
-foreach ($path in @($dotnet, $corerun, $coreclr, $standalone, $project)) {
+$requiredPaths = @(
+    $dotnet,
+    $corerun,
+    $coreclr,
+    $standalone,
+    (Join-Path $RuntimeRoot 'clrjit.dll'),
+    (Join-Path $RuntimeRoot 'System.Private.CoreLib.dll'),
+    (Join-Path $RuntimeRoot 'System.Runtime.dll'),
+    (Join-Path $RuntimeRoot 'System.Console.dll'),
+    $project
+)
+foreach ($path in $requiredPaths) {
     if (-not (Test-Path -LiteralPath $path -PathType Leaf)) {
-        throw "Required runtime-smoke input is missing: $path"
+        throw (
+            "RuntimeRoot must be a complete CoreRoot and the smoke project must exist; " +
+            "missing '$path'.")
     }
 }
 

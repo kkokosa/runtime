@@ -111,10 +111,13 @@ $requiredEvidence = @(
     'benchmark-identity.csv',
     'benchmark-raw.csv',
     'build-summary.csv',
+    'cross-cwd-summary.csv',
+    'core-root-control-summary.csv',
     'linux-validation-command.txt',
     'linux-validation-summary.csv',
     'public-wrapper-smoke-summary.csv',
     'platform-summary.csv',
+    'public-wrapper-invocation.csv',
     'runtime-smoke-summary.csv',
     'source-commit.txt',
     'source-identities.csv',
@@ -128,7 +131,8 @@ foreach ($file in $requiredEvidence) {
 }
 
 $validation = @(Import-Csv (Join-Path $raw 'validation-summary.csv'))
-$expectedValidation = @($evidenceManifest.validationPlatforms)
+$expectedValidationRows = @($evidenceManifest.validationPlatforms)
+$expectedValidation = @($expectedValidationRows | ForEach-Object platform)
 $actualValidation = @($validation.platform)
 $validationDifference = @(
     Compare-Object ($expectedValidation | Sort-Object) ($actualValidation | Sort-Object))
@@ -143,6 +147,10 @@ if (($validation.Count -ne $expectedValidation.Count) -or
     throw 'Validation platform evidence is incomplete.'
 }
 foreach ($row in $validation) {
+    $expected = @($expectedValidationRows | Where-Object platform -eq $row.platform)
+    if (($expected.Count -ne 1) -or ([int]$row.total -ne [int]$expected[0].total)) {
+        throw "Validation total differs for $($row.platform)."
+    }
     $log = Join-Path $raw $row.log
     if (-not (Test-Path -LiteralPath $log -PathType Leaf)) {
         throw "Validation log is missing: $($row.log)"
@@ -236,6 +244,8 @@ if (($benchmarkIdentity.Count -ne 1) -or
     ([int]$benchmarkIdentity[0].iteration_count -ne
         [int]$evidenceManifest.benchmark.iterationCount) -or
     ([int]$benchmarkIdentity[0].rows -ne $expectedBenchmarkRows) -or
+    ($benchmarkIdentity[0].instrument_commit -ne
+        $evidenceManifest.benchmark.instrumentCommit) -or
     ($benchmarkIdentity[0].benchmark_runtime -notmatch '^\.NET 11\.0') -or
     ($benchmarkIdentity[0].result -ne 'PASS')) {
     throw 'Benchmark identity is incomplete.'
@@ -267,6 +277,51 @@ if (($wrapper.Count -ne $expectedWrapper.Count) -or
     ($wrapperDifference.Count -ne 0) -or
     (@($wrapper | Where-Object result -ne 'PASS').Count -ne 0)) {
     throw 'Public full-evidence wrapper smoke is incomplete.'
+}
+
+$wrapperInvocation = @(Import-Csv (Join-Path $raw 'public-wrapper-invocation.csv'))
+if (($wrapperInvocation.Count -ne 1) -or
+    ([int]$wrapperInvocation[0].benchmark_rows -ne
+        [int]$evidenceManifest.crossCwd.benchmarkRows) -or
+    ([int]$wrapperInvocation[0].controls -ne
+        [int]$evidenceManifest.crossCwd.controls) -or
+    ([int]$wrapperInvocation[0].launch_count -ne
+        [int]$evidenceManifest.publicWrapper.launchCount) -or
+    ([int]$wrapperInvocation[0].warmup_count -ne
+        [int]$evidenceManifest.publicWrapper.warmupCount) -or
+    ([int]$wrapperInvocation[0].iteration_count -ne
+        [int]$evidenceManifest.publicWrapper.iterationCount) -or
+    ($wrapperInvocation[0].result -ne 'PASS') -or
+    (-not (Test-Path -LiteralPath (
+        Join-Path $raw ('logs\' + $wrapperInvocation[0].log)) -PathType Leaf))) {
+    throw 'Cross-CWD public wrapper invocation is incomplete.'
+}
+
+$crossCwd = @(Import-Csv (Join-Path $raw 'cross-cwd-summary.csv'))
+if (($crossCwd.Count -ne 1) -or
+    ([int]$crossCwd[0].benchmark_rows -ne
+        [int]$evidenceManifest.crossCwd.benchmarkRows) -or
+    ([int]$crossCwd[0].controls -ne [int]$evidenceManifest.crossCwd.controls) -or
+    ([int]$crossCwd[0].launch_count -ne
+        [int]$evidenceManifest.crossCwd.launchCount) -or
+    ([int]$crossCwd[0].warmup_count -ne
+        [int]$evidenceManifest.crossCwd.warmupCount) -or
+    ([int]$crossCwd[0].iteration_count -ne
+        [int]$evidenceManifest.crossCwd.iterationCount) -or
+    ($crossCwd[0].result -ne 'PASS') -or
+    (-not (Test-Path -LiteralPath (
+        Join-Path $raw ('logs\' + $crossCwd[0].log)) -PathType Leaf))) {
+    throw 'Cross-CWD benchmark control is incomplete.'
+}
+
+$coreRootControl = @(Import-Csv (Join-Path $raw 'core-root-control-summary.csv'))
+if (($coreRootControl.Count -ne 1) -or
+    ($coreRootControl[0].missing_file -ne
+        $evidenceManifest.coreRootControl.missingFile) -or
+    ($coreRootControl[0].result -ne $evidenceManifest.coreRootControl.result) -or
+    (-not (Test-Path -LiteralPath (
+        Join-Path $raw ('logs\' + $coreRootControl[0].log)) -PathType Leaf))) {
+    throw 'Incomplete CoreRoot rejection control is incomplete.'
 }
 
 function Get-CanonicalIdentity([string]$Path) {

@@ -15,6 +15,7 @@ docs\design\lxr-port\P2.1\side-metadata-test-platform.cpp
 docs\design\lxr-port\P2.1\side-metadata-validation.cpp
 docs\design\lxr-port\P2.1\source-manifest.txt
 docs\design\lxr-port\P2.1\verify-side-metadata-gate.ps1
+docs\design\lxr-port\P2.1\verify-side-metadata-cross-cwd.ps1
 docs\design\lxr-port\P2.1\verify-side-metadata.ps1
 docs\design\lxr-port\README.md
 src\coreclr\gc\CMakeLists.txt

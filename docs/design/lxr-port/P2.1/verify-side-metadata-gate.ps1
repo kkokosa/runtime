@@ -113,6 +113,20 @@ foreach ($relative in Get-Content (
         throw "Source authority commit differs for $relative"
     }
 }
+$evidenceManifest = Get-Content (
+    Join-Path $RepositoryRoot 'docs\design\lxr-port\P2.1\evidence-manifest.json') -Raw |
+    ConvertFrom-Json
+$instrumentCommit = $evidenceManifest.benchmark.instrumentCommit
+git -C $RepositoryRoot cat-file -e "$instrumentCommit`^{commit}"
+if ($LASTEXITCODE -ne 0) {
+    throw 'The recorded benchmark instrument commit does not exist.'
+}
+foreach ($gitPath in $evidenceManifest.benchmark.instrumentPaths) {
+    git -C $RepositoryRoot diff --quiet $instrumentCommit HEAD -- $gitPath
+    if ($LASTEXITCODE -ne 0) {
+        throw "Benchmark instrument commit differs for $gitPath"
+    }
+}
 git -C $RepositoryRoot archive --format=tar --output=$archive HEAD
 if ($LASTEXITCODE -ne 0) {
     throw 'Unable to create the exact HEAD archive.'
@@ -124,6 +138,43 @@ if ($LASTEXITCODE -ne 0) {
 
 Invoke-Verifier 'clean-1' $clean $true ''
 Invoke-Verifier 'clean-2' $clean $true ''
+
+$behaviorSource = Join-Path $clean 'src\coreclr\gc\side_metadata.cpp'
+$behaviorBackup = Join-Path $runRoot 'side_metadata.cpp.clean'
+Copy-Item -LiteralPath $behaviorSource -Destination $behaviorBackup
+try {
+    Replace-ExactlyOnce `
+        $behaviorSource `
+        'uintptr_t newWord = (oldWord & ~location.mask) | ((newValue << location.shift) & location.mask);' `
+        'uintptr_t newWord = oldWord;'
+    $behaviorOutput = Join-Path $runRoot 'behavioral-atomicity'
+    $behaviorLog = Join-Path $runRoot 'behavioral-atomicity.log'
+    & powershell.exe -NoProfile -ExecutionPolicy Bypass -File `
+        (Join-Path $clean 'docs\design\lxr-port\P2.1\run-side-metadata-validation.ps1') `
+        -RepositoryRoot $clean `
+        -OutputDirectory $behaviorOutput *> $behaviorLog
+    $behaviorExit = $LASTEXITCODE
+    $validatorLog = Join-Path $behaviorOutput 'x64\run.log'
+    $validatorText = if (Test-Path -LiteralPath $validatorLog) {
+        Get-Content -LiteralPath $validatorLog -Raw
+    } else {
+        ''
+    }
+    if (($behaviorExit -eq 0) -or
+        ($validatorText -notmatch 'FAIL: neighbor field update was not lost')) {
+        throw "Behavioral atomicity control did not fail as expected. See $behaviorLog."
+    }
+    $summary.Add([pscustomobject][ordered]@{
+        name = 'behavioral-atomicity'
+        expected = 'fail'
+        exit_code = $behaviorExit
+        expected_reason = 'neighbor field update loss'
+        result = 'PASS'
+        log = [IO.Path]::GetFileName($behaviorLog)
+    })
+} finally {
+    Copy-Item -LiteralPath $behaviorBackup -Destination $behaviorSource -Force
+}
 
 $tree = New-PerturbationTree 'mapping-address-bits'
 Replace-ExactlyOnce `
@@ -176,9 +227,10 @@ Invoke-Verifier 'neighbor-validation-missing' $tree $false 'Validation platform 
 $tree = New-PerturbationTree 'neighbor-validation-failure'
 $path = Join-Path $tree 'docs\design\lxr-port\P2.1\raw\validation-summary.csv'
 $rows = @(Import-Csv $path)
-$rows[0].passed = ([int]$rows[0].total - 1).ToString()
+$rows[0].passed = '1'
+$rows[0].total = '1'
 $rows | Export-Csv $path -NoTypeInformation
-Invoke-Verifier 'neighbor-validation-failure' $tree $false 'Validation platform evidence is incomplete.'
+Invoke-Verifier 'neighbor-validation-failure' $tree $false 'Validation total differs for'
 
 $tree = New-PerturbationTree 'bounds-global-anchor'
 Replace-ExactlyOnce `
@@ -256,6 +308,6 @@ $rows | Export-Csv $path -NoTypeInformation
 Invoke-Verifier 'benchmark-noise' $tree $false 'Benchmark A/A noise control is incomplete.'
 
 $summary | Export-Csv (Join-Path $runRoot 'gate-summary.csv') -NoTypeInformation
-Write-Host 'PASS: 2 clean archive runs and 18 independent perturbations'
+Write-Host 'PASS: 2 clean archive runs, 18 evidence perturbations, and 1 behavioral atomicity control'
 Write-Host "Output: $runRoot"
 exit 0

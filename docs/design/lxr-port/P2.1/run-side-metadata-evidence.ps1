@@ -20,9 +20,31 @@ $scriptRoot = Split-Path -Parent $MyInvocation.MyCommand.Path
 if (-not $RepositoryRoot) {
     $RepositoryRoot = (Resolve-Path (Join-Path $scriptRoot '..\..\..\..')).Path
 }
+$RepositoryRoot = (Resolve-Path -LiteralPath $RepositoryRoot).Path
+$RuntimeRoot = (Resolve-Path -LiteralPath $RuntimeRoot).Path
 if (-not $OutputDirectory) {
     $OutputDirectory = Join-Path $RepositoryRoot (
         'artifacts\P2.1\full-evidence\' + [guid]::NewGuid().ToString('N'))
+} else {
+    $OutputDirectory = [IO.Path]::GetFullPath($OutputDirectory)
+}
+
+$requiredCoreRootFiles = @(
+    'corerun.exe',
+    'coreclr.dll',
+    'clrgc.dll',
+    'clrjit.dll',
+    'System.Private.CoreLib.dll',
+    'System.Runtime.dll',
+    'System.Console.dll'
+)
+foreach ($file in $requiredCoreRootFiles) {
+    $path = Join-Path $RuntimeRoot $file
+    if (-not (Test-Path -LiteralPath $path -PathType Leaf)) {
+        throw (
+            "RuntimeRoot must be a complete CoreRoot; missing '$file' in " +
+            "'$RuntimeRoot'.")
+    }
 }
 
 New-Item -ItemType Directory -Path $OutputDirectory -Force | Out-Null
