@@ -48,7 +48,7 @@ function Get-CanonicalIdentity([string]$Path) {
     $bytes = [Text.UTF8Encoding]::new($false).GetBytes($text)
     $algorithm = [Security.Cryptography.SHA256]::Create()
     try {
-        $hash = [Convert]::ToHexString($algorithm.ComputeHash($bytes))
+        $hash = [BitConverter]::ToString($algorithm.ComputeHash($bytes)).Replace('-', '')
     } finally {
         $algorithm.Dispose()
     }
