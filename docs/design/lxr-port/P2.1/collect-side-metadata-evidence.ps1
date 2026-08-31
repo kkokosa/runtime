@@ -24,13 +24,47 @@ if (-not $RepositoryRoot) {
     $RepositoryRoot = (Resolve-Path (Join-Path $scriptRoot '..\..\..\..')).Path
 }
 New-Item -ItemType Directory -Path $OutputDirectory -Force | Out-Null
+$logs = Join-Path $OutputDirectory 'logs'
+New-Item -ItemType Directory -Path $logs -Force | Out-Null
 
-$validation = @(
+$windowsRows = @(
     Import-Csv (Join-Path $WindowsValidation 'validation-summary.csv')
-) + @(
+)
+$linuxRows = @(
     Import-Csv (Join-Path $LinuxValidation 'validation-summary.csv')
 )
-$validation | Export-Csv (Join-Path $OutputDirectory 'validation-summary.csv') -NoTypeInformation
+$validation = [Collections.Generic.List[object]]::new()
+foreach ($row in $windowsRows) {
+    $logName = "validation-$($row.platform).log"
+    Copy-Item -LiteralPath $row.log -Destination (Join-Path $logs $logName) -Force
+    $validation.Add([pscustomobject][ordered]@{
+        platform = $row.platform
+        passed = $row.passed
+        total = $row.total
+        result = $row.result
+        log = "logs\$logName"
+    })
+}
+foreach ($row in $linuxRows) {
+    $logName = "validation-$($row.platform).log"
+    Copy-Item -LiteralPath (Join-Path $LinuxValidation 'run.log') `
+        -Destination (Join-Path $logs $logName) -Force
+    $validation.Add([pscustomobject][ordered]@{
+        platform = $row.platform
+        passed = $row.passed
+        total = $row.total
+        result = $row.result
+        log = "logs\$logName"
+    })
+}
+$validation |
+    Export-Csv (Join-Path $OutputDirectory 'validation-summary.csv') -NoTypeInformation
+Copy-Item -LiteralPath (Join-Path $WindowsValidation 'attempts.csv') `
+    -Destination (Join-Path $OutputDirectory 'windows-validation-attempts.csv') -Force
+Copy-Item -LiteralPath (Join-Path $LinuxValidation 'validation-summary.csv') `
+    -Destination (Join-Path $OutputDirectory 'linux-validation-summary.csv') -Force
+Copy-Item -LiteralPath (Join-Path $LinuxValidation 'command.txt') `
+    -Destination (Join-Path $OutputDirectory 'linux-validation-command.txt') -Force
 
 foreach ($file in @(
     'benchmark-raw.csv',

@@ -111,12 +111,15 @@ $requiredEvidence = @(
     'benchmark-identity.csv',
     'benchmark-raw.csv',
     'build-summary.csv',
+    'linux-validation-command.txt',
+    'linux-validation-summary.csv',
     'public-wrapper-smoke-summary.csv',
     'platform-summary.csv',
     'runtime-smoke-summary.csv',
     'source-commit.txt',
     'source-identities.csv',
-    'validation-summary.csv'
+    'validation-summary.csv',
+    'windows-validation-attempts.csv'
 )
 foreach ($file in $requiredEvidence) {
     if (-not (Test-Path -LiteralPath (Join-Path $raw $file) -PathType Leaf)) {
@@ -138,6 +141,28 @@ if (($validation.Count -ne $expectedValidation.Count) -or
         ([int]$_.total -le 0)
     }).Count -ne 0)) {
     throw 'Validation platform evidence is incomplete.'
+}
+foreach ($row in $validation) {
+    $log = Join-Path $raw $row.log
+    if (-not (Test-Path -LiteralPath $log -PathType Leaf)) {
+        throw "Validation log is missing: $($row.log)"
+    }
+    $match = Select-String -LiteralPath $log -Pattern '(\d+)/(\d+) side metadata checks passed'
+    if (($match.Count -ne 1) -or
+        ([int]$match.Matches[0].Groups[1].Value -ne [int]$row.passed) -or
+        ([int]$match.Matches[0].Groups[2].Value -ne [int]$row.total)) {
+        throw "Validation log count differs for $($row.platform)."
+    }
+}
+
+$linuxValidation = @(Import-Csv (Join-Path $raw 'linux-validation-summary.csv'))
+$linuxSummary = @($validation | Where-Object platform -eq 'linux-x64')
+if (($linuxValidation.Count -ne 1) -or
+    ($linuxSummary.Count -ne 1) -or
+    ([int]$linuxValidation[0].passed -ne [int]$linuxSummary[0].passed) -or
+    ([int]$linuxValidation[0].total -ne [int]$linuxSummary[0].total) -or
+    ($linuxValidation[0].result -ne $linuxSummary[0].result)) {
+    throw 'Linux validation summary differs from the platform evidence.'
 }
 
 $runtime = @(Import-Csv (Join-Path $raw 'runtime-smoke-summary.csv'))

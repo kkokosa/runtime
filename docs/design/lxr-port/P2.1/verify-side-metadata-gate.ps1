@@ -94,6 +94,25 @@ $status = @(git -C $RepositoryRoot -c core.longpaths=true status --porcelain=v1)
 if ($status.Count -ne 0) {
     throw 'The exact-archive gate requires no untracked files.'
 }
+$sourceCommit = (
+    Get-Content (
+        Join-Path $RepositoryRoot 'docs\design\lxr-port\P2.1\raw\source-commit.txt') -Raw
+).Trim()
+git -C $RepositoryRoot cat-file -e "$sourceCommit`^{commit}"
+if ($LASTEXITCODE -ne 0) {
+    throw 'The recorded source authority commit does not exist.'
+}
+foreach ($relative in Get-Content (
+    Join-Path $RepositoryRoot 'docs\design\lxr-port\P2.1\source-manifest.txt')) {
+    if (-not $relative) {
+        continue
+    }
+    $gitPath = $relative.Replace('\', '/')
+    git -C $RepositoryRoot diff --quiet $sourceCommit HEAD -- $gitPath
+    if ($LASTEXITCODE -ne 0) {
+        throw "Source authority commit differs for $relative"
+    }
+}
 git -C $RepositoryRoot archive --format=tar --output=$archive HEAD
 if ($LASTEXITCODE -ne 0) {
     throw 'Unable to create the exact HEAD archive.'
