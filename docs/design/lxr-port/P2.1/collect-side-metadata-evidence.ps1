@@ -74,14 +74,6 @@ foreach ($file in @(
     Copy-Item -LiteralPath (Join-Path $Benchmark $file) `
         -Destination (Join-Path $OutputDirectory $file) -Force
 }
-$benchmarkIdentityPath = Join-Path $OutputDirectory 'benchmark-identity.csv'
-$benchmarkIdentity = @(Import-Csv $benchmarkIdentityPath)
-$evidenceManifest = Get-Content (Join-Path $scriptRoot 'evidence-manifest.json') -Raw |
-    ConvertFrom-Json
-$benchmarkIdentity |
-    Add-Member -NotePropertyName instrument_commit `
-        -NotePropertyValue $evidenceManifest.benchmark.instrumentCommit -Force
-$benchmarkIdentity | Export-Csv $benchmarkIdentityPath -NoTypeInformation
 Copy-Item -LiteralPath (Join-Path $RuntimeSmoke 'runtime-smoke-summary.csv') `
     -Destination (Join-Path $OutputDirectory 'runtime-smoke-summary.csv') -Force
 

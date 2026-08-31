@@ -244,8 +244,6 @@ if (($benchmarkIdentity.Count -ne 1) -or
     ([int]$benchmarkIdentity[0].iteration_count -ne
         [int]$evidenceManifest.benchmark.iterationCount) -or
     ([int]$benchmarkIdentity[0].rows -ne $expectedBenchmarkRows) -or
-    ($benchmarkIdentity[0].instrument_commit -ne
-        $evidenceManifest.benchmark.instrumentCommit) -or
     ($benchmarkIdentity[0].native_sha256 -ne
         $evidenceManifest.benchmark.nativeSha256) -or
     ($benchmarkIdentity[0].benchmark_runtime -notmatch '^\.NET 11\.0') -or

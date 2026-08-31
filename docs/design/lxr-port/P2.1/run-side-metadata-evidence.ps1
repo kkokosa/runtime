@@ -50,6 +50,26 @@ foreach ($file in $requiredCoreRootFiles) {
 New-Item -ItemType Directory -Path $OutputDirectory -Force | Out-Null
 $steps = [Collections.Generic.List[object]]::new()
 
+function Get-PhysicalWindowsPath([string]$Path) {
+    $physical = $Path
+    $drive = [IO.Path]::GetPathRoot($physical).TrimEnd('\')
+    $mapping = @(
+        & $env:ComSpec /d /c subst |
+            Where-Object { $_.StartsWith($drive, [StringComparison]::OrdinalIgnoreCase) })
+    if ($mapping.Count -eq 1) {
+        $arrow = $mapping[0].IndexOf('=>')
+        $target = $mapping[0].Substring($arrow + 2).Trim().TrimEnd('\')
+        $physical = $target + $physical.Substring($drive.Length)
+    }
+    return $physical
+}
+
+function Convert-ToWslPath([string]$Path) {
+    $physical = Get-PhysicalWindowsPath $Path
+    $driveLetter = $physical.Substring(0, 1).ToLowerInvariant()
+    return '/mnt/' + $driveLetter + $physical.Substring(2).Replace('\', '/')
+}
+
 function Invoke-Step([string]$name, [scriptblock]$body) {
     $started = [DateTimeOffset]::UtcNow
     & $body
@@ -71,21 +91,9 @@ Invoke-Step 'windows-validation' {
 }
 
 Invoke-Step 'linux-validation' {
-    $physicalRoot = (Resolve-Path $RepositoryRoot).Path
-    $drive = [IO.Path]::GetPathRoot($physicalRoot).TrimEnd('\')
-    $subst = @(
-        & $env:ComSpec /d /c subst |
-            Where-Object { $_.StartsWith($drive, [StringComparison]::OrdinalIgnoreCase) })
-    if ($subst.Count -eq 1) {
-        $arrow = $subst[0].IndexOf('=>')
-        $physicalRoot = $subst[0].Substring($arrow + 2).Trim()
-    }
-    $driveLetter = $physicalRoot.Substring(0, 1).ToLowerInvariant()
-    $linuxRoot = '/mnt/' + $driveLetter + $physicalRoot.Substring(2).Replace('\', '/')
+    $linuxRoot = Convert-ToWslPath $RepositoryRoot
     $windowsLinuxOutput = Join-Path $OutputDirectory 'linux-validation'
-    $outputDriveLetter = $windowsLinuxOutput.Substring(0, 1).ToLowerInvariant()
-    $linuxOutput =
-        '/mnt/' + $outputDriveLetter + $windowsLinuxOutput.Substring(2).Replace('\', '/')
+    $linuxOutput = Convert-ToWslPath $windowsLinuxOutput
     & wsl.exe bash -lc (
         "cd '$linuxRoot' && " +
         "bash docs/design/lxr-port/P2.1/run-side-metadata-validation.sh " +
