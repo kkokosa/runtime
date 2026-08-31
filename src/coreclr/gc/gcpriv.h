@@ -4955,7 +4955,8 @@ private:
             change_too_soon = 0x0008
         };
 
-        adjust_metric should_change_hc (int max_hc_datas, int min_hc_datas, int max_hc_growth, int& change_int, size_t current_gc_index,
+        adjust_metric should_change_hc (int max_hc_datas, int min_hc_datas, int max_hc_growth, bool adjust_budget_at_heap_limit,
+                                        int& change_int, size_t current_gc_index,
                                         // These are only for diagnostics.
                                         decide_adjustment_reason* adj_reason, int* hc_change_freq_factor, hc_change_freq_reason* hc_freq_reason)
         {
@@ -5059,6 +5060,13 @@ private:
                         adj_metric = not_adjusted;
                     }
                 }
+            }
+
+            if (adjust_budget_at_heap_limit && (adj_metric == adjust_hc))
+            {
+                adj_metric = adjust_budget;
+                *adj_reason = (decide_adjustment_reason)((int)*adj_reason | decide_adjustment_reason::limited_by_bounds);
+                dprintf (6666, ("heap growth is limited by the runtime heap-count limit; adjust budget instead"));
             }
 
             dprintf (6666, ("conclusion: %s", str_adjust_metrics[adj_metric]));

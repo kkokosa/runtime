@@ -26138,8 +26138,19 @@ void gc_heap::calculate_new_heap_count ()
 
             if (change_int)
             {
+                bool adjust_budget_at_heap_limit =
+                    (change_int > 0) &&
+                    (max_heap_count_growth_step > 0) &&
+                    (max_heap_count_growth_datas > 0) &&
+                    (max_heap_count_growth_core == 0) &&
+                    GCConfig::GetGCDynamicAdaptationBudgetAtHeapLimit();
+                int max_heap_count_growth_for_decision = adjust_budget_at_heap_limit ?
+                    min (max_heap_count_growth_step, max_heap_count_growth_datas) :
+                    max_heap_count_growth;
+
                 adj_metric = dynamic_heap_count_data.should_change_hc (max_heap_count_datas, min_heap_count_datas,
-                                                                       max_heap_count_growth, change_int, current_gc_index,
+                                                                       max_heap_count_growth_for_decision, adjust_budget_at_heap_limit,
+                                                                       change_int, current_gc_index,
                                                                        &adj_reason, &hc_change_freq_factor, &hc_freq_reason);
 
                 // If we decide to change budget, we let the next GC calculate the right budget, ie, we delay changing by one GC which is acceptable.
