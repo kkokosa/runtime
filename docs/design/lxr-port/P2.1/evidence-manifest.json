@@ -1,0 +1,142 @@
+{
+  "schemaVersion": 1,
+  "validationPlatforms": [
+    "windows-x64",
+    "windows-x86",
+    "linux-x64"
+  ],
+  "runtimeDimensions": {
+    "polarity": [
+      "0",
+      "1"
+    ],
+    "linkage": [
+      "linked",
+      "standalone"
+    ],
+    "gcMode": [
+      "Workstation",
+      "Server"
+    ]
+  },
+  "buildNames": [
+    "long-path-baseline",
+    "authorized-short-baseline",
+    "test-enabled-x64-debug",
+    "default-x64-debug",
+    "x86-release-target",
+    "arm64-release-target",
+    "final-full-build"
+  ],
+  "benchmark": {
+    "launchCount": 3,
+    "warmupCount": 8,
+    "iterationCount": 20,
+    "aaMinimum": 0.9,
+    "aaMaximum": 1.1,
+    "sensitivityMinimum": 1.5
+  },
+  "publicWrapper": {
+    "steps": [
+      "windows-validation",
+      "linux-validation",
+      "runtime-smoke",
+      "benchmark"
+    ],
+    "launchCount": 1,
+    "warmupCount": 1,
+    "iterationCount": 3
+  },
+  "perturbations": [
+    {
+      "id": "mapping-address-bits",
+      "property": "mapping-formula",
+      "payload": "manifest-address-bits"
+    },
+    {
+      "id": "mapping-source-constant",
+      "property": "mapping-formula",
+      "payload": "source-address-bits"
+    },
+    {
+      "id": "granularity-rc-data",
+      "property": "granularity",
+      "payload": "manifest-rc-log-bytes"
+    },
+    {
+      "id": "granularity-rc-width",
+      "property": "granularity",
+      "payload": "manifest-remove-8-bit"
+    },
+    {
+      "id": "atomicity-cas-source",
+      "property": "atomicity",
+      "payload": "source-cas"
+    },
+    {
+      "id": "atomicity-load-source",
+      "property": "atomicity",
+      "payload": "source-load"
+    },
+    {
+      "id": "neighbor-validation-missing",
+      "property": "neighbor-update-loss",
+      "payload": "delete-validation-row"
+    },
+    {
+      "id": "neighbor-validation-failure",
+      "property": "neighbor-update-loss",
+      "payload": "decrement-pass-count"
+    },
+    {
+      "id": "bounds-global-anchor",
+      "property": "bounds-page-edge",
+      "payload": "manifest-global-base"
+    },
+    {
+      "id": "bounds-source-anchor",
+      "property": "bounds-page-edge",
+      "payload": "source-global-base"
+    },
+    {
+      "id": "bulk-missing-row",
+      "property": "bulk-partial-word",
+      "payload": "delete-bulk-row"
+    },
+    {
+      "id": "bulk-duplicate-row",
+      "property": "bulk-partial-word",
+      "payload": "duplicate-reset-row"
+    },
+    {
+      "id": "identity-hash",
+      "property": "manifest-source-identity",
+      "payload": "change-hash"
+    },
+    {
+      "id": "identity-path",
+      "property": "manifest-source-identity",
+      "payload": "change-path"
+    },
+    {
+      "id": "evidence-missing-file",
+      "property": "missing-duplicate-evidence",
+      "payload": "delete-controls"
+    },
+    {
+      "id": "evidence-duplicate-validation",
+      "property": "missing-duplicate-evidence",
+      "payload": "duplicate-validation"
+    },
+    {
+      "id": "benchmark-sensitivity",
+      "property": "benchmark-sensitivity",
+      "payload": "lower-extra-cas-ratio"
+    },
+    {
+      "id": "benchmark-noise",
+      "property": "benchmark-sensitivity",
+      "payload": "raise-aa-ratio"
+    }
+  ]
+}

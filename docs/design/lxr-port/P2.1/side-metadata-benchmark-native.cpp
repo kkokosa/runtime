@@ -5,6 +5,7 @@
 #include "../../../../src/coreclr/gc/env/gcenv.h"
 #include "../../../../src/coreclr/gc/side_metadata.h"
 
+#include <atomic>
 #include <stdlib.h>
 #include <thread>
 
@@ -25,6 +26,13 @@ constexpr size_t FalseSharingIterations = 10000;
 
 LxrSideMetadataLayout* s_layout;
 SideMetadataManager* s_manager;
+std::thread s_false_sharing_first;
+std::thread s_false_sharing_second;
+std::atomic<uint32_t> s_false_sharing_generation;
+std::atomic<uint32_t> s_false_sharing_completed;
+std::atomic<size_t> s_false_sharing_distance;
+std::atomic<bool> s_false_sharing_failed;
+std::atomic<bool> s_false_sharing_stopping;
 
 struct BulkChecksum
 {
@@ -41,6 +49,69 @@ bool AccumulateWord(uintptr_t address, uintptr_t value, uintptr_t coverage, void
 uintptr_t AddressAt(size_t index)
 {
     return DataStart + ((index & (AddressCount - 1)) * 8);
+}
+
+void FalseSharingWorker(bool second)
+{
+    uint32_t observedGeneration = 0;
+    while (true)
+    {
+        uint32_t generation;
+        while ((generation = s_false_sharing_generation.load(std::memory_order_seq_cst)) ==
+            observedGeneration)
+        {
+            std::this_thread::yield();
+        }
+        observedGeneration = generation;
+        if (s_false_sharing_stopping.load(std::memory_order_seq_cst))
+        {
+            return;
+        }
+
+        uintptr_t address = DataStart;
+        if (second)
+        {
+            address += s_false_sharing_distance.load(std::memory_order_seq_cst);
+        }
+        for (size_t index = 0; index < FalseSharingIterations; index++)
+        {
+            if (s_manager->Store(
+                    LxrSideMetadataKind::FieldUnlogged,
+                    address,
+                    index & 1,
+                    SideMetadataMemoryOrder::SequentiallyConsistent) !=
+                SideMetadataResult::Success)
+            {
+                s_false_sharing_failed.store(true, std::memory_order_seq_cst);
+                break;
+            }
+        }
+        s_false_sharing_completed.fetch_add(1, std::memory_order_seq_cst);
+    }
+}
+
+void StartFalseSharingWorkers()
+{
+    s_false_sharing_generation.store(0, std::memory_order_seq_cst);
+    s_false_sharing_completed.store(0, std::memory_order_seq_cst);
+    s_false_sharing_distance.store(0, std::memory_order_seq_cst);
+    s_false_sharing_failed.store(false, std::memory_order_seq_cst);
+    s_false_sharing_stopping.store(false, std::memory_order_seq_cst);
+    s_false_sharing_first = std::thread(FalseSharingWorker, false);
+    s_false_sharing_second = std::thread(FalseSharingWorker, true);
+}
+
+void StopFalseSharingWorkers()
+{
+    if (!s_false_sharing_first.joinable())
+    {
+        return;
+    }
+
+    s_false_sharing_stopping.store(true, std::memory_order_seq_cst);
+    s_false_sharing_generation.fetch_add(1, std::memory_order_seq_cst);
+    s_false_sharing_first.join();
+    s_false_sharing_second.join();
 }
 
 uintptr_t ResetBatch(size_t operationCount, size_t dataSize)
@@ -84,11 +155,13 @@ int32_t Initialize(uint8_t logReferenceCountBits, size_t dataSize)
         return -5;
     }
 
+    StartFalseSharingWorkers();
     return 0;
 }
 
 void Shutdown()
 {
+    StopFalseSharingWorkers();
     delete s_manager;
     delete s_layout;
     s_manager = nullptr;
@@ -277,41 +350,17 @@ P21_EXPORT P21_NOINLINE uintptr_t P21_ReserveAndFirstCommit(uint8_t logReference
 
 P21_EXPORT P21_NOINLINE uintptr_t P21_FalseSharingBatch(size_t dataDistance)
 {
-    std::thread first(
-        []() -> void
-        {
-            for (size_t index = 0; index < FalseSharingIterations; index++)
-            {
-                if (s_manager->Store(
-                    LxrSideMetadataKind::FieldUnlogged,
-                    DataStart,
-                    index & 1,
-                    SideMetadataMemoryOrder::SequentiallyConsistent) !=
-                    SideMetadataResult::Success)
-                {
-                    abort();
-                }
-            }
-        });
-    std::thread second(
-        [dataDistance]() -> void
-        {
-            for (size_t index = 0; index < FalseSharingIterations; index++)
-            {
-                if (s_manager->Store(
-                    LxrSideMetadataKind::FieldUnlogged,
-                    DataStart + dataDistance,
-                    index & 1,
-                    SideMetadataMemoryOrder::SequentiallyConsistent) !=
-                    SideMetadataResult::Success)
-                {
-                    abort();
-                }
-            }
-        });
-    first.join();
-    second.join();
-    return dataDistance;
+    s_false_sharing_distance.store(dataDistance, std::memory_order_seq_cst);
+    s_false_sharing_failed.store(false, std::memory_order_seq_cst);
+    s_false_sharing_completed.store(0, std::memory_order_seq_cst);
+    s_false_sharing_generation.fetch_add(1, std::memory_order_seq_cst);
+    while (s_false_sharing_completed.load(std::memory_order_seq_cst) != 2)
+    {
+        std::this_thread::yield();
+    }
+    return s_false_sharing_failed.load(std::memory_order_seq_cst)
+        ? UINTPTR_MAX
+        : dataDistance;
 }
 
 P21_EXPORT P21_NOINLINE uintptr_t P21_ExtraCasSensitivityBatch(size_t operationCount)

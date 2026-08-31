@@ -1,0 +1,5 @@
+"attempt","name","authorized","exit_code","outcome","next_action"
+"1","long-path-baseline","True","1","path failure","stopped and requested authorization"
+"2","short-path-baseline","True","0","pass","implementation unlocked"
+"3","parallel-x86-cross-build","True","1","shared Restore-Build.proj.binlog collision with concurrent ARM64 build","rerun unchanged and sequentially"
+"4","sequential-x86-cross-build","True","0","pass","recorded"

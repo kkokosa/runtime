@@ -1,0 +1,149 @@
+
+  Determining projects to restore...
+  Cannot find a manifest file. The list of searched paths:
+  
+  No tools were restored.
+  All projects are up-to-date for restore.
+  Determining projects to restore...
+  Restored R:\Build.proj (in 1.62 sec).
+  7 of 8 projects are up-to-date for restore.
+  HelixTestTasks -> R:\artifacts\bin\HelixTestTasks\Debug\net11.0\HelixTestTasks.dll
+  Crossgen2Tasks -> R:\artifacts\bin\Crossgen2Tasks\Debug\Crossgen2Tasks.dll
+  installer.tasks -> R:\artifacts\bin\installer.tasks\Debug\installer.tasks.dll
+  cdac-build-tool -> R:\artifacts\bin\coreclr\windows.x64.Debug\cdac-build-tool\cdac-build-tool.dll
+  Executing "R:\src\coreclr\build-runtime.cmd" -cmakeargs "-DCLR_CMAKE_ENABLE_WRITE_BARRIER_STANDARD_ABI_TEST=1" -x64 -debug -os windows -targetrid win-x64 -cmakeargs "-DCLR_DOTNET_RID=win-x64" -cmakeargs "-DCLR_DOTNET_HOST_PATH='C:\Users\konradkokosa\.copilot\repos\copilot-worktrees\runtime-fork\kkokosa-ideal-sniffle\.dotnet\dotnet.exe'" -cmakeargs "-DCDAC_BUILD_TOOL_BINARY_PATH=R:\artifacts\bin\coreclr\windows.x64.Debug\cdac-build-tool\cdac-build-tool.dll" -cmakeargs "-DFEATURE_DYNAMIC_CODE_COMPILED=1" -cmakeargs "-DCLI_CMAKE_COMMIT_HASH=2f49bf4340822439a031d91786398a379668b25e" -component runtime 
+  BUILD: Starting Build at 15:14:58.47
+  'vswhere.exe' is not recognized as an internal or external command,
+  operable program or batch file.
+  BUILD: Commencing CoreCLR product build
+  BUILD: Checking prerequisites
+  BUILD: Using CMake from C:\Program Files\Microsoft Visual Studio\18\IntPreview\Common7\IDE\CommonExtensions\Microsoft\CMake\CMake\bin\cmake.exe
+  BUILD: Commencing build of native components for windows.x64.Debug
+  BUILD: Using environment: "C:\Program Files\Microsoft Visual Studio\18\IntPreview\VC\Auxiliary\Build\vcvarsall.bat" amd64
+  'vswhere.exe' is not recognized as an internal or external command,
+  operable program or batch file.
+  **********************************************************************
+  ** Visual Studio 2026 Developer Command Prompt v18.0
+  ** Copyright (c) 2026 Microsoft Corporation
+  **********************************************************************
+  [vcvarsall.bat] Environment initialized for: 'x64'
+  BUILD: Regenerating the Visual Studio solution
+  Calling "R:\\eng\native\gen-buildsys.cmd" "R:\src\coreclr" "R:\\artifacts\obj\coreclr\windows.x64.Debug" 18.0 x64 windows "-DCMAKE_BUILD_TYPE=Debug" "-DCLR_CMAKE_TARGET_ARCH=x64" "-DCLR_CMAKE_TARGET_OS=windows" "-DCLI_CMAKE_FALLBACK_OS=win10" "-DCLR_CMAKE_PGO_INSTRUMENT=0" "-DCLR_CMAKE_OPTDATA_PATH=" "-DCLR_CMAKE_PGO_OPTIMIZE=0" "-DCLI_CMAKE_COMMIT_HASH=2f49bf4340822439a031d91786398a379668b25e" "-DFEATURE_DYNAMIC_CODE_COMPILED=1" "-DCDAC_BUILD_TOOL_BINARY_PATH=R:\artifacts\bin\coreclr\windows.x64.Debug\cdac-build-tool\cdac-build-tool.dll" "-DCLR_DOTNET_HOST_PATH='C:\Users\konradkokosa\.copilot\repos\copilot-worktrees\runtime-fork\kkokosa-ideal-sniffle\.dotnet\dotnet.exe'" "-DCLR_DOTNET_RID=win-x64" "-DCLR_CMAKE_ENABLE_WRITE_BARRIER_STANDARD_ABI_TEST=1" 
+  The CMake command line is the same as the last run. Skipping running CMake.
+  running "C:\Program Files\Microsoft Visual Studio\18\IntPreview\Common7\IDE\CommonExtensions\Microsoft\CMake\CMake\bin\cmake.exe" --build R:\\artifacts\obj\coreclr\windows.x64.Debug --target  runtime --config Debug -- 
+  [1/52] Building RC object dlls\mscordbi\CMakeFiles\mscordbi.dir\Native.rc.res
+  [2/52] Building RC object dlls\mscordac\CMakeFiles\mscordaccore.dir\Native.rc.res
+  [3/52] Building RC object tools\aot\jitinterface\CMakeFiles\jitinterface_x64.dir\Native.rc.res
+  [4/52] Building RC object ilasm\CMakeFiles\ilasm.dir\Native.rc.res
+  [5/52] Building RC object jit\CMakeFiles\clrjit.dir\Native.rc.res
+  [6/52] Building RC object hosts\corerun\CMakeFiles\corerun.dir\native.rc.res
+  [7/52] Building RC object dlls\mscordbi_universal\CMakeFiles\mscordbi_universal.dir\__\mscordbi\Native.rc.res
+  [8/52] Building RC object gc\CMakeFiles\clrgcexp.dir\windows\Native.rc.res
+  [9/52] Building RC object gc\CMakeFiles\clrgc.dir\windows\Native.rc.res
+  [10/52] Building RC object interpreter\CMakeFiles\clrinterpreter.dir\Native.rc.res
+  [11/52] Building RC object dlls\clretwrc\CMakeFiles\clretwrc.dir\clretwrc.rc.res
+  [12/52] Building RC object ildasm\exe\CMakeFiles\ildasm.dir\__\dasm.rc.res
+  [13/52] Building RC object debug\createdump\CMakeFiles\createdump.dir\createdump.rc.res
+  [14/52] Building CXX object gc\CMakeFiles\clrgcexp.dir\standardwritebarriertest.cpp.obj
+  [15/52] Building CXX object vm\wks\CMakeFiles\cee_wks_core.dir\__\__\gc\side_metadata.cpp.obj
+  [16/52] Building CXX object gc\CMakeFiles\clrgcexp.dir\side_metadata.cpp.obj
+  [17/52] Building CXX object gc\CMakeFiles\clrgc.dir\side_metadata.cpp.obj
+  [18/52] Building CXX object vm\wks\CMakeFiles\cee_wks_core.dir\__\__\gc\standardwritebarriertest.cpp.obj
+  [19/52] Linking CXX shared library tools\aot\jitinterface\jitinterface_x64.dll
+  [20/52] Building CXX object gc\CMakeFiles\clrgc.dir\standardwritebarriertest.cpp.obj
+  [21/52] Linking CXX shared library dlls\mscordbi_universal\mscordbi_universal.dll
+  [22/52] Linking RC shared library dlls\clretwrc\clretwrc.dll
+  [23/52] Linking CXX executable ilasm\ilasm.exe
+  [24/52] Linking CXX shared library dlls\mscordbi\mscordbi.dll
+  [25/52] Linking CXX shared library interpreter\clrinterpreter.dll
+  [26/52] Linking CXX executable hosts\corerun\corerun.exe
+  [27/52] Linking CXX shared library jit\clrjit.dll
+  [28/52] Linking CXX executable debug\createdump\createdump.exe
+  [29/52] Linking CXX shared library dlls\mscordac\mscordaccore.dll
+  [30/52] Linking CXX executable ildasm\exe\ildasm.exe
+  [31/52] Linking CXX shared library gc\clrgcexp.dll
+  [32/52] Building CXX object Corehost.Static\hostmisc\CMakeFiles\hostmisc.dir\utils.cpp.obj
+  [33/52] Linking CXX shared library gc\clrgc.dll
+  [34/52] Linking CXX static library Corehost.Static\hostmisc\hostmisc.lib
+  [35/52] C:\Windows\system32\cmd.exe /C "cd /D R:\artifacts\obj\coreclr\windows.x64.Debug\dlls\mscoree\coreclr && powershell -NoProfile -ExecutionPolicy ByPass -File R:/src/coreclr/dlls/mscoree/coreclr/GenClrDebugResource.ps1 -dac R:/artifacts/obj/coreclr/windows.x64.Debug/dlls/mscordac/mscordaccore.dll -dbi R:/artifacts/obj/coreclr/windows.x64.Debug/dlls/mscordbi/mscordbi.dll -out R:/artifacts/obj/coreclr/windows.x64.Debug/dlls/mscoree/coreclr/clr_debug_resource.bin"
+  [36/52] C:\Windows\system32\cmd.exe /C "cd /D R:\artifacts\obj\coreclr\windows.x64.Debug && "C:\Program Files\Microsoft Visual Studio\18\IntPreview\Common7\IDE\CommonExtensions\Microsoft\CMake\CMake\bin\cmake.exe" -DCMAKE_INSTALL_COMPONENT=coreclr_misc -DBUILD_TYPE=Debug -P R:/artifacts/obj/coreclr/windows.x64.Debug/cmake_install.cmake"
+  -- Install configuration: "Debug"
+  [37/52] Building RC object dlls\mscoree\coreclr\CMakeFiles\coreclr.dir\__\Native.rc.res
+  [38/52] Building RC object dlls\mscoree\coreclr\CMakeFiles\coreclr_static.dir\__\Native.rc.res
+  [39/52] C:\Windows\system32\cmd.exe /C "cd /D R:\artifacts\obj\coreclr\windows.x64.Debug && "C:\Program Files\Microsoft Visual Studio\18\IntPreview\Common7\IDE\CommonExtensions\Microsoft\CMake\CMake\bin\cmake.exe" -DCMAKE_INSTALL_COMPONENT=jit -DBUILD_TYPE=Debug -P R:/artifacts/obj/coreclr/windows.x64.Debug/cmake_install.cmake"
+  -- Install configuration: "Debug"
+  -- Installing: R:/artifacts/bin/coreclr/windows.x64.Debug/./jitinterface_x64.dll
+  -- Installing: R:/artifacts/bin/coreclr/windows.x64.Debug/PDB/jitinterface_x64.pdb
+  -- Installing: R:/artifacts/bin/coreclr/windows.x64.Debug/./clrjit.dll
+  -- Installing: R:/artifacts/bin/coreclr/windows.x64.Debug/PDB/clrjit.pdb
+  -- Installing: R:/artifacts/bin/coreclr/windows.x64.Debug/sharedFramework/clrjit.dll
+  -- Installing: R:/artifacts/bin/coreclr/windows.x64.Debug/sharedFramework/PDB/clrjit.pdb
+  [40/52] C:\Windows\system32\cmd.exe /C "cd /D R:\artifacts\obj\coreclr\windows.x64.Debug && "C:\Program Files\Microsoft Visual Studio\18\IntPreview\Common7\IDE\CommonExtensions\Microsoft\CMake\CMake\bin\cmake.exe" -DCMAKE_INSTALL_COMPONENT=hosts -DBUILD_TYPE=Debug -P R:/artifacts/obj/coreclr/windows.x64.Debug/cmake_install.cmake"
+  -- Install configuration: "Debug"
+  -- Installing: R:/artifacts/bin/coreclr/windows.x64.Debug/./corerun.exe
+  [41/52] Linking CXX shared library dlls\mscoree\coreclr\coreclr.dll
+  [42/52] Generating mscordaccore module index file -> R:/artifacts/obj/coreclr/windows.x64.Debug/debug/runtimeinfo/dacmoduleindex.h
+  [43/52] Generating coreclr module index file -> R:/artifacts/obj/coreclr/windows.x64.Debug/debug/runtimeinfo/runtimemoduleindex.h
+  [44/52] Generating mscordbi module index file -> R:/artifacts/obj/coreclr/windows.x64.Debug/debug/runtimeinfo/dbimoduleindex.h
+  [45/52] Building CXX object debug\runtimeinfo\CMakeFiles\runtimeinfo.dir\runtimeinfo.cpp.obj
+  [46/52] Linking CXX static library debug\runtimeinfo\runtimeinfo.lib
+  [47/52] Building C object Corehost.Static\CMakeFiles\singlefilehost.dir\R_\src\native\corehost\apphost\apphost.c.obj
+  [48/52] C:\Windows\system32\cmd.exe /C "cd /D R:\artifacts\obj\coreclr\windows.x64.Debug && "C:\Program Files\Microsoft Visual Studio\18\IntPreview\Common7\IDE\CommonExtensions\Microsoft\CMake\CMake\bin\cmake.exe" -DCMAKE_INSTALL_COMPONENT=iltools -DBUILD_TYPE=Debug -P R:/artifacts/obj/coreclr/windows.x64.Debug/cmake_install.cmake"
+  -- Install configuration: "Debug"
+  -- Installing: R:/artifacts/bin/coreclr/windows.x64.Debug/./ilasm.exe
+  -- Installing: R:/artifacts/bin/coreclr/windows.x64.Debug/PDB/ilasm.pdb
+  -- Installing: R:/artifacts/bin/coreclr/windows.x64.Debug/./ildasm.exe
+  -- Installing: R:/artifacts/bin/coreclr/windows.x64.Debug/PDB/ildasm.pdb
+  [49/52] Linking CXX static library dlls\mscoree\coreclr\coreclr_static.lib
+  [50/52] Linking CXX executable Corehost.Static\singlefilehost.exe
+  [51/52] C:\Windows\system32\cmd.exe /C "cd /D R:\artifacts\obj\coreclr\windows.x64.Debug && "C:\Program Files\Microsoft Visual Studio\18\IntPreview\Common7\IDE\CommonExtensions\Microsoft\CMake\CMake\bin\cmake.exe" -DCMAKE_INSTALL_COMPONENT=debug -DBUILD_TYPE=Debug -P R:/artifacts/obj/coreclr/windows.x64.Debug/cmake_install.cmake"
+  -- Install configuration: "Debug"
+  -- Installing: R:/artifacts/bin/coreclr/windows.x64.Debug/./mscordbi.dll
+  -- Installing: R:/artifacts/bin/coreclr/windows.x64.Debug/PDB/mscordbi.pdb
+  -- Installing: R:/artifacts/bin/coreclr/windows.x64.Debug/sharedFramework/mscordbi.dll
+  -- Installing: R:/artifacts/bin/coreclr/windows.x64.Debug/sharedFramework/PDB/mscordbi.pdb
+  -- Installing: R:/artifacts/bin/coreclr/windows.x64.Debug/./mscordbi_universal.dll
+  -- Installing: R:/artifacts/bin/coreclr/windows.x64.Debug/PDB/mscordbi_universal.pdb
+  -- Installing: R:/artifacts/bin/coreclr/windows.x64.Debug/./mscordaccore.dll
+  -- Installing: R:/artifacts/bin/coreclr/windows.x64.Debug/PDB/mscordaccore.pdb
+  -- Installing: R:/artifacts/bin/coreclr/windows.x64.Debug/sharedFramework/mscordaccore.dll
+  -- Installing: R:/artifacts/bin/coreclr/windows.x64.Debug/sharedFramework/PDB/mscordaccore.pdb
+  -- Installing: R:/artifacts/bin/coreclr/windows.x64.Debug/sharedFramework/mscordaccore_amd64_amd64_42.42.42.42424.dll
+  -- Installing: R:/artifacts/bin/coreclr/windows.x64.Debug/sharedFramework/PDB/mscordaccore_amd64_amd64_42.42.42.42424.pdb
+  [52/52] C:\Windows\system32\cmd.exe /C "cd /D R:\artifacts\obj\coreclr\windows.x64.Debug && "C:\Program Files\Microsoft Visual Studio\18\IntPreview\Common7\IDE\CommonExtensions\Microsoft\CMake\CMake\bin\cmake.exe" -DCMAKE_INSTALL_COMPONENT=runtime -DBUILD_TYPE=Debug -P R:/artifacts/obj/coreclr/windows.x64.Debug/cmake_install.cmake"
+  -- Install configuration: "Debug"
+  -- Installing: R:/artifacts/bin/coreclr/windows.x64.Debug/corehost/PDB/singlefilehost.pdb
+  -- Installing: R:/artifacts/bin/coreclr/windows.x64.Debug/corehost/singlefilehost.exe
+  -- Installing: R:/artifacts/bin/coreclr/windows.x64.Debug/./clrgcexp.dll
+  -- Installing: R:/artifacts/bin/coreclr/windows.x64.Debug/PDB/clrgcexp.pdb
+  -- Installing: R:/artifacts/bin/coreclr/windows.x64.Debug/./clrgc.dll
+  -- Installing: R:/artifacts/bin/coreclr/windows.x64.Debug/PDB/clrgc.pdb
+  -- Installing: R:/artifacts/bin/coreclr/windows.x64.Debug/sharedFramework/clrgc.dll
+  -- Installing: R:/artifacts/bin/coreclr/windows.x64.Debug/sharedFramework/PDB/clrgc.pdb
+  -- Installing: R:/artifacts/bin/coreclr/windows.x64.Debug/sharedFramework/clrgcexp.dll
+  -- Installing: R:/artifacts/bin/coreclr/windows.x64.Debug/sharedFramework/PDB/clrgcexp.pdb
+  -- Installing: R:/artifacts/bin/coreclr/windows.x64.Debug/./clrinterpreter.dll
+  -- Installing: R:/artifacts/bin/coreclr/windows.x64.Debug/PDB/clrinterpreter.pdb
+  -- Installing: R:/artifacts/bin/coreclr/windows.x64.Debug/sharedFramework/clrinterpreter.dll
+  -- Installing: R:/artifacts/bin/coreclr/windows.x64.Debug/sharedFramework/PDB/clrinterpreter.pdb
+  -- Installing: R:/artifacts/bin/coreclr/windows.x64.Debug/./createdump.exe
+  -- Installing: R:/artifacts/bin/coreclr/windows.x64.Debug/PDB/createdump.pdb
+  -- Installing: R:/artifacts/bin/coreclr/windows.x64.Debug/sharedFramework/createdump.exe
+  -- Installing: R:/artifacts/bin/coreclr/windows.x64.Debug/sharedFramework/PDB/createdump.pdb
+  -- Installing: R:/artifacts/bin/coreclr/windows.x64.Debug/lib/runtimeinfo.lib
+  -- Installing: R:/artifacts/bin/coreclr/windows.x64.Debug/./clretwrc.dll
+  -- Installing: R:/artifacts/bin/coreclr/windows.x64.Debug/PDB/clretwrc.pdb
+  -- Installing: R:/artifacts/bin/coreclr/windows.x64.Debug/sharedFramework/clretwrc.dll
+  -- Installing: R:/artifacts/bin/coreclr/windows.x64.Debug/sharedFramework/PDB/clretwrc.pdb
+  -- Installing: R:/artifacts/bin/coreclr/windows.x64.Debug/./coreclr.dll
+  -- Installing: R:/artifacts/bin/coreclr/windows.x64.Debug/PDB/coreclr.pdb
+  -- Installing: R:/artifacts/bin/coreclr/windows.x64.Debug/sharedFramework/coreclr.dll
+  -- Installing: R:/artifacts/bin/coreclr/windows.x64.Debug/sharedFramework/PDB/coreclr.pdb
+  BUILD: Build succeeded.  Finished at 15:15:44.85
+  BUILD: Product binaries are available at R:\\artifacts\bin\coreclr\windows.x64.Debug
+
+Build succeeded.
+    0 Warning(s)
+    0 Error(s)
+
+Time Elapsed 00:00:57.93

@@ -1,0 +1,537 @@
+
+  Determining projects to restore...
+  Cannot find a manifest file. The list of searched paths:
+  
+  No tools were restored.
+  All projects are up-to-date for restore.
+  Determining projects to restore...
+  All projects are up-to-date for restore.
+  Crossgen2Tasks -> R:\artifacts\bin\Crossgen2Tasks\Debug\Crossgen2Tasks.dll
+  installer.tasks -> R:\artifacts\bin\installer.tasks\Debug\installer.tasks.dll
+  HelixTestTasks -> R:\artifacts\bin\HelixTestTasks\Debug\net11.0\HelixTestTasks.dll
+  cdac-build-tool -> R:\artifacts\bin\coreclr\windows.x64.Debug\cdac-build-tool\cdac-build-tool.dll
+  Executing "R:\src\coreclr\build-runtime.cmd" -cmakeargs "-DCLR_CMAKE_ENABLE_WRITE_BARRIER_STANDARD_ABI_TEST=0" -x64 -debug -os windows -targetrid win-x64 -cmakeargs "-DCLR_DOTNET_RID=win-x64" -cmakeargs "-DCLR_DOTNET_HOST_PATH='C:\Users\konradkokosa\.copilot\repos\copilot-worktrees\runtime-fork\kkokosa-ideal-sniffle\.dotnet\dotnet.exe'" -cmakeargs "-DCDAC_BUILD_TOOL_BINARY_PATH=R:\artifacts\bin\coreclr\windows.x64.Debug\cdac-build-tool\cdac-build-tool.dll" -cmakeargs "-DFEATURE_DYNAMIC_CODE_COMPILED=1" -cmakeargs "-DCLI_CMAKE_COMMIT_HASH=2f49bf4340822439a031d91786398a379668b25e" -component runtime 
+  BUILD: Starting Build at 15:23:27.60
+  'vswhere.exe' is not recognized as an internal or external command,
+  operable program or batch file.
+  BUILD: Commencing CoreCLR product build
+  BUILD: Checking prerequisites
+  BUILD: Using CMake from C:\Program Files\Microsoft Visual Studio\18\IntPreview\Common7\IDE\CommonExtensions\Microsoft\CMake\CMake\bin\cmake.exe
+  BUILD: Commencing build of native components for windows.x64.Debug
+  BUILD: Using environment: "C:\Program Files\Microsoft Visual Studio\18\IntPreview\VC\Auxiliary\Build\vcvarsall.bat" amd64
+  'vswhere.exe' is not recognized as an internal or external command,
+  operable program or batch file.
+  **********************************************************************
+  ** Visual Studio 2026 Developer Command Prompt v18.0
+  ** Copyright (c) 2026 Microsoft Corporation
+  **********************************************************************
+  [vcvarsall.bat] Environment initialized for: 'x64'
+  BUILD: Regenerating the Visual Studio solution
+  Calling "R:\\eng\native\gen-buildsys.cmd" "R:\src\coreclr" "R:\\artifacts\obj\coreclr\windows.x64.Debug" 18.0 x64 windows "-DCMAKE_BUILD_TYPE=Debug" "-DCLR_CMAKE_TARGET_ARCH=x64" "-DCLR_CMAKE_TARGET_OS=windows" "-DCLI_CMAKE_FALLBACK_OS=win10" "-DCLR_CMAKE_PGO_INSTRUMENT=0" "-DCLR_CMAKE_OPTDATA_PATH=" "-DCLR_CMAKE_PGO_OPTIMIZE=0" "-DCLI_CMAKE_COMMIT_HASH=2f49bf4340822439a031d91786398a379668b25e" "-DFEATURE_DYNAMIC_CODE_COMPILED=1" "-DCDAC_BUILD_TOOL_BINARY_PATH=R:\artifacts\bin\coreclr\windows.x64.Debug\cdac-build-tool\cdac-build-tool.dll" "-DCLR_DOTNET_HOST_PATH='C:\Users\konradkokosa\.copilot\repos\copilot-worktrees\runtime-fork\kkokosa-ideal-sniffle\.dotnet\dotnet.exe'" "-DCLR_DOTNET_RID=win-x64" "-DCLR_CMAKE_ENABLE_WRITE_BARRIER_STANDARD_ABI_TEST=0" 
+  The CMake command line differs from the last run. Running CMake again.
+   "C:\Program Files\Microsoft Visual Studio\18\IntPreview\Common7\IDE\CommonExtensions\Microsoft\CMake\CMake\bin\cmake.exe "-DCMAKE_INSTALL_PREFIX=R://artifacts/bin/coreclr/windows.x64.Debug" "-DCLR_CMAKE_HOST_ARCH=x64"   "-DCMAKE_SYSTEM_VERSION=10.0" "-DCMAKE_BUILD_TYPE=Debug" "-DCLR_CMAKE_TARGET_ARCH=x64" "-DCLR_CMAKE_TARGET_OS=windows" "-DCLI_CMAKE_FALLBACK_OS=win10" "-DCLR_CMAKE_PGO_INSTRUMENT=0" "-DCLR_CMAKE_OPTDATA_PATH=" "-DCLR_CMAKE_PGO_OPTIMIZE=0" "-DCLI_CMAKE_COMMIT_HASH=2f49bf4340822439a031d91786398a379668b25e" "-DFEATURE_DYNAMIC_CODE_COMPILED=1" "-DCDAC_BUILD_TOOL_BINARY_PATH=R:\artifacts\bin\coreclr\windows.x64.Debug\cdac-build-tool\cdac-build-tool.dll" "-DCLR_DOTNET_HOST_PATH='C:\Users\konradkokosa\.copilot\repos\copilot-worktrees\runtime-fork\kkokosa-ideal-sniffle\.dotnet\dotnet.exe'" "-DCLR_DOTNET_RID=win-x64" "-DCLR_CMAKE_ENABLE_WRITE_BARRIER_STANDARD_ABI_TEST=0" --no-warn-unused-cli -G Ninja -B "R:\\artifacts\obj\coreclr\windows.x64.Debug" -S "R:\src\coreclr""
+  Not searching for unused variables given on the command line.
+  -- Using CMake version 4.3.1-msvc1
+  -- ZLIB_HEADER_VERSION: 1.3.1
+  -- ZLIBNG_HEADER_VERSION: 2.2.5
+  -- Arch detected: 'x86_64'
+  -- Basearch of 'x86_64' has been detected as: 'x86'
+  -- Architecture-specific source files: arch/x86/x86_features.c;arch/x86/chunkset_sse2.c;arch/x86/compare256_sse2.c;arch/x86/slide_hash_sse2.c;arch/x86/adler32_ssse3.c;arch/x86/chunkset_ssse3.c;arch/x86/adler32_sse42.c;arch/x86/crc32_pclmulqdq.c;arch/x86/slide_hash_avx2.c;arch/x86/chunkset_avx2.c;arch/x86/compare256_avx2.c;arch/x86/adler32_avx2.c;arch/x86/adler32_avx512.c;arch/x86/chunkset_avx512.c;arch/x86/adler32_avx512_vnni.c;arch/x86/crc32_vpclmulqdq.c
+  -- The following features have been enabled:
+  
+   * CMAKE_BUILD_TYPE, Build type: Debug (selected)
+   * XSAVE, Support XSAVE intrinsics using ""
+   * SSSE3_ADLER32, Support SSSE3-accelerated adler32, using ""
+   * SSE42_CRC, Support SSE4.2 optimized adler32 hash generation, using ""
+   * PCLMUL_CRC, Support CRC hash generation using PCLMULQDQ, using " "
+   * AVX2_SLIDEHASH, Support AVX2 optimized slide_hash, using "/arch:AVX2"
+   * AVX2_CHUNKSET, Support AVX2 optimized chunkset, using "/arch:AVX2"
+   * AVX2_COMPARE256, Support AVX2 optimized compare256, using "/arch:AVX2"
+   * AVX2_ADLER32, Support AVX2-accelerated adler32, using "/arch:AVX2"
+   * AVX512_ADLER32, Support AVX512-accelerated adler32, using "/arch:AVX512"
+   * AVX512_CHUNKSET, Support AVX512 optimized chunkset, using "/arch:AVX512"
+   * AVX512VNNI_ADLER32, Support AVX512VNNI adler32, using "/arch:AVX512"
+   * VPCLMUL_CRC, Support CRC hash generation using VPCLMULQDQ, using "  /arch:AVX512"
+   * WITH_GZFILEOP, Compile with support for gzFile related functions
+   * ZLIB_COMPAT, Compile with zlib compatible API
+   * WITH_SANITIZER, Enable sanitizer support
+   * WITH_GTEST, Build gtest_zlib
+   * WITH_OPTIM, Build with optimisation
+   * WITH_NEW_STRATEGIES, Use new strategies
+   * WITH_RUNTIME_CPU_DETECTION, Build with runtime CPU detection
+   * WITH_AVX2, Build with AVX2
+   * WITH_AVX512, Build with AVX512
+   * WITH_AVX512VNNI, Build with AVX512 VNNI
+   * WITH_SSE2, Build with SSE2
+   * WITH_SSSE3, Build with SSSE3
+   * WITH_SSE42, Build with SSE42
+   * WITH_PCLMULQDQ, Build with PCLMULQDQ
+   * WITH_VPCLMULQDQ, Build with VPCLMULQDQ
+  
+  -- The following features have been disabled:
+  
+   * ZLIB_SYMBOL_PREFIX, Publicly exported symbols DO NOT have a custom prefix
+   * ZLIB_ENABLE_TESTS, Build test binaries
+   * ZLIBNG_ENABLE_TESTS, Test zlib-ng specific API
+   * WITH_FUZZERS, Build test/fuzz
+   * WITH_BENCHMARKS, Build test/benchmarks
+   * WITH_BENCHMARK_APPS, Build application benchmarks
+   * WITH_NATIVE_INSTRUCTIONS, Instruct the compiler to use the full instruction set on this host (gcc/clang -march=native)
+   * WITH_MAINTAINER_WARNINGS, Build with project maintainer warnings
+   * WITH_CODE_COVERAGE, Enable code coverage reporting
+   * WITH_INFLATE_STRICT, Build with strict inflate distance checking
+   * WITH_INFLATE_ALLOW_INVALID_DIST, Build with zero fill for inflate invalid distances
+   * INSTALL_UTILS, Copy minigzip and minideflate during install
+  
+  -- Build type is 'Debug'
+  -- Compiler is not EMSCRIPTEN
+  -- ZSTD VERSION: 1.5.7
+  -- CMAKE_INSTALL_PREFIX: R:/artifacts/bin/coreclr/windows.x64.Debug
+  -- CMAKE_INSTALL_LIBDIR: lib
+  -- ZSTD_LEGACY_SUPPORT not defined!
+  -- ZSTD_MULTITHREAD_SUPPORT is disabled
+  Read file version from native version header at 'R://artifacts/obj/_version.h'.
+  -- Configuring done (7.2s)
+  -- Generating done (4.3s)
+  -- Build files have been written to: R:/artifacts/obj/coreclr/windows.x64.Debug
+  running "C:\Program Files\Microsoft Visual Studio\18\IntPreview\Common7\IDE\CommonExtensions\Microsoft\CMake\CMake\bin\cmake.exe" --build R:\\artifacts\obj\coreclr\windows.x64.Debug --target  runtime --config Debug -- 
+  [1/381] Preprocessing R:/artifacts/obj/coreclr/windows.x64.Debug/vm/wks/AsmConstants.tmp. Outputting to R:/artifacts/obj/coreclr/windows.x64.Debug/vm/wks/AsmConstants.inc
+  AsmConstants.tmp
+  [2/381] Building CXX object gc\CMakeFiles\clrgc_gc_wks.dir\region_allocator.cpp.obj
+  [3/381] Building CXX object gc\CMakeFiles\clrgc_gc_wks.dir\region_free_list.cpp.obj
+  [4/381] Building CXX object gc\CMakeFiles\clrgc_gc_wks.dir\init.cpp.obj
+  [5/381] Building CXX object gc\CMakeFiles\clrgc_gc_wks.dir\no_gc.cpp.obj
+  [6/381] Building ASM_MASM object vm\wks\CMakeFiles\cee_wks_core.dir\__\amd64\AllocSlow.asm.obj
+   Assembling: R:\src\coreclr\vm\amd64\AllocSlow.asm
+  [7/381] Building CXX object gc\CMakeFiles\clrgc_gc_wks.dir\gc.cpp.obj
+  [8/381] Building ASM_MASM object vm\wks\CMakeFiles\cee_wks_core.dir\__\amd64\AsmHelpers.asm.obj
+   Assembling: R:\src\coreclr\vm\amd64\AsmHelpers.asm
+  [9/381] Building ASM_MASM object vm\wks\CMakeFiles\cee_wks_core.dir\__\amd64\CachedInterfaceDispatchCoreCLR.asm.obj
+   Assembling: R:\src\coreclr\vm\amd64\CachedInterfaceDispatchCoreCLR.asm
+  [10/381] Building ASM_MASM object vm\wks\CMakeFiles\cee_wks_core.dir\__\amd64\CallDescrWorkerAMD64.asm.obj
+   Assembling: R:\src\coreclr\vm\amd64\CallDescrWorkerAMD64.asm
+  [11/381] Building ASM_MASM object vm\wks\CMakeFiles\cee_wks_core.dir\__\amd64\ComCallPreStub.asm.obj
+   Assembling: R:\src\coreclr\vm\amd64\ComCallPreStub.asm
+  [12/381] Building CXX object gc\CMakeFiles\clrgc_gc_wks.dir\dynamic_tuning.cpp.obj
+  [13/381] Building CXX object gc\CMakeFiles\clrgc_gc_wks.dir\diagnostics.cpp.obj
+  [14/381] Building ASM_MASM object vm\wks\CMakeFiles\cee_wks_core.dir\__\amd64\getstate.asm.obj
+   Assembling: R:\src\coreclr\vm\amd64\getstate.asm
+  [15/381] Building ASM_MASM object vm\wks\CMakeFiles\cee_wks_core.dir\__\amd64\JitHelpers_Fast.asm.obj
+   Assembling: R:\src\coreclr\vm\amd64\JitHelpers_Fast.asm
+  [16/381] Building ASM_MASM object vm\wks\CMakeFiles\cee_wks_core.dir\__\amd64\JitHelpers_FastWriteBarriers.asm.obj
+   Assembling: R:\src\coreclr\vm\amd64\JitHelpers_FastWriteBarriers.asm
+  [17/381] Building ASM_MASM object vm\wks\CMakeFiles\cee_wks_core.dir\__\amd64\JitHelpers_SingleAppDomain.asm.obj
+   Assembling: R:\src\coreclr\vm\amd64\JitHelpers_SingleAppDomain.asm
+  [18/381] Building ASM_MASM object vm\wks\CMakeFiles\cee_wks_core.dir\__\amd64\JitHelpers_Slow.asm.obj
+   Assembling: R:\src\coreclr\vm\amd64\JitHelpers_Slow.asm
+  [19/381] C:\Windows\system32\cmd.exe /C "cd /D R:\artifacts\obj\coreclr\windows.x64.Debug\dlls\mscoree\coreclr && powershell -NoProfile -ExecutionPolicy ByPass -File R:/src/coreclr/dlls/mscoree/coreclr/GenClrDebugResource.ps1 -dac R:/artifacts/obj/coreclr/windows.x64.Debug/dlls/mscordac/mscordaccore.dll -dbi R:/artifacts/obj/coreclr/windows.x64.Debug/dlls/mscordbi/mscordbi.dll -out R:/artifacts/obj/coreclr/windows.x64.Debug/dlls/mscoree/coreclr/clr_debug_resource.bin"
+  [20/381] Building ASM_MASM object vm\wks\CMakeFiles\cee_wks_core.dir\__\amd64\patchedcode.asm.obj
+   Assembling: R:\src\coreclr\vm\amd64\patchedcode.asm
+  [21/381] Building ASM_MASM object vm\wks\CMakeFiles\cee_wks_core.dir\__\amd64\PInvokeStubs.asm.obj
+   Assembling: R:\src\coreclr\vm\amd64\PInvokeStubs.asm
+  [22/381] Building ASM_MASM object vm\wks\CMakeFiles\cee_wks_core.dir\__\amd64\RedirectedHandledJITCase.asm.obj
+   Assembling: R:\src\coreclr\vm\amd64\RedirectedHandledJITCase.asm
+  [23/381] Building ASM_MASM object vm\wks\CMakeFiles\cee_wks_core.dir\__\amd64\SlotLogWriteBarrier.asm.obj
+   Assembling: R:\src\coreclr\vm\amd64\SlotLogWriteBarrier.asm
+  [24/381] Building ASM_MASM object vm\wks\CMakeFiles\cee_wks_core.dir\__\__\runtime\amd64\StubDispatch.asm.obj
+   Assembling: R:\src\coreclr\runtime\amd64\StubDispatch.asm
+  [25/381] Building ASM_MASM object vm\wks\CMakeFiles\cee_wks_core.dir\__\amd64\ThePreStubAMD64.asm.obj
+   Assembling: R:\src\coreclr\vm\amd64\ThePreStubAMD64.asm
+  [26/381] Building ASM_MASM object vm\wks\CMakeFiles\cee_wks_core.dir\__\amd64\thunktemplates.asm.obj
+   Assembling: R:\src\coreclr\vm\amd64\thunktemplates.asm
+  [27/381] Building ASM_MASM object vm\wks\CMakeFiles\cee_wks_core.dir\__\amd64\Context.asm.obj
+   Assembling: R:\src\coreclr\vm\amd64\Context.asm
+  [28/381] Building CXX object gc\CMakeFiles\clrgc_gc_wks.dir\collect.cpp.obj
+  [29/381] Building ASM_MASM object vm\wks\CMakeFiles\cee_wks_core.dir\__\amd64\ExternalMethodFixupThunk.asm.obj
+   Assembling: R:\src\coreclr\vm\amd64\ExternalMethodFixupThunk.asm
+  [30/381] Building ASM_MASM object vm\wks\CMakeFiles\cee_wks_core.dir\__\amd64\UMThunkStub.asm.obj
+   Assembling: R:\src\coreclr\vm\amd64\UMThunkStub.asm
+  [31/381] Building ASM_MASM object vm\wks\CMakeFiles\cee_wks_core.dir\__\amd64\VirtualCallStubAMD64.asm.obj
+   Assembling: R:\src\coreclr\vm\amd64\VirtualCallStubAMD64.asm
+  [32/381] Building ASM_MASM object vm\wks\CMakeFiles\cee_wks_core.dir\__\amd64\StubPrecodeDynamicHelpers.asm.obj
+   Assembling: R:\src\coreclr\vm\amd64\StubPrecodeDynamicHelpers.asm
+  [33/381] Building ASM_MASM object vm\wks\CMakeFiles\cee_wks_core.dir\__\__\runtime\amd64\AllocFast.asm.obj
+   Assembling: R:\src\coreclr\runtime\amd64\AllocFast.asm
+  [34/381] Building ASM_MASM object vm\wks\CMakeFiles\cee_wks_core.dir\__\__\runtime\amd64\AllocFastNotification.asm.obj
+   Assembling: R:\src\coreclr\runtime\amd64\AllocFastNotification.asm
+  [35/381] Building ASM_MASM object vm\wks\CMakeFiles\cee_wks_core.dir\__\__\runtime\amd64\WriteBarriers.asm.obj
+   Assembling: R:\src\coreclr\runtime\amd64\WriteBarriers.asm
+  [36/381] Building CXX object gc\CMakeFiles\clrgc_gc_wks.dir\gcee.cpp.obj
+  [37/381] Building CXX object gc\CMakeFiles\clrgc_gc_wks.dir\memory.cpp.obj
+  [38/381] Building CXX object gc\CMakeFiles\clrgc_gc_wks.dir\finalization.cpp.obj
+  [39/381] Building CXX object gc\CMakeFiles\clrgc_gc_wks.dir\dynamic_heap_count.cpp.obj
+  [40/381] Building CXX object gc\CMakeFiles\clrgc_gc_wks.dir\card_table.cpp.obj
+  [41/381] Building CXX object gc\CMakeFiles\clrgc_gc_wks.dir\sweep.cpp.obj
+  [42/381] Building CXX object gc\CMakeFiles\clrgc_gc_wks.dir\relocate_compact.cpp.obj
+  [43/381] Building CXX object gc\CMakeFiles\clrgc_gc_wks.dir\mark_phase.cpp.obj
+  [44/381] Building CXX object gc\CMakeFiles\clrgc_gc_wks.dir\regions_segments.cpp.obj
+  [45/381] Building CXX object gc\CMakeFiles\clrgc_gc_wks.dir\interface.cpp.obj
+  [46/381] Building CXX object gc\CMakeFiles\clrgc_gc_wks.dir\allocation.cpp.obj
+  [47/381] Building CXX object gc\CMakeFiles\clrgc_gc_svr.dir\gcee.cpp.obj
+  [48/381] Building CXX object gc\CMakeFiles\clrgc_gc_wks.dir\background.cpp.obj
+  [49/381] Building CXX object gc\CMakeFiles\clrgc_gc_wks.dir\plan_phase.cpp.obj
+  [50/381] Building CXX object gc\CMakeFiles\clrgc_gc_svr.dir\no_gc.cpp.obj
+  [51/381] Building CXX object gc\CMakeFiles\clrgc_gc_svr.dir\init.cpp.obj
+  [52/381] Building CXX object gc\CMakeFiles\clrgc_gc_svr.dir\gc.cpp.obj
+  [53/381] Building CXX object gc\CMakeFiles\clrgc_gc_svr.dir\region_free_list.cpp.obj
+  [54/381] Building CXX object gc\CMakeFiles\clrgc_gc_svr.dir\finalization.cpp.obj
+  [55/381] Building CXX object gc\CMakeFiles\clrgc_gc_svr.dir\region_allocator.cpp.obj
+  [56/381] Building CXX object gc\CMakeFiles\clrgc_gc_svr.dir\dynamic_tuning.cpp.obj
+  [57/381] Building CXX object gc\CMakeFiles\clrgc_gc_svr.dir\memory.cpp.obj
+  [58/381] Building CXX object gc\CMakeFiles\clrgc_gc_svr.dir\card_table.cpp.obj
+  [59/381] Building CXX object gc\CMakeFiles\clrgc_gc_svr.dir\sweep.cpp.obj
+  [60/381] Building CXX object gc\CMakeFiles\clrgc_gc_svr.dir\diagnostics.cpp.obj
+  [61/381] Building CXX object gc\CMakeFiles\clrgc_gc_svr.dir\collect.cpp.obj
+  [62/381] Building CXX object gc\CMakeFiles\clrgc_gc_svr.dir\relocate_compact.cpp.obj
+  [63/381] Building CXX object gc\CMakeFiles\clrgc_gc_svr.dir\background.cpp.obj
+  [64/381] Building CXX object gc\CMakeFiles\clrgc_gc_svr.dir\dynamic_heap_count.cpp.obj
+  [65/381] Building CXX object gc\CMakeFiles\clrgc_gc_svr.dir\mark_phase.cpp.obj
+  [66/381] Building CXX object gc\CMakeFiles\clrgc_gc_svr.dir\interface.cpp.obj
+  [67/381] Building CXX object gc\CMakeFiles\clrgc_gc_svr.dir\allocation.cpp.obj
+  [68/381] Building CXX object gc\CMakeFiles\clrgc.dir\gcscan.cpp.obj
+  [69/381] Building CXX object gc\CMakeFiles\clrgc.dir\gcconfig.cpp.obj
+  [70/381] Building CXX object gc\CMakeFiles\clrgc.dir\gccommon.cpp.obj
+  [71/381] Building CXX object gc\CMakeFiles\clrgc.dir\gceventstatus.cpp.obj
+  [72/381] Building CXX object gc\CMakeFiles\clrgc.dir\handletable.cpp.obj
+  [73/381] Building CXX object gc\CMakeFiles\clrgc.dir\handletablecore.cpp.obj
+  [74/381] Building CXX object gc\CMakeFiles\clrgc_gc_svr.dir\regions_segments.cpp.obj
+  [75/381] Building CXX object gc\CMakeFiles\clrgc_gc_svr.dir\plan_phase.cpp.obj
+  [76/381] Building CXX object gc\CMakeFiles\clrgc.dir\handletablescan.cpp.obj
+  [77/381] Building CXX object gc\CMakeFiles\clrgc.dir\objecthandle.cpp.obj
+  [78/381] Building RC object gc\CMakeFiles\clrgc.dir\windows\Native.rc.res
+  [79/381] Building CXX object gc\CMakeFiles\clrgc.dir\side_metadata.cpp.obj
+  [80/381] C:\Windows\system32\cmd.exe /C "cd /D R:\artifacts\obj\coreclr\windows.x64.Debug && "C:\Program Files\Microsoft Visual Studio\18\IntPreview\Common7\IDE\CommonExtensions\Microsoft\CMake\CMake\bin\cmake.exe" -DCMAKE_INSTALL_COMPONENT=hosts -DBUILD_TYPE=Debug -P R:/artifacts/obj/coreclr/windows.x64.Debug/cmake_install.cmake"
+  -- Install configuration: "Debug"
+  [81/381] C:\Windows\system32\cmd.exe /C "cd /D R:\artifacts\obj\coreclr\windows.x64.Debug && "C:\Program Files\Microsoft Visual Studio\18\IntPreview\Common7\IDE\CommonExtensions\Microsoft\CMake\CMake\bin\cmake.exe" -DCMAKE_INSTALL_COMPONENT=coreclr_misc -DBUILD_TYPE=Debug -P R:/artifacts/obj/coreclr/windows.x64.Debug/cmake_install.cmake"
+  -- Install configuration: "Debug"
+  [82/381] C:\Windows\system32\cmd.exe /C "cd /D R:\artifacts\obj\coreclr\windows.x64.Debug && "C:\Program Files\Microsoft Visual Studio\18\IntPreview\Common7\IDE\CommonExtensions\Microsoft\CMake\CMake\bin\cmake.exe" -DCMAKE_INSTALL_COMPONENT=jit -DBUILD_TYPE=Debug -P R:/artifacts/obj/coreclr/windows.x64.Debug/cmake_install.cmake"
+  -- Install configuration: "Debug"
+  [83/381] Linking RC shared library dlls\clretwrc\clretwrc.dll
+  [84/381] Building CXX object gc\CMakeFiles\clrgc.dir\gchandletable.cpp.obj
+  [85/381] Building CXX object gc\CMakeFiles\clrgc.dir\gcload.cpp.obj
+  [86/381] Building CXX object gc\CMakeFiles\clrgc.dir\softwarewritewatch.cpp.obj
+  [87/381] Linking CXX shared library gc\clrgcexp.dll
+  [88/381] Building CXX object gc\CMakeFiles\clrgc.dir\handletablecache.cpp.obj
+  [89/381] Building CXX object gc\CMakeFiles\clrgc.dir\gcbridge.cpp.obj
+  [90/381] Linking CXX shared library gc\clrgc.dll
+  [91/381] C:\Windows\system32\cmd.exe /C "cd /D R:\artifacts\obj\coreclr\windows.x64.Debug && "C:\Program Files\Microsoft Visual Studio\18\IntPreview\Common7\IDE\CommonExtensions\Microsoft\CMake\CMake\bin\cmake.exe" -DCMAKE_INSTALL_COMPONENT=iltools -DBUILD_TYPE=Debug -P R:/artifacts/obj/coreclr/windows.x64.Debug/cmake_install.cmake"
+  -- Install configuration: "Debug"
+  [92/381] Building CXX object vm\CMakeFiles\vm_gc_svr.dir\cmake_pch.cxx.obj
+  [93/381] Building CXX object vm\CMakeFiles\vm_gc_wks.dir\cmake_pch.cxx.obj
+  [94/381] Building CXX object vm\wks\CMakeFiles\cee_wks_core.dir\cmake_pch.cxx.obj
+  [95/381] C:\Windows\system32\cmd.exe /C "cd /D R:\artifacts\obj\coreclr\windows.x64.Debug && "C:\Program Files\Microsoft Visual Studio\18\IntPreview\Common7\IDE\CommonExtensions\Microsoft\CMake\CMake\bin\cmake.exe" -DCMAKE_INSTALL_COMPONENT=debug -DBUILD_TYPE=Debug -P R:/artifacts/obj/coreclr/windows.x64.Debug/cmake_install.cmake"
+  -- Install configuration: "Debug"
+  [96/381] Building CXX object vm\CMakeFiles\vm_gc_svr.dir\__\gc\sweep.cpp.obj
+  [97/381] Building CXX object vm\CMakeFiles\vm_gc_svr.dir\__\gc\no_gc.cpp.obj
+  [98/381] Building CXX object vm\CMakeFiles\vm_gc_svr.dir\__\gc\memory.cpp.obj
+  [99/381] Building CXX object vm\CMakeFiles\vm_gc_svr.dir\__\gc\region_allocator.cpp.obj
+  [100/381] Building CXX object vm\CMakeFiles\vm_gc_svr.dir\__\gc\region_free_list.cpp.obj
+  [101/381] Building CXX object vm\CMakeFiles\vm_gc_svr.dir\__\gc\card_table.cpp.obj
+  [102/381] Building CXX object vm\CMakeFiles\vm_gc_svr.dir\__\gc\collect.cpp.obj
+  [103/381] Building CXX object vm\CMakeFiles\vm_gc_svr.dir\__\gc\diagnostics.cpp.obj
+  [104/381] Building CXX object vm\CMakeFiles\vm_gc_svr.dir\__\gc\relocate_compact.cpp.obj
+  [105/381] Building CXX object vm\CMakeFiles\vm_gc_wks.dir\__\gc\gcee.cpp.obj
+  [106/381] Building CXX object vm\CMakeFiles\vm_gc_svr.dir\__\gc\gc.cpp.obj
+  [107/381] Building CXX object vm\CMakeFiles\vm_gc_svr.dir\__\gc\dynamic_heap_count.cpp.obj
+  [108/381] Building CXX object vm\CMakeFiles\vm_gc_svr.dir\__\gc\init.cpp.obj
+  [109/381] Building CXX object vm\CMakeFiles\vm_gc_svr.dir\__\gc\finalization.cpp.obj
+  [110/381] Building CXX object vm\CMakeFiles\vm_gc_svr.dir\__\gc\gcee.cpp.obj
+  [111/381] Building CXX object vm\CMakeFiles\vm_gc_svr.dir\__\gc\dynamic_tuning.cpp.obj
+  [112/381] Building CXX object vm\wks\CMakeFiles\cee_wks_core.dir\__\assemblybinder.cpp.obj
+  [113/381] Building CXX object vm\wks\CMakeFiles\cee_wks_core.dir\__\cdacplatformmetadata.cpp.obj
+  [114/381] Building CXX object vm\wks\CMakeFiles\cee_wks_core.dir\__\asynccontinuations.cpp.obj
+  [115/381] Building CXX object vm\wks\CMakeFiles\cee_wks_core.dir\__\castcache.cpp.obj
+  [116/381] Building CXX object vm\wks\CMakeFiles\cee_wks_core.dir\__\array.cpp.obj
+  [117/381] Building CXX object vm\wks\CMakeFiles\cee_wks_core.dir\__\conditionalweaktable.cpp.obj
+  [118/381] Building CXX object vm\wks\CMakeFiles\cee_wks_core.dir\__\classhash.cpp.obj
+  [119/381] Building CXX object vm\wks\CMakeFiles\cee_wks_core.dir\__\callcounting.cpp.obj
+  [120/381] Building CXX object vm\wks\CMakeFiles\cee_wks_core.dir\__\classlayoutinfo.cpp.obj
+  [121/381] Building CXX object vm\wks\CMakeFiles\cee_wks_core.dir\__\codeversion.cpp.obj
+  [122/381] Building CXX object vm\wks\CMakeFiles\cee_wks_core.dir\__\debughelp.cpp.obj
+  [123/381] Building CXX object vm\wks\CMakeFiles\cee_wks_core.dir\__\decodemd.cpp.obj
+  [124/381] Building CXX object vm\wks\CMakeFiles\cee_wks_core.dir\__\debuginfostore.cpp.obj
+  [125/381] Building CXX object vm\wks\CMakeFiles\cee_wks_core.dir\__\ebr.cpp.obj
+  [126/381] Building CXX object vm\wks\CMakeFiles\cee_wks_core.dir\__\contractimpl.cpp.obj
+  [127/381] Building CXX object vm\wks\CMakeFiles\cee_wks_core.dir\__\assembly.cpp.obj
+  [128/381] Building CXX object vm\wks\CMakeFiles\cee_wks_core.dir\__\disassembler.cpp.obj
+  [129/381] Building CXX object vm\wks\CMakeFiles\cee_wks_core.dir\__\ecall.cpp.obj
+  [130/381] Building CXX object vm\wks\CMakeFiles\cee_wks_core.dir\__\crst.cpp.obj
+  [131/381] Building CXX object vm\wks\CMakeFiles\cee_wks_core.dir\__\binder.cpp.obj
+  [132/381] Building CXX object vm\wks\CMakeFiles\cee_wks_core.dir\__\debugdebugger.cpp.obj
+  [133/381] Building CXX object vm\wks\CMakeFiles\cee_wks_core.dir\__\exstate.cpp.obj
+  [134/381] Building CXX object vm\wks\CMakeFiles\cee_wks_core.dir\__\eehash.cpp.obj
+  [135/381] Building CXX object vm\wks\CMakeFiles\cee_wks_core.dir\__\clsload.cpp.obj
+  [136/381] Building CXX object vm\wks\CMakeFiles\cee_wks_core.dir\__\corhost.cpp.obj
+  [137/381] Building CXX object vm\wks\CMakeFiles\cee_wks_core.dir\__\exinfo.cpp.obj
+  [138/381] Building CXX object vm\wks\CMakeFiles\cee_wks_core.dir\__\fptrstubs.cpp.obj
+  [139/381] Building CXX object vm\wks\CMakeFiles\cee_wks_core.dir\__\formattype.cpp.obj
+  [140/381] Building CXX object vm\wks\CMakeFiles\cee_wks_core.dir\__\dynamicmethod.cpp.obj
+  [141/381] Building CXX object vm\wks\CMakeFiles\cee_wks_core.dir\__\field.cpp.obj
+  [142/381] Building CXX object vm\wks\CMakeFiles\cee_wks_core.dir\__\eedbginterfaceimpl.cpp.obj
+  [143/381] Building CXX object vm\wks\CMakeFiles\cee_wks_core.dir\__\encee.cpp.obj
+  [144/381] Building CXX object vm\wks\CMakeFiles\cee_wks_core.dir\__\eetwain.cpp.obj
+  [145/381] Building CXX object vm\wks\CMakeFiles\cee_wks_core.dir\__\class.cpp.obj
+  [146/381] Building CXX object vm\wks\CMakeFiles\cee_wks_core.dir\__\gchandleutilities.cpp.obj
+  [147/381] Building CXX object vm\wks\CMakeFiles\cee_wks_core.dir\__\gcheaputilities.cpp.obj
+  [148/381] Building CXX object vm\wks\CMakeFiles\cee_wks_core.dir\__\gctoclreventsink.cpp.obj
+  [149/381] Building CXX object vm\wks\CMakeFiles\cee_wks_core.dir\__\ceeload.cpp.obj
+  [150/381] Building CXX object vm\wks\CMakeFiles\cee_wks_core.dir\__\ilinstrumentation.cpp.obj
+  [151/381] Building CXX object vm\wks\CMakeFiles\cee_wks_core.dir\__\generics.cpp.obj
+  [152/381] Building CXX object vm\wks\CMakeFiles\cee_wks_core.dir\__\hash.cpp.obj
+  [153/381] Building CXX object vm\wks\CMakeFiles\cee_wks_core.dir\__\appdomain.cpp.obj
+  [154/381] Building CXX object vm\wks\CMakeFiles\cee_wks_core.dir\__\jithost.cpp.obj
+  [155/381] Building CXX object vm\wks\CMakeFiles\cee_wks_core.dir\__\ilstubresolver.cpp.obj
+  [156/381] Building CXX object vm\wks\CMakeFiles\cee_wks_core.dir\__\ilstubcache.cpp.obj
+  [157/381] Building CXX object vm\wks\CMakeFiles\cee_wks_core.dir\__\instmethhash.cpp.obj
+  [158/381] Building CXX object vm\wks\CMakeFiles\cee_wks_core.dir\__\frames.cpp.obj
+  [159/381] Building CXX object vm\wks\CMakeFiles\cee_wks_core.dir\__\excep.cpp.obj
+  [160/381] Building CXX object vm\wks\CMakeFiles\cee_wks_core.dir\__\genericdict.cpp.obj
+  [161/381] Building CXX object vm\wks\CMakeFiles\cee_wks_core.dir\__\genmeth.cpp.obj
+  [162/381] Building CXX object vm\wks\CMakeFiles\cee_wks_core.dir\__\inlinetracking.cpp.obj
+  [163/381] Building CXX object vm\wks\CMakeFiles\cee_wks_core.dir\__\methodimpl.cpp.obj
+  [164/381] Building CXX object vm\wks\CMakeFiles\cee_wks_core.dir\__\methoditer.cpp.obj
+  [165/381] Building CXX object vm\wks\CMakeFiles\cee_wks_core.dir\__\perfmap.cpp.obj
+  [166/381] Building CXX object vm\wks\CMakeFiles\cee_wks_core.dir\__\onstackreplacement.cpp.obj
+  [167/381] Building CXX object vm\wks\CMakeFiles\cee_wks_core.dir\__\peimage.cpp.obj
+  [168/381] Building CXX object vm\wks\CMakeFiles\cee_wks_core.dir\__\methoddescbackpatchinfo.cpp.obj
+  [169/381] Building CXX object vm\wks\CMakeFiles\cee_wks_core.dir\__\nativeimage.cpp.obj
+  [170/381] Building CXX object vm\wks\CMakeFiles\cee_wks_core.dir\__\precode_portable.cpp.obj
+  [171/381] Building CXX object vm\wks\CMakeFiles\cee_wks_core.dir\__\object.cpp.obj
+  [172/381] Building CXX object vm\wks\CMakeFiles\cee_wks_core.dir\__\spinlock.cpp.obj
+  [173/381] Building CXX object vm\wks\CMakeFiles\cee_wks_core.dir\__\peassembly.cpp.obj
+  [174/381] Building CXX object vm\wks\CMakeFiles\cee_wks_core.dir\__\sigformat.cpp.obj
+  [175/381] Building CXX object vm\wks\CMakeFiles\cee_wks_core.dir\__\readytorunstandalonemethodmetadata.cpp.obj
+  [176/381] Building CXX object vm\wks\CMakeFiles\cee_wks_core.dir\__\precode.cpp.obj
+  [177/381] Building CXX object vm\wks\CMakeFiles\cee_wks_core.dir\__\stublink.cpp.obj
+  [178/381] Building CXX object vm\wks\CMakeFiles\cee_wks_core.dir\__\loaderallocator.cpp.obj
+  [179/381] Building CXX object vm\wks\CMakeFiles\cee_wks_core.dir\__\stackwalk.cpp.obj
+  [180/381] Building CXX object vm\wks\CMakeFiles\cee_wks_core.dir\__\memberload.cpp.obj
+  [181/381] Building CXX object vm\wks\CMakeFiles\cee_wks_core.dir\__\pgo.cpp.obj
+  [182/381] Building CXX object vm\wks\CMakeFiles\cee_wks_core.dir\__\siginfo.cpp.obj
+  [183/381] Building CXX object vm\wks\CMakeFiles\cee_wks_core.dir\__\method.cpp.obj
+  [184/381] Building CXX object vm\wks\CMakeFiles\cee_wks_core.dir\__\threadstatics.cpp.obj
+  [185/381] Building CXX object vm\wks\CMakeFiles\cee_wks_core.dir\__\tieredcompilation.cpp.obj
+  [186/381] Building CXX object vm\wks\CMakeFiles\cee_wks_core.dir\__\typeequivalencehash.cpp.obj
+  [187/381] Building CXX object vm\wks\CMakeFiles\cee_wks_core.dir\__\typectxt.cpp.obj
+  [188/381] Building CXX object vm\wks\CMakeFiles\cee_wks_core.dir\__\prestub.cpp.obj
+  [189/381] Building CXX object vm\wks\CMakeFiles\cee_wks_core.dir\__\vars.cpp.obj
+  [190/381] Building CXX object vm\wks\CMakeFiles\cee_wks_core.dir\__\typehandle.cpp.obj
+  [191/381] Building CXX object vm\wks\CMakeFiles\cee_wks_core.dir\__\jitinterface.cpp.obj
+  [192/381] Building CXX object vm\wks\CMakeFiles\cee_wks_core.dir\__\rejit.cpp.obj
+  [193/381] Building CXX object vm\wks\CMakeFiles\cee_wks_core.dir\__\typehash.cpp.obj
+  [194/381] Building CXX object vm\wks\CMakeFiles\cee_wks_core.dir\__\util.cpp.obj
+  [195/381] Building CXX object vm\wks\CMakeFiles\cee_wks_core.dir\__\syncblk.cpp.obj
+  [196/381] Building CXX object vm\wks\CMakeFiles\cee_wks_core.dir\__\typedesc.cpp.obj
+  [197/381] Building CXX object vm\wks\CMakeFiles\cee_wks_core.dir\__\stubmgr.cpp.obj
+  [198/381] Building CXX object vm\wks\CMakeFiles\cee_wks_core.dir\__\typestring.cpp.obj
+  [199/381] Building CXX object vm\wks\CMakeFiles\cee_wks_core.dir\__\versionresilienthashcode.cpp.obj
+  [200/381] Building CXX object vm\wks\CMakeFiles\cee_wks_core.dir\__\methodtable.cpp.obj
+  [201/381] Building CXX object vm\wks\CMakeFiles\cee_wks_core.dir\__\pregeneratedstringthunks.cpp.obj
+  [202/381] Building CXX object vm\wks\CMakeFiles\cee_wks_core.dir\__\assemblyprobeextension.cpp.obj
+  [203/381] Building CXX object vm\wks\CMakeFiles\cee_wks_core.dir\__\arraynative.cpp.obj
+  [204/381] Building CXX object vm\wks\CMakeFiles\cee_wks_core.dir\__\CachedInterfaceDispatch_Coreclr.cpp.obj
+  [205/381] Building CXX object vm\wks\CMakeFiles\cee_wks_core.dir\__\zapsig.cpp.obj
+  [206/381] Building CXX object vm\wks\CMakeFiles\cee_wks_core.dir\__\baseassemblyspec.cpp.obj
+  [207/381] Building CXX object vm\wks\CMakeFiles\cee_wks_core.dir\__\appdomainnative.cpp.obj
+  [208/381] Building CXX object vm\wks\CMakeFiles\cee_wks_core.dir\__\bundle.cpp.obj
+  [209/381] Building CXX object vm\wks\CMakeFiles\cee_wks_core.dir\__\__\runtime\CachedInterfaceDispatch.cpp.obj
+  [210/381] Building CXX object vm\wks\CMakeFiles\cee_wks_core.dir\__\__\runtime\MiscNativeHelpers.cpp.obj
+  [211/381] Building CXX object vm\wks\CMakeFiles\cee_wks_core.dir\__\cachelinealloc.cpp.obj
+  [212/381] Building CXX object vm\wks\CMakeFiles\cee_wks_core.dir\__\comdatetime.cpp.obj
+  [213/381] Building CXX object vm\wks\CMakeFiles\cee_wks_core.dir\__\clrconfignative.cpp.obj
+  [214/381] Building CXX object vm\wks\CMakeFiles\cee_wks_core.dir\__\clrvarargs.cpp.obj
+  [215/381] Building CXX object vm\wks\CMakeFiles\cee_wks_core.dir\__\callstubgenerator.cpp.obj
+  [216/381] Building CXX object vm\wks\CMakeFiles\cee_wks_core.dir\__\assemblyspec.cpp.obj
+  [217/381] Building CXX object vm\wks\CMakeFiles\cee_wks_core.dir\__\callconvbuilder.cpp.obj
+  [218/381] Building CXX object vm\wks\CMakeFiles\cee_wks_core.dir\__\comdependenthandle.cpp.obj
+  [219/381] Building CXX object vm\wks\CMakeFiles\cee_wks_core.dir\__\callhelpers.cpp.obj
+  [220/381] Building CXX object vm\wks\CMakeFiles\cee_wks_core.dir\__\readytoruninfo.cpp.obj
+  [221/381] Building CXX object vm\wks\CMakeFiles\cee_wks_core.dir\__\virtualcallstub.cpp.obj
+  [222/381] Building CXX object vm\wks\CMakeFiles\cee_wks_core.dir\__\comdynamic.cpp.obj
+  [223/381] Building CXX object vm\wks\CMakeFiles\cee_wks_core.dir\__\coreassemblyspec.cpp.obj
+  [224/381] Building CXX object vm\wks\CMakeFiles\cee_wks_core.dir\__\assemblynative.cpp.obj
+  [225/381] Building CXX object vm\wks\CMakeFiles\cee_wks_core.dir\__\divmodint.cpp.obj
+  [226/381] Building CXX object vm\wks\CMakeFiles\cee_wks_core.dir\__\threads.cpp.obj
+  [227/381] Building CXX object vm\wks\CMakeFiles\cee_wks_core.dir\__\clrex.cpp.obj
+  [228/381] Building CXX object vm\wks\CMakeFiles\cee_wks_core.dir\__\customattribute.cpp.obj
+  [229/381] Building CXX object vm\wks\CMakeFiles\cee_wks_core.dir\__\dynamicinterfacecastable.cpp.obj
+  [230/381] Building CXX object vm\wks\CMakeFiles\cee_wks_core.dir\__\comdelegate.cpp.obj
+  [231/381] Building CXX object vm\wks\CMakeFiles\cee_wks_core.dir\__\eeconfig.cpp.obj
+  [232/381] Building CXX object vm\wks\CMakeFiles\cee_wks_core.dir\__\custommarshalerinfo.cpp.obj
+  [233/381] Building CXX object vm\wks\CMakeFiles\cee_wks_core.dir\__\commodule.cpp.obj
+  [234/381] Building CXX object vm\wks\CMakeFiles\cee_wks_core.dir\__\comsynchronizable.cpp.obj
+  [235/381] Building CXX object vm\wks\CMakeFiles\cee_wks_core.dir\__\floatsingle.cpp.obj
+  [236/381] Building CXX object vm\wks\CMakeFiles\cee_wks_core.dir\__\floatdouble.cpp.obj
+  [237/381] Building CXX object vm\wks\CMakeFiles\cee_wks_core.dir\__\comutilnative.cpp.obj
+  [238/381] Building CXX object vm\wks\CMakeFiles\cee_wks_core.dir\__\fcall.cpp.obj
+  [239/381] Building CXX object vm\wks\CMakeFiles\cee_wks_core.dir\__\frozenobjectheap.cpp.obj
+  [240/381] Building CXX object vm\wks\CMakeFiles\cee_wks_core.dir\__\fieldmarshaler.cpp.obj
+  [241/381] Building CXX object vm\wks\CMakeFiles\cee_wks_core.dir\__\eecontract.cpp.obj
+  [242/381] Building CXX object vm\wks\CMakeFiles\cee_wks_core.dir\__\dllimportcallback.cpp.obj
+  [243/381] Building CXX object vm\wks\CMakeFiles\cee_wks_core.dir\__\eepolicy.cpp.obj
+  [244/381] Building CXX object vm\wks\CMakeFiles\cee_wks_core.dir\__\eventpipeinternal.cpp.obj
+  [245/381] Building CXX object vm\wks\CMakeFiles\cee_wks_core.dir\__\hosting.cpp.obj
+  [246/381] Building CXX object vm\wks\CMakeFiles\cee_wks_core.dir\__\cdacstress.cpp.obj
+  [247/381] Building CXX object vm\wks\CMakeFiles\cee_wks_core.dir\__\gccover.cpp.obj
+  [248/381] Building CXX object vm\wks\CMakeFiles\cee_wks_core.dir\__\instancecalli.cpp.obj
+  [249/381] Building CXX object vm\wks\CMakeFiles\cee_wks_core.dir\__\hostinformation.cpp.obj
+  [250/381] Building CXX object vm\wks\CMakeFiles\cee_wks_core.dir\__\gchelpers.cpp.obj
+  [251/381] Building CXX object vm\wks\CMakeFiles\cee_wks_core.dir\__\finalizerthread.cpp.obj
+  [252/381] Building CXX object vm\wks\CMakeFiles\cee_wks_core.dir\__\gcenv.ee.common.cpp.obj
+  [253/381] Building CXX object vm\wks\CMakeFiles\cee_wks_core.dir\__\interpframeallocator.cpp.obj
+  [254/381] Building CXX object vm\wks\CMakeFiles\cee_wks_core.dir\__\eetoprofinterfaceimpl.cpp.obj
+  [255/381] Building CXX object vm\wks\CMakeFiles\cee_wks_core.dir\__\genanalysis.cpp.obj
+  [256/381] Building CXX object vm\wks\CMakeFiles\cee_wks_core.dir\__\dllimport.cpp.obj
+  [257/381] Building CXX object vm\wks\CMakeFiles\cee_wks_core.dir\__\invokeutil.cpp.obj
+  [258/381] Building CXX object vm\wks\CMakeFiles\cee_wks_core.dir\__\jitinterfacegen.cpp.obj
+  [259/381] Building CXX object vm\wks\CMakeFiles\cee_wks_core.dir\__\managedmdimport.cpp.obj
+  [260/381] Building CXX object vm\wks\CMakeFiles\cee_wks_core.dir\__\interopconverter.cpp.obj
+  [261/381] Building CXX object vm\wks\CMakeFiles\cee_wks_core.dir\__\ilmarshalers.cpp.obj
+  [262/381] Building CXX object vm\wks\CMakeFiles\cee_wks_core.dir\__\nativeeventsource.cpp.obj
+  [263/381] Building CXX object vm\wks\CMakeFiles\cee_wks_core.dir\__\gcenv.ee.cpp.obj
+  [264/381] Building CXX object vm\wks\CMakeFiles\cee_wks_core.dir\__\nativelibrarynative.cpp.obj
+  [265/381] Building CXX object vm\wks\CMakeFiles\cee_wks_core.dir\__\pinvokeoverride.cpp.obj
+  [266/381] Building CXX object vm\wks\CMakeFiles\cee_wks_core.dir\__\nativelibrary.cpp.obj
+  [267/381] Building CXX object vm\wks\CMakeFiles\cee_wks_core.dir\__\multicorejit.cpp.obj
+  [268/381] Building CXX object vm\wks\CMakeFiles\cee_wks_core.dir\__\multicorejitplayer.cpp.obj
+  [269/381] Building CXX object vm\wks\CMakeFiles\cee_wks_core.dir\__\pendingload.cpp.obj
+  [270/381] Building CXX object vm\wks\CMakeFiles\cee_wks_core.dir\__\interpexec.cpp.obj
+  [271/381] Building CXX object vm\wks\CMakeFiles\cee_wks_core.dir\__\profdetach.cpp.obj
+  [272/381] Building CXX object vm\wks\CMakeFiles\cee_wks_core.dir\__\profilingenumerators.cpp.obj
+  [273/381] Building CXX object vm\wks\CMakeFiles\cee_wks_core.dir\__\jithelpers.cpp.obj
+  [274/381] Building CXX object vm\wks\CMakeFiles\cee_wks_core.dir\__\profilinghelper.cpp.obj
+  [275/381] Building CXX object vm\wks\CMakeFiles\cee_wks_core.dir\__\qcall.cpp.obj
+  [276/381] Building CXX object vm\wks\CMakeFiles\cee_wks_core.dir\__\reflectclasswriter.cpp.obj
+  [277/381] Building CXX object vm\wks\CMakeFiles\cee_wks_core.dir\__\interoputil.cpp.obj
+  [278/381] Building CXX object vm\wks\CMakeFiles\cee_wks_core.dir\__\stackingallocator.cpp.obj
+  [279/381] Building CXX object vm\wks\CMakeFiles\cee_wks_core.dir\__\simplerwlock.cpp.obj
+  [280/381] Building CXX object vm\wks\CMakeFiles\cee_wks_core.dir\__\methodtablebuilder.cpp.obj
+  [281/381] Building CXX object vm\wks\CMakeFiles\cee_wks_core.dir\__\stringliteralmap.cpp.obj
+  [282/381] Building CXX object vm\wks\CMakeFiles\cee_wks_core.dir\__\synch.cpp.obj
+  [283/381] Building CXX object vm\wks\CMakeFiles\cee_wks_core.dir\__\mlinfo.cpp.obj
+  [284/381] Building CXX object vm\wks\CMakeFiles\cee_wks_core.dir\__\stubcache.cpp.obj
+  [285/381] Building CXX object vm\wks\CMakeFiles\cee_wks_core.dir\__\marshalnative.cpp.obj
+  [286/381] Building CXX object vm\wks\CMakeFiles\cee_wks_core.dir\__\tailcallhelp.cpp.obj
+  [287/381] Building CXX object vm\wks\CMakeFiles\cee_wks_core.dir\__\asyncthunks.cpp.obj
+  [288/381] Building CXX object vm\wks\CMakeFiles\cee_wks_core.dir\__\varargsnative.cpp.obj
+  [289/381] Building CXX object vm\wks\CMakeFiles\cee_wks_core.dir\__\typeparse.cpp.obj
+  [290/381] Building CXX object vm\wks\CMakeFiles\cee_wks_core.dir\__\weakreferencenative.cpp.obj
+  [291/381] Building CXX object vm\wks\CMakeFiles\cee_wks_core.dir\__\syncclean.cpp.obj
+  [292/381] Building CXX object vm\wks\CMakeFiles\cee_wks_core.dir\__\unsafeaccessors.cpp.obj
+  [293/381] Building CXX object vm\wks\CMakeFiles\cee_wks_core.dir\__\yieldprocessornormalized.cpp.obj
+  [294/381] Building CXX object vm\wks\CMakeFiles\cee_wks_core.dir\__\reflectioninvocation.cpp.obj
+  [295/381] Building CXX object vm\wks\CMakeFiles\cee_wks_core.dir\__\stubgen.cpp.obj
+  [296/381] Building CXX object vm\wks\CMakeFiles\cee_wks_core.dir\__\runtimehandles.cpp.obj
+  [297/381] Building CXX object vm\wks\CMakeFiles\cee_wks_core.dir\__\interoplibinterface_shared.cpp.obj
+  [298/381] Building CXX object vm\wks\CMakeFiles\cee_wks_core.dir\__\threadsuspend.cpp.obj
+  [299/381] Building CXX object vm\wks\CMakeFiles\cee_wks_core.dir\__\rcwrefcache.cpp.obj
+  [300/381] Building CXX object vm\wks\CMakeFiles\cee_wks_core.dir\__\rtlfunctions.cpp.obj
+  [301/381] Building CXX object vm\wks\CMakeFiles\cee_wks_core.dir\__\amsi.cpp.obj
+  [302/381] Building CXX object vm\wks\CMakeFiles\cee_wks_core.dir\__\interoplibinterface_java.cpp.obj
+  [303/381] Building CXX object vm\wks\CMakeFiles\cee_wks_core.dir\__\interoplibinterface_comwrappers.cpp.obj
+  [304/381] Building CXX object vm\wks\CMakeFiles\cee_wks_core.dir\__\eventtrace_gcheap.cpp.obj
+  [305/381] Building CXX object vm\wks\CMakeFiles\cee_wks_core.dir\__\qcallentrypoints.cpp.obj
+  [306/381] Building CXX object vm\wks\CMakeFiles\cee_wks_core.dir\__\eventreporter.cpp.obj
+  [307/381] Building CXX object vm\wks\CMakeFiles\cee_wks_core.dir\__\stubhelpers.cpp.obj
+  [308/381] Building CXX object vm\wks\CMakeFiles\cee_wks_core.dir\__\proftoeeinterfaceimpl.cpp.obj
+  [309/381] Building CXX object vm\wks\CMakeFiles\cee_wks_core.dir\__\eventtrace_bulktype.cpp.obj
+  [310/381] Building CXX object vm\wks\CMakeFiles\cee_wks_core.dir\__\dwreport.cpp.obj
+  [311/381] Building CXX object vm\wks\CMakeFiles\cee_wks_core.dir\__\olecontexthelpers.cpp.obj
+  [312/381] Building CXX object vm\wks\CMakeFiles\cee_wks_core.dir\__\dispparammarshaler.cpp.obj
+  [313/381] Building CXX object vm\wks\CMakeFiles\cee_wks_core.dir\__\comcache.cpp.obj
+  [314/381] Building CXX object vm\wks\CMakeFiles\cee_wks_core.dir\__\comconnectionpoints.cpp.obj
+  [315/381] Building CXX object vm\wks\CMakeFiles\cee_wks_core.dir\__\cominterfacemarshaler.cpp.obj
+  [316/381] Building CXX object vm\wks\CMakeFiles\cee_wks_core.dir\__\clrtocomcall.cpp.obj
+  [317/381] Building CXX object vm\wks\CMakeFiles\cee_wks_core.dir\__\olevariant.cpp.obj
+  [318/381] Building CXX object vm\wks\CMakeFiles\cee_wks_core.dir\__\amd64\profiler.cpp.obj
+  [319/381] Building CXX object vm\wks\CMakeFiles\cee_wks_core.dir\__\classcompat.cpp.obj
+  [320/381] Building CXX object vm\wks\CMakeFiles\cee_wks_core.dir\__\commtmemberinfomap.cpp.obj
+  [321/381] Building CXX object vm\wks\CMakeFiles\cee_wks_core.dir\__\comtoclrcall.cpp.obj
+  [322/381] Building CXX object vm\wks\CMakeFiles\cee_wks_core.dir\__\writebarriermanager.cpp.obj
+  [323/381] Building CXX object vm\wks\CMakeFiles\cee_wks_core.dir\__\dispatchinfo.cpp.obj
+  [324/381] Building CXX object vm\wks\CMakeFiles\cee_wks_core.dir\__\amd64\excepamd64.cpp.obj
+  [325/381] Building CXX object vm\wks\CMakeFiles\cee_wks_core.dir\__\gcinfodecoder.cpp.obj
+  [326/381] Building CXX object vm\wks\CMakeFiles\cee_wks_core.dir\__\eventtrace.cpp.obj
+  [327/381] Building CXX object vm\wks\CMakeFiles\cee_wks_core.dir\__\amd64\stublinkeramd64.cpp.obj
+  [328/381] Building CXX object vm\wks\CMakeFiles\cee_wks_core.dir\__\amd64\cgenamd64.cpp.obj
+  [329/381] Building CXX object vm\wks\CMakeFiles\cee_wks_core.dir\__\stdinterfaces_wrapper.cpp.obj
+  [330/381] Building CXX object vm\wks\CMakeFiles\cee_wks_core.dir\__\exceptionhandling.cpp.obj
+  [331/381] Building CXX object vm\wks\CMakeFiles\cee_wks_core.dir\__\runtimecallablewrapper.cpp.obj
+  [332/381] Building CXX object vm\wks\CMakeFiles\cee_wks_core.dir\__\comcallablewrapper.cpp.obj
+  [333/381] Building CXX object vm\wks\CMakeFiles\cee_wks_core.dir\__\stdinterfaces.cpp.obj
+  [334/381] Building CXX object vm\wks\CMakeFiles\cee_wks_core.dir\__\__\gc\handletablescan.cpp.obj
+  [335/381] Building CXX object vm\wks\CMakeFiles\cee_wks_core.dir\__\__\gc\handletable.cpp.obj
+  [336/381] Building CXX object vm\wks\CMakeFiles\cee_wks_core.dir\__\__\gc\handletablecore.cpp.obj
+  [337/381] Building CXX object vm\wks\CMakeFiles\cee_wks_core.dir\__\__\gc\gceventstatus.cpp.obj
+  [338/381] Building CXX object vm\wks\CMakeFiles\cee_wks_core.dir\__\__\gc\gccommon.cpp.obj
+  [339/381] Building CXX object vm\wks\CMakeFiles\cee_wks_core.dir\__\__\gc\gchandletable.cpp.obj
+  [340/381] Building CXX object vm\wks\CMakeFiles\cee_wks_core.dir\__\__\gc\gcscan.cpp.obj
+  [341/381] Building CXX object vm\wks\CMakeFiles\cee_wks_core.dir\__\__\gc\gcbridge.cpp.obj
+  [342/381] Building CXX object vm\wks\CMakeFiles\cee_wks_core.dir\__\__\gc\side_metadata.cpp.obj
+  [343/381] Building CXX object vm\wks\CMakeFiles\cee_wks_core.dir\__\__\gc\gcconfig.cpp.obj
+  [344/381] Building CXX object vm\wks\CMakeFiles\cee_wks_core.dir\__\__\gc\objecthandle.cpp.obj
+  [345/381] Building CXX object vm\wks\CMakeFiles\cee_wks_core.dir\__\__\gc\softwarewritewatch.cpp.obj
+  [346/381] Building CXX object vm\wks\CMakeFiles\cee_wks_core.dir\__\__\gc\gcload.cpp.obj
+  [347/381] Building CXX object vm\wks\CMakeFiles\cee_wks_core.dir\__\__\gc\handletablecache.cpp.obj
+  [348/381] Building CXX object vm\CMakeFiles\vm_gc_wks.dir\__\gc\region_allocator.cpp.obj
+  [349/381] Building CXX object vm\CMakeFiles\vm_gc_wks.dir\__\gc\finalization.cpp.obj
+  [350/381] Building CXX object vm\CMakeFiles\vm_gc_wks.dir\__\gc\region_free_list.cpp.obj
+  [351/381] Building CXX object vm\CMakeFiles\vm_gc_wks.dir\__\gc\dynamic_heap_count.cpp.obj
+  [352/381] Building CXX object vm\CMakeFiles\vm_gc_wks.dir\__\gc\gc.cpp.obj
+  [353/381] Building CXX object vm\CMakeFiles\vm_gc_wks.dir\__\gc\no_gc.cpp.obj
+  [354/381] Building CXX object vm\CMakeFiles\vm_gc_wks.dir\__\gc\init.cpp.obj
+  [355/381] Building CXX object vm\CMakeFiles\vm_gc_wks.dir\__\gc\memory.cpp.obj
+  [356/381] Building CXX object vm\CMakeFiles\vm_gc_wks.dir\__\gc\dynamic_tuning.cpp.obj
+  [357/381] Building CXX object vm\CMakeFiles\vm_gc_wks.dir\__\gc\mark_phase.cpp.obj
+  [358/381] Building CXX object vm\CMakeFiles\vm_gc_wks.dir\__\gc\collect.cpp.obj
+  [359/381] Building CXX object vm\CMakeFiles\vm_gc_wks.dir\__\gc\card_table.cpp.obj
+  [360/381] Building CXX object vm\CMakeFiles\vm_gc_wks.dir\__\gc\diagnostics.cpp.obj
+  [361/381] Building CXX object vm\CMakeFiles\vm_gc_wks.dir\__\gc\sweep.cpp.obj
+  [362/381] Building CXX object vm\CMakeFiles\vm_gc_wks.dir\__\gc\relocate_compact.cpp.obj
+  [363/381] Building CXX object vm\CMakeFiles\vm_gc_wks.dir\__\gc\background.cpp.obj
+  [364/381] Building CXX object vm\CMakeFiles\vm_gc_wks.dir\__\gc\regions_segments.cpp.obj
+  [365/381] Building CXX object vm\CMakeFiles\vm_gc_wks.dir\__\gc\interface.cpp.obj
+  [366/381] Building CXX object vm\CMakeFiles\vm_gc_wks.dir\__\gc\allocation.cpp.obj
+  [367/381] Building CXX object vm\CMakeFiles\vm_gc_svr.dir\__\gc\interface.cpp.obj
+  [368/381] Building CXX object vm\CMakeFiles\vm_gc_svr.dir\__\gc\regions_segments.cpp.obj
+  [369/381] Building CXX object vm\CMakeFiles\vm_gc_svr.dir\__\gc\mark_phase.cpp.obj
+  [370/381] Building CXX object vm\CMakeFiles\vm_gc_wks.dir\__\gc\plan_phase.cpp.obj
+  [371/381] Building CXX object vm\CMakeFiles\vm_gc_svr.dir\__\gc\background.cpp.obj
+  [372/381] Building CXX object vm\CMakeFiles\vm_gc_svr.dir\__\gc\allocation.cpp.obj
+  [373/381] Building CXX object vm\CMakeFiles\vm_gc_svr.dir\__\gc\plan_phase.cpp.obj
+  [374/381] Building CXX object vm\wks\CMakeFiles\cee_wks_core.dir\__\corelib.cpp.obj
+  [375/381] Linking CXX shared library dlls\mscoree\coreclr\coreclr.dll
+  [376/381] Generating coreclr module index file -> R:/artifacts/obj/coreclr/windows.x64.Debug/debug/runtimeinfo/runtimemoduleindex.h
+  [377/381] Building CXX object debug\runtimeinfo\CMakeFiles\runtimeinfo.dir\runtimeinfo.cpp.obj
+  [378/381] Linking CXX static library debug\runtimeinfo\runtimeinfo.lib
+  [379/381] Linking CXX static library dlls\mscoree\coreclr\coreclr_static.lib
+  [380/381] Linking CXX executable Corehost.Static\singlefilehost.exe
+  [381/381] C:\Windows\system32\cmd.exe /C "cd /D R:\artifacts\obj\coreclr\windows.x64.Debug && "C:\Program Files\Microsoft Visual Studio\18\IntPreview\Common7\IDE\CommonExtensions\Microsoft\CMake\CMake\bin\cmake.exe" -DCMAKE_INSTALL_COMPONENT=runtime -DBUILD_TYPE=Debug -P R:/artifacts/obj/coreclr/windows.x64.Debug/cmake_install.cmake"
+  -- Install configuration: "Debug"
+  -- Installing: R:/artifacts/bin/coreclr/windows.x64.Debug/corehost/PDB/singlefilehost.pdb
+  -- Installing: R:/artifacts/bin/coreclr/windows.x64.Debug/corehost/singlefilehost.exe
+  -- Installing: R:/artifacts/bin/coreclr/windows.x64.Debug/./clrgcexp.dll
+  -- Installing: R:/artifacts/bin/coreclr/windows.x64.Debug/PDB/clrgcexp.pdb
+  -- Installing: R:/artifacts/bin/coreclr/windows.x64.Debug/./clrgc.dll
+  -- Installing: R:/artifacts/bin/coreclr/windows.x64.Debug/PDB/clrgc.pdb
+  -- Installing: R:/artifacts/bin/coreclr/windows.x64.Debug/sharedFramework/clrgc.dll
+  -- Installing: R:/artifacts/bin/coreclr/windows.x64.Debug/sharedFramework/PDB/clrgc.pdb
+  -- Installing: R:/artifacts/bin/coreclr/windows.x64.Debug/sharedFramework/clrgcexp.dll
+  -- Installing: R:/artifacts/bin/coreclr/windows.x64.Debug/sharedFramework/PDB/clrgcexp.pdb
+  -- Installing: R:/artifacts/bin/coreclr/windows.x64.Debug/lib/runtimeinfo.lib
+  -- Installing: R:/artifacts/bin/coreclr/windows.x64.Debug/./clretwrc.dll
+  -- Installing: R:/artifacts/bin/coreclr/windows.x64.Debug/PDB/clretwrc.pdb
+  -- Installing: R:/artifacts/bin/coreclr/windows.x64.Debug/sharedFramework/clretwrc.dll
+  -- Installing: R:/artifacts/bin/coreclr/windows.x64.Debug/sharedFramework/PDB/clretwrc.pdb
+  -- Installing: R:/artifacts/bin/coreclr/windows.x64.Debug/./coreclr.dll
+  -- Installing: R:/artifacts/bin/coreclr/windows.x64.Debug/PDB/coreclr.pdb
+  -- Installing: R:/artifacts/bin/coreclr/windows.x64.Debug/sharedFramework/coreclr.dll
+  -- Installing: R:/artifacts/bin/coreclr/windows.x64.Debug/sharedFramework/PDB/coreclr.pdb
+  BUILD: Build succeeded.  Finished at 15:24:27.59
+  BUILD: Product binaries are available at R:\\artifacts\bin\coreclr\windows.x64.Debug
+
+Build succeeded.
+    0 Warning(s)
+    0 Error(s)
+
+Time Elapsed 00:01:03.81

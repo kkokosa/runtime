@@ -1,0 +1,14 @@
+'vswhere.exe' is not recognized as an internal or external command,
+operable program or batch file.
+'vswhere.exe' is not recognized as an internal or external command,
+operable program or batch file.
+**********************************************************************
+** Visual Studio 2026 Developer Command Prompt v18.0
+** Copyright (c) 2026 Microsoft Corporation
+**********************************************************************
+[vcvarsall.bat] Environment initialized for: 'x64_x86'
+side-metadata-validation.cpp
+side-metadata-test-platform.cpp
+side_metadata.cpp
+Generating Code...
+1/1 side metadata checks passed

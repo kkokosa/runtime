@@ -94,6 +94,7 @@ if (($rows.Count -ne $expectedRows) -or (@($rows | Where-Object { -not $_.Mean }
 }
 
 function Convert-ToNanoseconds([string]$value) {
+    $value = $value.Replace(',', '')
     $match = [regex]::Match($value, '^([\d.]+)\s*(ns|μs|ms)$')
     if (-not $match.Success) {
         throw "Unsupported benchmark time '$value'."
@@ -154,7 +155,10 @@ $checks | Export-Csv (Join-Path $OutputDirectory 'benchmark-controls.csv') -NoTy
     rows = $rows.Count
     processor = $env:PROCESSOR_IDENTIFIER
     os = [Runtime.InteropServices.RuntimeInformation]::OSDescription
-    framework = [Runtime.InteropServices.RuntimeInformation]::FrameworkDescription
+    launcher_framework = [Runtime.InteropServices.RuntimeInformation]::FrameworkDescription
+    benchmark_runtime = (($rows.Runtime | Sort-Object -Unique) -join ';')
+    benchmark_concurrent_gc = (($rows.Concurrent | Sort-Object -Unique) -join ';')
+    benchmark_server_gc = (($rows.Server | Sort-Object -Unique) -join ';')
     native_sha256 = (Get-FileHash $nativeLibrary -Algorithm SHA256).Hash
     result = 'PASS'
 } | Export-Csv (Join-Path $OutputDirectory 'benchmark-identity.csv') -NoTypeInformation
