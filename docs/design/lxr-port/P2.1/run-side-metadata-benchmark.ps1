@@ -23,7 +23,7 @@ if (-not $OutputDirectory) {
     $OutputDirectory = Join-Path $RepositoryRoot (
         'artifacts\P2.1\benchmark\' + [guid]::NewGuid().ToString('N'))
 } else {
-    $OutputDirectory = [IO.Path]::GetFullPath($OutputDirectory)
+    $OutputDirectory = $PSCmdlet.GetUnresolvedProviderPathFromPSPath($OutputDirectory)
 }
 
 $gcRoot = Join-Path $RepositoryRoot 'src\coreclr\gc'

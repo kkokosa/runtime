@@ -45,6 +45,7 @@
     "aaMaximum": 1.1,
     "sensitivityMinimum": 1.5,
     "instrumentCommit": "c832394047d0e477b2ede4a732863ff989d0de2e",
+    "nativeSha256": "6CF7CFD1E97A665F4626F9B3F47F4503E55E5C4C1239E5F67D9C86A15C0CBAA1",
     "instrumentPaths": [
       "docs/design/lxr-port/P2.1/side-metadata-benchmark-native.cpp",
       "docs/design/lxr-port/P2.1/side-metadata-benchmark/Program.cs",
@@ -114,6 +115,11 @@
     },
     {
       "id": "neighbor-validation-failure",
+      "property": "neighbor-update-loss",
+      "payload": "shrink-total-preserve-pass"
+    },
+    {
+      "id": "validation-pass-mismatch",
       "property": "neighbor-update-loss",
       "payload": "decrement-pass-count"
     },

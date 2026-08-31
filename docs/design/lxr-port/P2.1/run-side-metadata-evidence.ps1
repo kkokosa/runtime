@@ -26,7 +26,7 @@ if (-not $OutputDirectory) {
     $OutputDirectory = Join-Path $RepositoryRoot (
         'artifacts\P2.1\full-evidence\' + [guid]::NewGuid().ToString('N'))
 } else {
-    $OutputDirectory = [IO.Path]::GetFullPath($OutputDirectory)
+    $OutputDirectory = $PSCmdlet.GetUnresolvedProviderPathFromPSPath($OutputDirectory)
 }
 
 $requiredCoreRootFiles = @(

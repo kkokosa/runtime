@@ -23,7 +23,7 @@ if (-not $OutputDirectory) {
     $OutputDirectory = Join-Path $RepositoryRoot (
         'artifacts\P2.1\cross-cwd\' + [guid]::NewGuid().ToString('N'))
 } else {
-    $OutputDirectory = [IO.Path]::GetFullPath($OutputDirectory)
+    $OutputDirectory = $PSCmdlet.GetUnresolvedProviderPathFromPSPath($OutputDirectory)
 }
 
 $caller = Join-Path ([IO.Path]::GetTempPath()) (

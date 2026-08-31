@@ -246,6 +246,8 @@ if (($benchmarkIdentity.Count -ne 1) -or
     ([int]$benchmarkIdentity[0].rows -ne $expectedBenchmarkRows) -or
     ($benchmarkIdentity[0].instrument_commit -ne
         $evidenceManifest.benchmark.instrumentCommit) -or
+    ($benchmarkIdentity[0].native_sha256 -ne
+        $evidenceManifest.benchmark.nativeSha256) -or
     ($benchmarkIdentity[0].benchmark_runtime -notmatch '^\.NET 11\.0') -or
     ($benchmarkIdentity[0].result -ne 'PASS')) {
     throw 'Benchmark identity is incomplete.'
@@ -373,11 +375,11 @@ if (@($identities | Where-Object implementation_commit -ne $sourceCommit).Count 
 }
 
 $perturbations = @($evidenceManifest.perturbations)
-if (($perturbations.Count -ne 18) -or
+if (($perturbations.Count -lt 18) -or
     (@($perturbations.id | Group-Object | Where-Object Count -ne 1).Count -ne 0) -or
     (@($perturbations.property | Group-Object |
-        Where-Object { $_.Count -ne 2 }).Count -ne 0)) {
-    throw 'Perturbation manifest must contain two payloads for each property.'
+        Where-Object { $_.Count -lt 2 }).Count -ne 0)) {
+    throw 'Perturbation manifest must contain at least two payloads for each property.'
 }
 
 Write-Host 'PASS: P2.1 side metadata evidence'

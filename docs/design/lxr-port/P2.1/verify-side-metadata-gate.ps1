@@ -146,9 +146,9 @@ try {
     Replace-ExactlyOnce `
         $behaviorSource `
         'uintptr_t newWord = (oldWord & ~location.mask) | ((newValue << location.shift) & location.mask);' `
-        'uintptr_t newWord = oldWord;'
-    $behaviorOutput = Join-Path $runRoot 'behavioral-atomicity'
-    $behaviorLog = Join-Path $runRoot 'behavioral-atomicity.log'
+        'uintptr_t newWord = (newValue << location.shift) & location.mask;'
+    $behaviorOutput = Join-Path $runRoot 'behavioral-masked-update'
+    $behaviorLog = Join-Path $runRoot 'behavioral-masked-update.log'
     & powershell.exe -NoProfile -ExecutionPolicy Bypass -File `
         (Join-Path $clean 'docs\design\lxr-port\P2.1\run-side-metadata-validation.ps1') `
         -RepositoryRoot $clean `
@@ -165,10 +165,10 @@ try {
         throw "Behavioral atomicity control did not fail as expected. See $behaviorLog."
     }
     $summary.Add([pscustomobject][ordered]@{
-        name = 'behavioral-atomicity'
+        name = 'behavioral-masked-update'
         expected = 'fail'
         exit_code = $behaviorExit
-        expected_reason = 'neighbor field update loss'
+        expected_reason = 'neighboring field update loss'
         result = 'PASS'
         log = [IO.Path]::GetFileName($behaviorLog)
     })
@@ -231,6 +231,13 @@ $rows[0].passed = '1'
 $rows[0].total = '1'
 $rows | Export-Csv $path -NoTypeInformation
 Invoke-Verifier 'neighbor-validation-failure' $tree $false 'Validation total differs for'
+
+$tree = New-PerturbationTree 'validation-pass-mismatch'
+$path = Join-Path $tree 'docs\design\lxr-port\P2.1\raw\validation-summary.csv'
+$rows = @(Import-Csv $path)
+$rows[0].passed = ([int]$rows[0].total - 1).ToString()
+$rows | Export-Csv $path -NoTypeInformation
+Invoke-Verifier 'validation-pass-mismatch' $tree $false 'Validation platform evidence is incomplete.'
 
 $tree = New-PerturbationTree 'bounds-global-anchor'
 Replace-ExactlyOnce `
@@ -308,6 +315,6 @@ $rows | Export-Csv $path -NoTypeInformation
 Invoke-Verifier 'benchmark-noise' $tree $false 'Benchmark A/A noise control is incomplete.'
 
 $summary | Export-Csv (Join-Path $runRoot 'gate-summary.csv') -NoTypeInformation
-Write-Host 'PASS: 2 clean archive runs, 18 evidence perturbations, and 1 behavioral atomicity control'
+Write-Host 'PASS: 2 clean archive runs, 19 evidence perturbations, and 1 behavioral neighboring-field control'
 Write-Host "Output: $runRoot"
 exit 0

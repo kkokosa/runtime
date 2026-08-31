@@ -20,7 +20,7 @@ if (-not $OutputDirectory) {
     $OutputDirectory = Join-Path $RepositoryRoot (
         'artifacts\P2.1\runtime-smoke\' + [guid]::NewGuid().ToString('N'))
 } else {
-    $OutputDirectory = [IO.Path]::GetFullPath($OutputDirectory)
+    $OutputDirectory = $PSCmdlet.GetUnresolvedProviderPathFromPSPath($OutputDirectory)
 }
 
 $dotnet = Join-Path $RepositoryRoot '.dotnet\dotnet.exe'
