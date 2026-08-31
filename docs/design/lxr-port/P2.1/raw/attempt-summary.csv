@@ -15,3 +15,4 @@
 "14","portability-correction-archive-gate","True","0","source/instrument commits verified; 2 clean, 18 evidence perturbations, 1 behavioral atomicity control passed","record pass and rerun on raw-only tip"
 "15","provider-aware-cross-cwd-control","True","0","Relative output resolved under unrelated PowerShell location; 45 rows and 3 controls passed","run exact public wrapper"
 "16","provider-aware-public-wrapper","True","0","Relative output resolved under unrelated PowerShell location; all 4 stages passed","bind evidence to source commit and run archive gate"
+"17","provider-portability-archive-gate","True","0","source/instrument commits verified; 2 clean, 19 evidence perturbations, 1 behavioral neighboring-field control passed","record pass and rerun on raw-only tip"
