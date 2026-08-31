@@ -1,4 +1,4 @@
 "platform","passed","total","result","log"
-"windows-x64","1089","1089","PASS","R:\artifacts\P2.1\evidence\public-wrapper-final\windows-validation\x64\run.log"
-"windows-x86","1","1","PASS","R:\artifacts\P2.1\evidence\public-wrapper-final\windows-validation\x86\run.log"
-"linux-x64","1089","1089","PASS",
+"windows-x64","1096","1096","PASS","R:\artifacts\P2.1\evidence\public-wrapper-c832\windows-validation\x64\run.log"
+"windows-x86","1","1","PASS","R:\artifacts\P2.1\evidence\public-wrapper-c832\windows-validation\x86\run.log"
+"linux-x64","1096","1096","PASS",
