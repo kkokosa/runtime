@@ -5,3 +5,4 @@
 "4","sequential-x86-cross-build","True","0","pass","recorded"
 "5","archive-gate-clean-1","True","1","Windows PowerShell lacked Convert.ToHexString","use BitConverter and retry full gate"
 "6","archive-gate-perturbations","True","1","2 clean and 18 perturbations passed but script inherited final negative verifier exit code","add explicit exit 0 and rerun"
+"7","archive-gate-final-evidence","True","0","2 clean archive runs and 18 independent perturbations passed","record pass and rerun on resulting raw-only commit"
