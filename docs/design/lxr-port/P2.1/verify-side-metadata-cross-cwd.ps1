@@ -18,7 +18,7 @@ $scriptRoot = Split-Path -Parent $MyInvocation.MyCommand.Path
 if (-not $RepositoryRoot) {
     $RepositoryRoot = (Resolve-Path (Join-Path $scriptRoot '..\..\..\..')).Path
 }
-$RepositoryRoot = (Resolve-Path -LiteralPath $RepositoryRoot).Path
+$RepositoryRoot = (Resolve-Path -LiteralPath $RepositoryRoot).ProviderPath
 if (-not $OutputDirectory) {
     $OutputDirectory = Join-Path $RepositoryRoot (
         'artifacts\P2.1\cross-cwd\' + [guid]::NewGuid().ToString('N'))
@@ -61,7 +61,7 @@ if (($identity.Count -ne 1) -or
 
 [pscustomobject][ordered]@{
     caller = $caller
-    repository_root = (Resolve-Path $RepositoryRoot).Path
+    repository_root = (Resolve-Path $RepositoryRoot).ProviderPath
     benchmark_rows = [int]$identity[0].rows
     controls = $controls.Count
     launch_count = $LaunchCount

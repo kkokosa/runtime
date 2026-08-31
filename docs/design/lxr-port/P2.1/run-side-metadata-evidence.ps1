@@ -20,8 +20,8 @@ $scriptRoot = Split-Path -Parent $MyInvocation.MyCommand.Path
 if (-not $RepositoryRoot) {
     $RepositoryRoot = (Resolve-Path (Join-Path $scriptRoot '..\..\..\..')).Path
 }
-$RepositoryRoot = (Resolve-Path -LiteralPath $RepositoryRoot).Path
-$RuntimeRoot = (Resolve-Path -LiteralPath $RuntimeRoot).Path
+$RepositoryRoot = (Resolve-Path -LiteralPath $RepositoryRoot).ProviderPath
+$RuntimeRoot = (Resolve-Path -LiteralPath $RuntimeRoot).ProviderPath
 if (-not $OutputDirectory) {
     $OutputDirectory = Join-Path $RepositoryRoot (
         'artifacts\P2.1\full-evidence\' + [guid]::NewGuid().ToString('N'))
@@ -82,7 +82,14 @@ Invoke-Step 'linux-validation' {
     }
     $driveLetter = $physicalRoot.Substring(0, 1).ToLowerInvariant()
     $linuxRoot = '/mnt/' + $driveLetter + $physicalRoot.Substring(2).Replace('\', '/')
-    & wsl.exe bash -lc "cd '$linuxRoot' && bash docs/design/lxr-port/P2.1/run-side-metadata-validation.sh"
+    $windowsLinuxOutput = Join-Path $OutputDirectory 'linux-validation'
+    $outputDriveLetter = $windowsLinuxOutput.Substring(0, 1).ToLowerInvariant()
+    $linuxOutput =
+        '/mnt/' + $outputDriveLetter + $windowsLinuxOutput.Substring(2).Replace('\', '/')
+    & wsl.exe bash -lc (
+        "cd '$linuxRoot' && " +
+        "bash docs/design/lxr-port/P2.1/run-side-metadata-validation.sh " +
+        "'$linuxRoot' '$linuxOutput'")
 }
 
 Invoke-Step 'runtime-smoke' {

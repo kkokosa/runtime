@@ -282,6 +282,12 @@ if (($wrapper.Count -ne $expectedWrapper.Count) -or
 }
 
 $wrapperInvocation = @(Import-Csv (Join-Path $raw 'public-wrapper-invocation.csv'))
+$wrapperLog = Join-Path $raw ('logs\' + $wrapperInvocation[0].log)
+$wrapperLogText = if (Test-Path -LiteralPath $wrapperLog) {
+    Get-Content -LiteralPath $wrapperLog -Raw
+} else {
+    ''
+}
 if (($wrapperInvocation.Count -ne 1) -or
     ([int]$wrapperInvocation[0].benchmark_rows -ne
         [int]$evidenceManifest.crossCwd.benchmarkRows) -or
@@ -294,8 +300,10 @@ if (($wrapperInvocation.Count -ne 1) -or
     ([int]$wrapperInvocation[0].iteration_count -ne
         [int]$evidenceManifest.publicWrapper.iterationCount) -or
     ($wrapperInvocation[0].result -ne 'PASS') -or
-    (-not (Test-Path -LiteralPath (
-        Join-Path $raw ('logs\' + $wrapperInvocation[0].log)) -PathType Leaf))) {
+    (-not (Test-Path -LiteralPath $wrapperLog -PathType Leaf)) -or
+    ($wrapperLogText -notmatch 'PASS: 45 metadata benchmark rows and 3 controls') -or
+    ($wrapperLogText -notmatch 'PASS: full P2.1 evidence path \(4 steps\)') -or
+    ($wrapperLogText -notmatch '(?m)^OUTER_CALLER=')) {
     throw 'Cross-CWD public wrapper invocation is incomplete.'
 }
 
@@ -317,12 +325,20 @@ if (($crossCwd.Count -ne 1) -or
 }
 
 $coreRootControl = @(Import-Csv (Join-Path $raw 'core-root-control-summary.csv'))
+$coreRootLog = Join-Path $raw ('logs\' + $coreRootControl[0].log)
+$coreRootLogText = if (Test-Path -LiteralPath $coreRootLog) {
+    Get-Content -LiteralPath $coreRootLog -Raw
+} else {
+    ''
+}
 if (($coreRootControl.Count -ne 1) -or
     ($coreRootControl[0].missing_file -ne
         $evidenceManifest.coreRootControl.missingFile) -or
     ($coreRootControl[0].result -ne $evidenceManifest.coreRootControl.result) -or
-    (-not (Test-Path -LiteralPath (
-        Join-Path $raw ('logs\' + $coreRootControl[0].log)) -PathType Leaf))) {
+    ([int]$coreRootControl[0].exit_code -eq 0) -or
+    (-not (Test-Path -LiteralPath $coreRootLog -PathType Leaf)) -or
+    ($coreRootLogText -notmatch 'RuntimeRoot must be a complete CoreRoot') -or
+    ($coreRootLogText -notmatch [regex]::Escape($coreRootControl[0].missing_file))) {
     throw 'Incomplete CoreRoot rejection control is incomplete.'
 }
 
@@ -375,7 +391,7 @@ if (@($identities | Where-Object implementation_commit -ne $sourceCommit).Count 
 }
 
 $perturbations = @($evidenceManifest.perturbations)
-if (($perturbations.Count -lt 18) -or
+if (($perturbations.Count -ne 19) -or
     (@($perturbations.id | Group-Object | Where-Object Count -ne 1).Count -ne 0) -or
     (@($perturbations.property | Group-Object |
         Where-Object { $_.Count -lt 2 }).Count -ne 0)) {

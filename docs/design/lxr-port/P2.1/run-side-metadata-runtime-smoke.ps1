@@ -14,8 +14,8 @@ $scriptRoot = Split-Path -Parent $MyInvocation.MyCommand.Path
 if (-not $RepositoryRoot) {
     $RepositoryRoot = (Resolve-Path (Join-Path $scriptRoot '..\..\..\..')).Path
 }
-$RepositoryRoot = (Resolve-Path -LiteralPath $RepositoryRoot).Path
-$RuntimeRoot = (Resolve-Path -LiteralPath $RuntimeRoot).Path
+$RepositoryRoot = (Resolve-Path -LiteralPath $RepositoryRoot).ProviderPath
+$RuntimeRoot = (Resolve-Path -LiteralPath $RuntimeRoot).ProviderPath
 if (-not $OutputDirectory) {
     $OutputDirectory = Join-Path $RepositoryRoot (
         'artifacts\P2.1\runtime-smoke\' + [guid]::NewGuid().ToString('N'))

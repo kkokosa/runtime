@@ -1,6 +1,7 @@
 docs\design\lxr-port\P2.1-side-metadata-framework.md
 docs\design\lxr-port\P2.1\.gitattributes
 docs\design\lxr-port\P2.1\collect-side-metadata-evidence.ps1
+docs\design\lxr-port\P2.1\collect-wrapper-portability-evidence.ps1
 docs\design\lxr-port\P2.1\evidence-manifest.json
 docs\design\lxr-port\P2.1\metadata-specs.json
 docs\design\lxr-port\P2.1\run-side-metadata-benchmark.ps1
