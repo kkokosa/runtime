@@ -10,9 +10,7 @@ param(
     [Parameter(Mandatory)]
     [string]$PublicWrapperLog,
     [Parameter(Mandatory)]
-    [string]$CoreRootControlLog,
-    [Parameter(Mandatory)]
-    [int]$CoreRootControlExitCode,
+    [string]$CoreRootControlRoot,
     [string]$OutputDirectory
 )
 
@@ -25,6 +23,10 @@ if (-not $OutputDirectory) {
 }
 $logs = Join-Path $OutputDirectory 'logs'
 New-Item -ItemType Directory -Path $logs -Force | Out-Null
+$CrossCwdRoot = (Resolve-Path -LiteralPath $CrossCwdRoot).ProviderPath
+$PublicWrapperRoot = (Resolve-Path -LiteralPath $PublicWrapperRoot).ProviderPath
+$PublicWrapperLog = (Resolve-Path -LiteralPath $PublicWrapperLog).ProviderPath
+$CoreRootControlRoot = (Resolve-Path -LiteralPath $CoreRootControlRoot).ProviderPath
 
 $crossSummary = @(Import-Csv (Join-Path $CrossCwdRoot 'cross-cwd-summary.csv'))
 $crossIdentity = @(Import-Csv (Join-Path $CrossCwdRoot 'benchmark\benchmark-identity.csv'))
@@ -65,7 +67,7 @@ Copy-Item -LiteralPath $PublicWrapperLog `
     -Destination (Join-Path $logs 'public-full-evidence-wrapper.log') -Force
 [pscustomobject][ordered]@{
     caller = $callerMatch.Groups[1].Value.Trim()
-    repository_root = $crossSummary[0].repository_root
+    repository_root = $publicIdentity.repository_root
     runtime_root = $publicIdentity.runtime_root
     benchmark_rows = [int]$publicBenchmark[0].rows
     controls = $publicControls.Count
@@ -76,18 +78,22 @@ Copy-Item -LiteralPath $PublicWrapperLog `
     log = 'public-full-evidence-wrapper.log'
 } | Export-Csv (Join-Path $OutputDirectory 'public-wrapper-invocation.csv') -NoTypeInformation
 
-$coreRootLogText = Get-Content -LiteralPath $CoreRootControlLog -Raw
-if (($CoreRootControlExitCode -eq 0) -or
+$coreRootSummary = @(Import-Csv (
+    Join-Path $CoreRootControlRoot 'core-root-control-summary.csv'))
+$coreRootControlLog = Join-Path $CoreRootControlRoot 'invalid-coreroot-control.log'
+$coreRootLogText = Get-Content -LiteralPath $coreRootControlLog -Raw
+if (($coreRootSummary.Count -ne 1) -or
+    ([int]$coreRootSummary[0].exit_code -eq 0) -or
     ($coreRootLogText -notmatch 'RuntimeRoot must be a complete CoreRoot') -or
     ($coreRootLogText -notmatch 'System\.Runtime\.dll')) {
     throw 'Incomplete CoreRoot source control did not fail as expected.'
 }
-Copy-Item -LiteralPath $CoreRootControlLog `
+Copy-Item -LiteralPath $coreRootControlLog `
     -Destination (Join-Path $logs 'invalid-coreroot-control.log') -Force
 [pscustomobject][ordered]@{
-    missing_file = 'System.Runtime.dll'
-    exit_code = $CoreRootControlExitCode
-    result = 'PASS'
+    missing_file = $coreRootSummary[0].missing_file
+    exit_code = $coreRootSummary[0].exit_code
+    result = $coreRootSummary[0].result
     log = 'invalid-coreroot-control.log'
 } | Export-Csv (Join-Path $OutputDirectory 'core-root-control-summary.csv') -NoTypeInformation
 

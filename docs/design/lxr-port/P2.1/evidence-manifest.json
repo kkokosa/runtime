@@ -146,7 +146,7 @@
     {
       "id": "identity-hash",
       "property": "manifest-source-identity",
-      "payload": "change-hash"
+      "payload": "change-design-document"
     },
     {
       "id": "identity-path",

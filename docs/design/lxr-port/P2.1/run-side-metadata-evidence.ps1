@@ -119,6 +119,7 @@ Invoke-Step 'benchmark' {
 $steps | Export-Csv (Join-Path $OutputDirectory 'full-evidence-summary.csv') -NoTypeInformation
 [pscustomobject][ordered]@{
     commit = (git -C $RepositoryRoot rev-parse HEAD).Trim()
+    repository_root = $RepositoryRoot
     runtime_root = (Resolve-Path $RuntimeRoot).Path
     output = (Resolve-Path $OutputDirectory).Path
     result = 'PASS'

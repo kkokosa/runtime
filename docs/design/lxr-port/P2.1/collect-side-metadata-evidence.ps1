@@ -23,6 +23,7 @@ if (-not $OutputDirectory) {
 if (-not $RepositoryRoot) {
     $RepositoryRoot = (Resolve-Path (Join-Path $scriptRoot '..\..\..\..')).Path
 }
+$RepositoryRoot = (Resolve-Path -LiteralPath $RepositoryRoot).ProviderPath
 New-Item -ItemType Directory -Path $OutputDirectory -Force | Out-Null
 $logs = Join-Path $OutputDirectory 'logs'
 New-Item -ItemType Directory -Path $logs -Force | Out-Null

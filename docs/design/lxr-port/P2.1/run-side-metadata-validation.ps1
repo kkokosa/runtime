@@ -49,8 +49,14 @@ foreach ($architecture in @('x64', 'x86')) {
     ) -join ' && '
 
     $started = [DateTimeOffset]::UtcNow
-    & $env:ComSpec /d /s /c $command *> $log
-    $exitCode = $LASTEXITCODE
+    $savedErrorActionPreference = $ErrorActionPreference
+    try {
+        $ErrorActionPreference = 'Continue'
+        & $env:ComSpec /d /s /c $command *> $log
+        $exitCode = $LASTEXITCODE
+    } finally {
+        $ErrorActionPreference = $savedErrorActionPreference
+    }
     $ended = [DateTimeOffset]::UtcNow
     $attempts.Add([pscustomobject][ordered]@{
         architecture = $architecture

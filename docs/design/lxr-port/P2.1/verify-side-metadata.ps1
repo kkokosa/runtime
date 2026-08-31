@@ -11,6 +11,7 @@ $scriptRoot = Split-Path -Parent $MyInvocation.MyCommand.Path
 if (-not $RepositoryRoot) {
     $RepositoryRoot = (Resolve-Path (Join-Path $scriptRoot '..\..\..\..')).Path
 }
+$RepositoryRoot = (Resolve-Path -LiteralPath $RepositoryRoot).ProviderPath
 
 $raw = Join-Path $scriptRoot 'raw'
 $metadataManifest = Get-Content (Join-Path $scriptRoot 'metadata-specs.json') -Raw |

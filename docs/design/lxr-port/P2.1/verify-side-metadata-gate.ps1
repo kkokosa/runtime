@@ -12,7 +12,12 @@ $scriptRoot = Split-Path -Parent $MyInvocation.MyCommand.Path
 if (-not $RepositoryRoot) {
     $RepositoryRoot = (Resolve-Path (Join-Path $scriptRoot '..\..\..\..')).Path
 }
-$parent = if ($OutputDirectory) { $OutputDirectory } else { [IO.Path]::GetTempPath() }
+$RepositoryRoot = (Resolve-Path -LiteralPath $RepositoryRoot).ProviderPath
+$parent = if ($OutputDirectory) {
+    $PSCmdlet.GetUnresolvedProviderPathFromPSPath($OutputDirectory)
+} else {
+    [IO.Path]::GetTempPath()
+}
 New-Item -ItemType Directory -Path $parent -Force | Out-Null
 $runRoot = Join-Path $parent ('p21-side-metadata-gate-' + [guid]::NewGuid().ToString('N'))
 $archive = Join-Path $runRoot 'source.tar'
@@ -276,11 +281,10 @@ $rows = @(Import-Csv $path)
 Invoke-Verifier 'bulk-duplicate-row' $tree $false 'Benchmark rows are incomplete or duplicated.'
 
 $tree = New-PerturbationTree 'identity-hash'
-$path = Join-Path $tree 'docs\design\lxr-port\P2.1\raw\source-identities.csv'
-$rows = @(Import-Csv $path)
-$rows[0].canonical_sha256 = '0' * 64
-$rows | Export-Csv $path -NoTypeInformation
-Invoke-Verifier 'identity-hash' $tree $false 'Source identity mismatch:'
+$path = Join-Path $tree 'docs\design\lxr-port\P2.1-side-metadata-framework.md'
+Add-Content -LiteralPath $path -Value 'identity-perturbation'
+Invoke-Verifier 'identity-hash' $tree $false (
+    'Source identity mismatch: docs\design\lxr-port\P2.1-side-metadata-framework.md')
 
 $tree = New-PerturbationTree 'identity-path'
 $path = Join-Path $tree 'docs\design\lxr-port\P2.1\raw\source-identities.csv'
