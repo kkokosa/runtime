@@ -239,3 +239,4 @@ Invoke-Verifier 'benchmark-noise' $tree $false 'Benchmark A/A noise control is i
 $summary | Export-Csv (Join-Path $runRoot 'gate-summary.csv') -NoTypeInformation
 Write-Host 'PASS: 2 clean archive runs and 18 independent perturbations'
 Write-Host "Output: $runRoot"
+exit 0
