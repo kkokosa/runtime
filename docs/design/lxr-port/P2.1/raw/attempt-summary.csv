@@ -25,3 +25,5 @@
 "24","committed-final-public-wrapper","True","0","Unrelated caller; contained Windows/Linux output; validation/runtime/45-row benchmark all passed","bind evidence to 2190b8977df"
 "25","committed-incomplete-coreroot-control","True","0","Generator observed fail-fast exception and recorded nonzero inner result before evidence execution","run final archive gate"
 "26","powershell5-final-archive-gate","True","0","PowerShell 5: 2 clean, 19 evidence perturbations, 1 behavioral neighboring-field control passed","record pass and rerun on raw-only tip"
+"27","powershell5-cross-cwd-public-path","True","0","PowerShell 5 cross-CWD benchmark 45/3 and public wrapper 4/4 passed","freeze source parent and bind raw child"
+"28","immutable-source-parent","True","0","All 32 non-raw source paths frozen at 86e3f5717bf7a103f1dae79e46bd1a08867a5aee","regenerate raw identities only"
