@@ -151,7 +151,7 @@
     {
       "id": "identity-path",
       "property": "manifest-source-identity",
-      "payload": "change-path"
+      "payload": "delete-identity-row"
     },
     {
       "id": "evidence-missing-file",

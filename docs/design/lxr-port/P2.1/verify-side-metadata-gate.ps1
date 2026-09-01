@@ -289,8 +289,7 @@ Invoke-Verifier 'identity-hash' $tree $false (
 $tree = New-PerturbationTree 'identity-path'
 $path = Join-Path $tree 'docs\design\lxr-port\P2.1\raw\source-identities.csv'
 $rows = @(Import-Csv $path)
-$rows[0].name = 'missing\source.cpp'
-$rows | Export-Csv $path -NoTypeInformation
+$rows[1..($rows.Count - 1)] | Export-Csv $path -NoTypeInformation
 Invoke-Verifier 'identity-path' $tree $false 'Source identity path set mismatch.'
 
 $tree = New-PerturbationTree 'evidence-missing-file'
