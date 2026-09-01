@@ -51,8 +51,15 @@ foreach ($path in $requiredPaths) {
 
 New-Item -ItemType Directory -Path $managed -Force | Out-Null
 $managedBuildLog = Join-Path $OutputDirectory 'managed-build.log'
-& $dotnet build $project -c Release -o $managed --nologo *> $managedBuildLog
-if ($LASTEXITCODE -ne 0) {
+$savedErrorActionPreference = $ErrorActionPreference
+try {
+    $ErrorActionPreference = 'Continue'
+    & $dotnet build $project -c Release -o $managed --nologo *> $managedBuildLog
+    $managedBuildExitCode = $LASTEXITCODE
+} finally {
+    $ErrorActionPreference = $savedErrorActionPreference
+}
+if ($managedBuildExitCode -ne 0) {
     throw 'Unable to build the inherited P1.1 runtime smoke.'
 }
 
@@ -95,8 +102,13 @@ try {
                 $env:DOTNET_gcServer = if ($gcMode -eq 'Server') { '1' } else { '0' }
                 $id = "polarity-$polarity-$linkage-$gcMode"
                 $log = Join-Path $OutputDirectory "$id.log"
-                & $corerun $assembly *> $log
-                $exitCode = $LASTEXITCODE
+                try {
+                    $ErrorActionPreference = 'Continue'
+                    & $corerun $assembly *> $log
+                    $exitCode = $LASTEXITCODE
+                } finally {
+                    $ErrorActionPreference = $savedErrorActionPreference
+                }
                 $output = Get-Content -LiteralPath $log -Raw
                 if (($exitCode -ne 0) -or ($output -notmatch '(?m)^PASS:')) {
                     throw "Runtime smoke failed: $id. See $log."

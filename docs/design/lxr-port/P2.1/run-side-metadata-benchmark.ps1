@@ -43,13 +43,27 @@ $nativeCommand = @(
     "cd /d `"$OutputDirectory`"",
     "cl /nologo /LD /std:c++17 /EHsc /O2 /DBUILD_AS_STANDALONE /DTARGET_WINDOWS /DHOST_WINDOWS /DWIN32 /DTARGET_AMD64 /DHOST_AMD64 /DTARGET_64BIT /DHOST_64BIT /I`"$gcRoot`" /I`"$gcRoot\env`" /I`"$nativeRoot`" /I`"$nativeRoot\inc`" `"$scriptRoot\side-metadata-benchmark-native.cpp`" `"$scriptRoot\side-metadata-test-platform.cpp`" `"$gcRoot\side_metadata.cpp`" /Fe:`"$nativeLibrary`""
 ) -join ' && '
-& $env:ComSpec /d /s /c $nativeCommand *> $nativeLog
-if ($LASTEXITCODE -ne 0) {
+$savedErrorActionPreference = $ErrorActionPreference
+try {
+    $ErrorActionPreference = 'Continue'
+    & $env:ComSpec /d /s /c $nativeCommand *> $nativeLog
+    $nativeExitCode = $LASTEXITCODE
+} finally {
+    $ErrorActionPreference = $savedErrorActionPreference
+}
+if ($nativeExitCode -ne 0) {
     throw "Native benchmark build failed. See $nativeLog."
 }
 
-& $dotnet build $project -c Release --nologo *> (Join-Path $OutputDirectory 'managed-build.log')
-if ($LASTEXITCODE -ne 0) {
+$managedBuildLog = Join-Path $OutputDirectory 'managed-build.log'
+try {
+    $ErrorActionPreference = 'Continue'
+    & $dotnet build $project -c Release --nologo *> $managedBuildLog
+    $managedBuildExitCode = $LASTEXITCODE
+} finally {
+    $ErrorActionPreference = $savedErrorActionPreference
+}
+if ($managedBuildExitCode -ne 0) {
     throw 'Managed benchmark build failed.'
 }
 
@@ -61,13 +75,19 @@ try {
     $env:PATH = "$(Join-Path $RepositoryRoot '.dotnet');$env:PATH"
     $env:DOTNET_ROOT = Join-Path $RepositoryRoot '.dotnet'
     $env:P21_NATIVE_BENCHMARK = $nativeLibrary
-    & $dotnet run --no-build -c Release --project $project -- `
-        --filter '*' `
-        --launchCount $LaunchCount `
-        --warmupCount $WarmupCount `
-        --iterationCount $IterationCount `
-        --artifacts $results *> $benchmarkLog
-    if ($LASTEXITCODE -ne 0) {
+    try {
+        $ErrorActionPreference = 'Continue'
+        & $dotnet run --no-build -c Release --project $project -- `
+            --filter '*' `
+            --launchCount $LaunchCount `
+            --warmupCount $WarmupCount `
+            --iterationCount $IterationCount `
+            --artifacts $results *> $benchmarkLog
+        $benchmarkExitCode = $LASTEXITCODE
+    } finally {
+        $ErrorActionPreference = $savedErrorActionPreference
+    }
+    if ($benchmarkExitCode -ne 0) {
         throw "Benchmark run failed. See $benchmarkLog."
     }
 } finally {

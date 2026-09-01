@@ -24,6 +24,14 @@ if (-not $RepositoryRoot) {
     $RepositoryRoot = (Resolve-Path (Join-Path $scriptRoot '..\..\..\..')).Path
 }
 $RepositoryRoot = (Resolve-Path -LiteralPath $RepositoryRoot).ProviderPath
+foreach ($name in @('WindowsValidation', 'LinuxValidation', 'Benchmark', 'RuntimeSmoke')) {
+    Set-Variable -Name $name -Value (
+        Resolve-Path -LiteralPath (Get-Variable -Name $name -ValueOnly)
+    ).ProviderPath
+}
+if ($OutputDirectory) {
+    $OutputDirectory = $PSCmdlet.GetUnresolvedProviderPathFromPSPath($OutputDirectory)
+}
 New-Item -ItemType Directory -Path $OutputDirectory -Force | Out-Null
 $logs = Join-Path $OutputDirectory 'logs'
 New-Item -ItemType Directory -Path $logs -Force | Out-Null

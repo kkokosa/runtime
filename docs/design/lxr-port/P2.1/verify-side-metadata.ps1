@@ -281,6 +281,14 @@ if (($wrapper.Count -ne $expectedWrapper.Count) -or
 }
 
 $wrapperInvocation = @(Import-Csv (Join-Path $raw 'public-wrapper-invocation.csv'))
+$wrapperRepositoryRoot = if (
+    ($wrapperInvocation.Count -eq 1) -and
+    (Test-Path -LiteralPath $wrapperInvocation[0].repository_root -PathType Container)
+) {
+    (Resolve-Path -LiteralPath $wrapperInvocation[0].repository_root).ProviderPath
+} else {
+    ''
+}
 $wrapperLog = Join-Path $raw ('logs\' + $wrapperInvocation[0].log)
 $wrapperLogText = if (Test-Path -LiteralPath $wrapperLog) {
     Get-Content -LiteralPath $wrapperLog -Raw
@@ -298,6 +306,7 @@ if (($wrapperInvocation.Count -ne 1) -or
         [int]$evidenceManifest.publicWrapper.warmupCount) -or
     ([int]$wrapperInvocation[0].iteration_count -ne
         [int]$evidenceManifest.publicWrapper.iterationCount) -or
+    ($wrapperRepositoryRoot -ine $RepositoryRoot) -or
     ($wrapperInvocation[0].result -ne 'PASS') -or
     (-not (Test-Path -LiteralPath $wrapperLog -PathType Leaf)) -or
     ($wrapperLogText -notmatch 'PASS: 45 metadata benchmark rows and 3 controls') -or
@@ -307,6 +316,14 @@ if (($wrapperInvocation.Count -ne 1) -or
 }
 
 $crossCwd = @(Import-Csv (Join-Path $raw 'cross-cwd-summary.csv'))
+$crossCwdRepositoryRoot = if (
+    ($crossCwd.Count -eq 1) -and
+    (Test-Path -LiteralPath $crossCwd[0].repository_root -PathType Container)
+) {
+    (Resolve-Path -LiteralPath $crossCwd[0].repository_root).ProviderPath
+} else {
+    ''
+}
 if (($crossCwd.Count -ne 1) -or
     ([int]$crossCwd[0].benchmark_rows -ne
         [int]$evidenceManifest.crossCwd.benchmarkRows) -or
@@ -317,6 +334,7 @@ if (($crossCwd.Count -ne 1) -or
         [int]$evidenceManifest.crossCwd.warmupCount) -or
     ([int]$crossCwd[0].iteration_count -ne
         [int]$evidenceManifest.crossCwd.iterationCount) -or
+    ($crossCwdRepositoryRoot -ine $RepositoryRoot) -or
     ($crossCwd[0].result -ne 'PASS') -or
     (-not (Test-Path -LiteralPath (
         Join-Path $raw ('logs\' + $crossCwd[0].log)) -PathType Leaf))) {
