@@ -32,10 +32,16 @@ function Invoke-Verifier(
     [string]$ExpectedFailure
 ) {
     $log = Join-Path $runRoot "$Name.log"
-    & powershell.exe -NoProfile -ExecutionPolicy Bypass -File `
-        (Join-Path $Root 'docs\design\lxr-port\P2.1\verify-side-metadata.ps1') `
-        -RepositoryRoot $Root *> $log
-    $exitCode = $LASTEXITCODE
+    $savedErrorActionPreference = $ErrorActionPreference
+    try {
+        $ErrorActionPreference = 'Continue'
+        & powershell.exe -NoProfile -ExecutionPolicy Bypass -File `
+            (Join-Path $Root 'docs\design\lxr-port\P2.1\verify-side-metadata.ps1') `
+            -RepositoryRoot $Root *> $log
+        $exitCode = $LASTEXITCODE
+    } finally {
+        $ErrorActionPreference = $savedErrorActionPreference
+    }
     $text = Get-Content -LiteralPath $log -Raw
     if ($ExpectSuccess) {
         if (($exitCode -ne 0) -or
