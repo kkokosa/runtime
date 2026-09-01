@@ -154,11 +154,17 @@ try {
         'uintptr_t newWord = (newValue << location.shift) & location.mask;'
     $behaviorOutput = Join-Path $runRoot 'behavioral-masked-update'
     $behaviorLog = Join-Path $runRoot 'behavioral-masked-update.log'
-    & powershell.exe -NoProfile -ExecutionPolicy Bypass -File `
-        (Join-Path $clean 'docs\design\lxr-port\P2.1\run-side-metadata-validation.ps1') `
-        -RepositoryRoot $clean `
-        -OutputDirectory $behaviorOutput *> $behaviorLog
-    $behaviorExit = $LASTEXITCODE
+    $savedErrorActionPreference = $ErrorActionPreference
+    try {
+        $ErrorActionPreference = 'Continue'
+        & powershell.exe -NoProfile -ExecutionPolicy Bypass -File `
+            (Join-Path $clean 'docs\design\lxr-port\P2.1\run-side-metadata-validation.ps1') `
+            -RepositoryRoot $clean `
+            -OutputDirectory $behaviorOutput *> $behaviorLog
+        $behaviorExit = $LASTEXITCODE
+    } finally {
+        $ErrorActionPreference = $savedErrorActionPreference
+    }
     $validatorLog = Join-Path $behaviorOutput 'x64\run.log'
     $validatorText = if (Test-Path -LiteralPath $validatorLog) {
         Get-Content -LiteralPath $validatorLog -Raw
