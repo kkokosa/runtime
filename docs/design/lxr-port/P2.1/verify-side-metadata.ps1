@@ -407,6 +407,27 @@ if (@($identities | Where-Object implementation_commit -ne $sourceCommit).Count 
     throw 'Source implementation commit identities differ.'
 }
 
+$null = git -C $RepositoryRoot rev-parse --git-dir 2>$null
+if ($LASTEXITCODE -eq 0) {
+    $changedAfterAuthority = @(
+        git -C $RepositoryRoot diff --name-only $sourceCommit HEAD)
+    if ($LASTEXITCODE -ne 0) {
+        throw 'Unable to compare the source authority commit to HEAD.'
+    }
+    $disallowedChanges = @(
+        $changedAfterAuthority |
+            Where-Object {
+                -not $_.StartsWith(
+                    'docs/design/lxr-port/P2.1/raw/',
+                    [StringComparison]::Ordinal)
+            })
+    if ($disallowedChanges.Count -ne 0) {
+        throw (
+            'Non-raw paths changed after the source authority commit: ' +
+            ($disallowedChanges -join ', '))
+    }
+}
+
 $perturbations = @($evidenceManifest.perturbations)
 if (($perturbations.Count -ne 19) -or
     (@($perturbations.id | Group-Object | Where-Object Count -ne 1).Count -ne 0) -or
