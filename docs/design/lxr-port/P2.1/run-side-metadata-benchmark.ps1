@@ -121,16 +121,21 @@ if (($rows.Count -ne $expectedRows) -or (@($rows | Where-Object { -not $_.Mean }
 
 function Convert-ToNanoseconds([string]$value) {
     $value = $value.Replace(',', '')
-    $match = [regex]::Match($value, '^([\d.]+)\s*(ns|μs|ms)$')
+    $microseconds = ([char]0x03BC) + 's'
+    $pattern = '^([\d.]+)\s*(ns|' + [regex]::Escape($microseconds) + '|ms)$'
+    $match = [regex]::Match($value, $pattern)
     if (-not $match.Success) {
         throw "Unsupported benchmark time '$value'."
     }
     $number = [double]$match.Groups[1].Value
-    switch ($match.Groups[2].Value) {
-        'ns' { return $number }
-        'μs' { return $number * 1000 }
-        'ms' { return $number * 1000 * 1000 }
+    $unit = $match.Groups[2].Value
+    if ($unit -eq 'ns') {
+        return $number
     }
+    if ($unit -eq $microseconds) {
+        return $number * 1000
+    }
+    return $number * 1000 * 1000
 }
 
 $checks = [Collections.Generic.List[object]]::new()

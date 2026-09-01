@@ -94,10 +94,20 @@ Invoke-Step 'linux-validation' {
     $linuxRoot = Convert-ToWslPath $RepositoryRoot
     $windowsLinuxOutput = Join-Path $OutputDirectory 'linux-validation'
     $linuxOutput = Convert-ToWslPath $windowsLinuxOutput
-    & wsl.exe bash -lc (
-        "cd '$linuxRoot' && " +
-        "bash docs/design/lxr-port/P2.1/run-side-metadata-validation.sh " +
-        "'$linuxRoot' '$linuxOutput'")
+    $savedErrorActionPreference = $ErrorActionPreference
+    try {
+        $ErrorActionPreference = 'Continue'
+        & wsl.exe bash -lc (
+            "cd '$linuxRoot' && " +
+            "bash docs/design/lxr-port/P2.1/run-side-metadata-validation.sh " +
+            "'$linuxRoot' '$linuxOutput'")
+        $linuxExitCode = $LASTEXITCODE
+    } finally {
+        $ErrorActionPreference = $savedErrorActionPreference
+    }
+    if ($linuxExitCode -ne 0) {
+        throw "Linux validation failed with exit code $linuxExitCode."
+    }
 }
 
 Invoke-Step 'runtime-smoke' {
