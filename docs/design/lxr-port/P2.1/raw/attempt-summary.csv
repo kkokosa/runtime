@@ -27,3 +27,5 @@
 "26","powershell5-final-archive-gate","True","0","PowerShell 5: 2 clean, 19 evidence perturbations, 1 behavioral neighboring-field control passed","record pass and rerun on raw-only tip"
 "27","powershell5-cross-cwd-public-path","True","0","PowerShell 5 cross-CWD benchmark 45/3 and public wrapper 4/4 passed","freeze source parent and bind raw child"
 "28","immutable-source-parent","True","0","All 32 non-raw source paths frozen at 86e3f5717bf7a103f1dae79e46bd1a08867a5aee","regenerate raw identities only"
+"29","final-source-parent-public-wrapper","True","0","PowerShell 5 unrelated CWD; contained Windows/Linux output; all 4 stages and 45/3 passed","bind raw-only child"
+"30","final-immutable-source-parent","True","0","All 32 non-raw source paths frozen at f8e7811546a37e0687d26755b709ab01bab213cf","generate raw-only evidence child"
