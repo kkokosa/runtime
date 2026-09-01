@@ -22,3 +22,5 @@
 "21","subst-public-wrapper","True","4","All 4 wrapper stages passed; external containment assertion concatenated root without separator","correct external assertion and verify output"
 "22","subst-linux-containment-check","True","0","Linux validation summary exists under requested physical wrapper output; R removed","bind evidence and run archive gate"
 "23","final-subst-provider-archive-gate","True","0","Source/instrument hashes verified; 2 clean, 19 evidence perturbations, 1 behavioral neighboring-field control passed","record pass and rerun on raw-only tip"
+"24","committed-final-public-wrapper","True","0","Unrelated caller; contained Windows/Linux output; validation/runtime/45-row benchmark all passed","bind evidence to 2190b8977df"
+"25","committed-incomplete-coreroot-control","True","0","Generator observed fail-fast exception and recorded nonzero inner result before evidence execution","run final archive gate"
