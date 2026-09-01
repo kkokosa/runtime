@@ -12,8 +12,8 @@ if (-not $RepositoryRoot) {
     $RepositoryRoot = (Resolve-Path (Join-Path $scriptRoot '..\..\..\..')).Path
 }
 $RepositoryRoot = (Resolve-Path -LiteralPath $RepositoryRoot).ProviderPath
-$null = git -C $RepositoryRoot rev-parse --git-dir 2>$null
-$hasGitRepository = $LASTEXITCODE -eq 0
+$hasGitRepository = Test-Path -LiteralPath (
+    Join-Path $RepositoryRoot '.git')
 
 $raw = Join-Path $scriptRoot 'raw'
 $metadataManifest = Get-Content (Join-Path $scriptRoot 'metadata-specs.json') -Raw |
