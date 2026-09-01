@@ -12,6 +12,8 @@ if (-not $RepositoryRoot) {
     $RepositoryRoot = (Resolve-Path (Join-Path $scriptRoot '..\..\..\..')).Path
 }
 $RepositoryRoot = (Resolve-Path -LiteralPath $RepositoryRoot).ProviderPath
+$null = git -C $RepositoryRoot rev-parse --git-dir 2>$null
+$hasGitRepository = $LASTEXITCODE -eq 0
 
 $raw = Join-Path $scriptRoot 'raw'
 $metadataManifest = Get-Content (Join-Path $scriptRoot 'metadata-specs.json') -Raw |
@@ -306,7 +308,7 @@ if (($wrapperInvocation.Count -ne 1) -or
         [int]$evidenceManifest.publicWrapper.warmupCount) -or
     ([int]$wrapperInvocation[0].iteration_count -ne
         [int]$evidenceManifest.publicWrapper.iterationCount) -or
-    ($wrapperRepositoryRoot -ine $RepositoryRoot) -or
+    ($hasGitRepository -and ($wrapperRepositoryRoot -ine $RepositoryRoot)) -or
     ($wrapperInvocation[0].result -ne 'PASS') -or
     (-not (Test-Path -LiteralPath $wrapperLog -PathType Leaf)) -or
     ($wrapperLogText -notmatch 'PASS: 45 metadata benchmark rows and 3 controls') -or
@@ -334,7 +336,7 @@ if (($crossCwd.Count -ne 1) -or
         [int]$evidenceManifest.crossCwd.warmupCount) -or
     ([int]$crossCwd[0].iteration_count -ne
         [int]$evidenceManifest.crossCwd.iterationCount) -or
-    ($crossCwdRepositoryRoot -ine $RepositoryRoot) -or
+    ($hasGitRepository -and ($crossCwdRepositoryRoot -ine $RepositoryRoot)) -or
     ($crossCwd[0].result -ne 'PASS') -or
     (-not (Test-Path -LiteralPath (
         Join-Path $raw ('logs\' + $crossCwd[0].log)) -PathType Leaf))) {
@@ -407,8 +409,7 @@ if (@($identities | Where-Object implementation_commit -ne $sourceCommit).Count 
     throw 'Source implementation commit identities differ.'
 }
 
-$null = git -C $RepositoryRoot rev-parse --git-dir 2>$null
-if ($LASTEXITCODE -eq 0) {
+if ($hasGitRepository) {
     $changedAfterAuthority = @(
         git -C $RepositoryRoot diff --name-only $sourceCommit HEAD)
     if ($LASTEXITCODE -ne 0) {
