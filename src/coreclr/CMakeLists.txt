@@ -61,10 +61,18 @@ OPTION(CLR_CMAKE_ENABLE_OBJECT_REFERENCE_ENUMERATION_TEST
   "Enable object-reference enumeration scan validation" OFF)
 OPTION(CLR_CMAKE_ENABLE_OBJECT_HEADER_BITS_TEST
   "Enable GC object-header bit validation" OFF)
+OPTION(CLR_CMAKE_ENABLE_IMMIX_BLOCK_STATE_TEST
+  "Enable the Immix block-state validation exports" OFF)
 
 if(CLR_CMAKE_ENABLE_WRITE_BARRIER_STANDARD_ABI_TEST)
   if(NOT CLR_CMAKE_TARGET_ARCH_AMD64)
     message(FATAL_ERROR "The write-barrier standard-ABI validation path requires AMD64")
+  endif()
+endif()
+
+if(CLR_CMAKE_ENABLE_IMMIX_BLOCK_STATE_TEST)
+  if(NOT CLR_CMAKE_TARGET_ARCH_AMD64)
+    message(FATAL_ERROR "The Immix block-state validation exports require AMD64")
   endif()
 endif()
 

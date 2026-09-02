@@ -39,6 +39,11 @@ if(CLR_CMAKE_ENABLE_OBJECT_HEADER_BITS_TEST)
     mscorwks_objectheaderbitstest_unixexports.src
   )
 endif()
+if(CLR_CMAKE_ENABLE_IMMIX_BLOCK_STATE_TEST)
+  list(APPEND DEF_SOURCES
+    mscorwks_immixblockstatetest_unixexports.src
+  )
+endif()
 if(FEATURE_GDBJIT)
   list(APPEND DEF_SOURCES
     gdbjit_unixexports.src
