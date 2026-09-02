@@ -1,5 +1,22 @@
-; Licensed to the .NET Foundation under one or more agreements.
-; The .NET Foundation licenses this file to you under the MIT license.
+; Unix hosting API
+coreclr_create_delegate
+coreclr_execute_assembly
+coreclr_initialize
+coreclr_set_error_writer
+coreclr_shutdown
+coreclr_shutdown_2
+
+; Functions exported by the coreclr
+DllMain
+GetCLRRuntimeHost
+; DAC table export
+g_dacTable
+
+; Used by profilers
+MetaDataGetDispenser
+
+; cDAC contract descriptor
+DotNetRuntimeContractDescriptor
 
 ; Immix block-state validation hook
 GC_ImmixBlockStateTest_Run

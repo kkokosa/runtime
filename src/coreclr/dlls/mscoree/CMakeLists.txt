@@ -17,7 +17,11 @@ set (DEF_SOURCES
   mscorwks_ntdef.src
 )
 else()
-if(CLR_CMAKE_ENABLE_WRITE_BARRIER_STANDARD_ABI_TEST AND CLR_CMAKE_ENABLE_ALLOCATION_NOTIFICATION_TEST)
+if(CLR_CMAKE_ENABLE_IMMIX_BLOCK_STATE_TEST)
+  set (DEF_SOURCES
+    mscorwks_immixblockstatetest_unixexports.src
+  )
+elseif(CLR_CMAKE_ENABLE_WRITE_BARRIER_STANDARD_ABI_TEST AND CLR_CMAKE_ENABLE_ALLOCATION_NOTIFICATION_TEST)
   set (DEF_SOURCES
     mscorwks_validation_unixexports.src
   )
@@ -37,11 +41,6 @@ endif()
 if(CLR_CMAKE_ENABLE_OBJECT_HEADER_BITS_TEST)
   list(APPEND DEF_SOURCES
     mscorwks_objectheaderbitstest_unixexports.src
-  )
-endif()
-if(CLR_CMAKE_ENABLE_IMMIX_BLOCK_STATE_TEST)
-  list(APPEND DEF_SOURCES
-    mscorwks_immixblockstatetest_unixexports.src
   )
 endif()
 if(FEATURE_GDBJIT)

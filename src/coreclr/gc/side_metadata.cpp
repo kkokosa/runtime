@@ -3,6 +3,9 @@
 
 #include "common.h"
 #include "gcenv.h"
+#if !defined(BUILD_AS_STANDALONE) || defined(FEATURE_STANDALONE_GC)
+#include "gcenv.inl"
+#endif
 #include "side_metadata.h"
 
 #include <string.h>
