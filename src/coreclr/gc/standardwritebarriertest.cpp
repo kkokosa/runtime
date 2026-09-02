@@ -4,6 +4,7 @@
 #ifdef FEATURE_WRITE_BARRIER_STANDARD_ABI_TEST
 
 #include "gcinternal.h"
+#include "side_metadata.h"
 #include "standardwritebarriertest.h"
 
 #ifndef DLLEXPORT
@@ -26,10 +27,15 @@ constexpr uint32_t VectorClobberMask = 7;
 constexpr uint32_t ApxClobberMask = 8;
 
 uint8_t* g_write_barrier_test_metadata;
+uint8_t* g_write_barrier_test_metadata_storage_start;
 size_t g_write_barrier_test_metadata_size;
 size_t g_write_barrier_test_metadata_storage_size;
 uintptr_t g_write_barrier_test_first_metadata_byte;
 uint8_t g_write_barrier_test_granularity_shift;
+uintptr_t g_write_barrier_test_data_start;
+size_t g_write_barrier_test_data_size;
+LxrSideMetadataLayout* g_write_barrier_test_layout;
+SideMetadataManager* g_write_barrier_test_manager;
 volatile int64_t g_write_barrier_test_call_count;
 volatile int64_t g_write_barrier_test_attempt_count;
 volatile int64_t g_write_barrier_test_win_count;
@@ -85,42 +91,30 @@ bool WriteBarrierTestTryClaim(Object** destination)
         Interlocked::ExchangeAdd64(&g_write_barrier_test_attempt_count, static_cast<int64_t>(1));
     }
 
-    uint8_t* byte =
-        &g_write_barrier_test_metadata[metadataByte - g_write_barrier_test_first_metadata_byte];
-    uintptr_t byteAddress = reinterpret_cast<uintptr_t>(byte);
-    volatile uintptr_t* word =
-        reinterpret_cast<volatile uintptr_t*>(byteAddress & ~(static_cast<uintptr_t>(sizeof(uintptr_t)) - 1));
-    uint32_t bitInByte =
-        static_cast<uint32_t>((address >> g_write_barrier_test_granularity_shift) & 7);
-    uint32_t bitInWord =
-        bitInByte + (static_cast<uint32_t>(byteAddress & (sizeof(uintptr_t) - 1)) * 8);
-    uintptr_t mask = static_cast<uintptr_t>(1) << bitInWord;
     bool workWhenSet = GCConfig::GetWriteBarrierTestBitMeaning() != 0;
-
-    while (true)
+    uintptr_t observed;
+    bool exchanged;
+    SideMetadataResult result = g_write_barrier_test_manager->CompareExchange(
+        LxrSideMetadataKind::FieldUnlogged,
+        address,
+        workWhenSet ? 0 : 1,
+        workWhenSet ? 1 : 0,
+        SideMetadataMemoryOrder::SequentiallyConsistent,
+        &observed,
+        &exchanged);
+    if (result != SideMetadataResult::Success)
     {
-        uintptr_t oldValue = VolatileLoad(word);
-        bool requiresWork = workWhenSet ? ((oldValue & mask) != 0) : ((oldValue & mask) == 0);
-        if (!requiresWork)
-        {
-            return false;
-        }
-
-        uintptr_t newValue = workWhenSet ? (oldValue & ~mask) : (oldValue | mask);
-        uintptr_t observed = reinterpret_cast<uintptr_t>(
-            Interlocked::CompareExchangePointer(
-                reinterpret_cast<void* volatile*>(word),
-                reinterpret_cast<void*>(newValue),
-                reinterpret_cast<void*>(oldValue)));
-        if (observed == oldValue)
-        {
-            if (countClaim)
-            {
-                Interlocked::ExchangeAdd64(&g_write_barrier_test_win_count, static_cast<int64_t>(1));
-            }
-            return true;
-        }
+        return false;
     }
+    if (!exchanged)
+    {
+        return false;
+    }
+    if (countClaim)
+    {
+        Interlocked::ExchangeAdd64(&g_write_barrier_test_win_count, static_cast<int64_t>(1));
+    }
+    return true;
 }
 
 void WriteBarrierTestMarkCard(Object** destination)
@@ -264,35 +258,62 @@ uint8_t* GetWriteBarrierTestMetadataBase(
     _ASSERTE(g_write_barrier_test_metadata == nullptr);
 
     g_write_barrier_test_granularity_shift = granularityShift;
+    g_write_barrier_test_data_start = reinterpret_cast<uintptr_t>(lowestAddress);
+    g_write_barrier_test_data_size = static_cast<size_t>(highestAddress - lowestAddress);
     g_write_barrier_test_first_metadata_byte =
         reinterpret_cast<uintptr_t>(lowestAddress) >> (granularityShift + 3);
     uintptr_t lastMetadataByte =
         (reinterpret_cast<uintptr_t>(highestAddress) - 1) >> (granularityShift + 3);
     g_write_barrier_test_metadata_size =
         static_cast<size_t>(lastMetadataByte - g_write_barrier_test_first_metadata_byte + 1);
-    size_t metadataWordCount =
-        (g_write_barrier_test_metadata_size + sizeof(uintptr_t) - 1) / sizeof(uintptr_t);
-    g_write_barrier_test_metadata_storage_size = metadataWordCount * sizeof(uintptr_t);
-    uintptr_t* metadataWords = new (nothrow) uintptr_t[metadataWordCount];
-    g_write_barrier_test_metadata = reinterpret_cast<uint8_t*>(metadataWords);
-    if (g_write_barrier_test_metadata == nullptr)
+    g_write_barrier_test_layout = new (nothrow) LxrSideMetadataLayout;
+    g_write_barrier_test_manager = new (nothrow) SideMetadataManager;
+    if ((g_write_barrier_test_layout == nullptr) || (g_write_barrier_test_manager == nullptr))
     {
+        delete g_write_barrier_test_manager;
+        delete g_write_barrier_test_layout;
+        g_write_barrier_test_manager = nullptr;
+        g_write_barrier_test_layout = nullptr;
         return nullptr;
     }
 
+    if ((LxrSideMetadataLayout::Create(1, g_write_barrier_test_layout) != SideMetadataResult::Success) ||
+        (g_write_barrier_test_manager->Initialize(
+             g_write_barrier_test_layout,
+             UINT64_C(1) << static_cast<uint8_t>(LxrSideMetadataKind::FieldUnlogged)) !=
+         SideMetadataResult::Success) ||
+        (g_write_barrier_test_manager->CommitDataRange(
+             g_write_barrier_test_data_start,
+             g_write_barrier_test_data_size) != SideMetadataResult::Success))
+    {
+        delete g_write_barrier_test_manager;
+        delete g_write_barrier_test_layout;
+        g_write_barrier_test_manager = nullptr;
+        g_write_barrier_test_layout = nullptr;
+        return nullptr;
+    }
+
+    const SideMetadataSpec* fieldSpec =
+        g_write_barrier_test_layout->GetSpec(LxrSideMetadataKind::FieldUnlogged);
+    uintptr_t firstAddress = fieldSpec->base_address + g_write_barrier_test_first_metadata_byte;
+    uintptr_t lastAddress = fieldSpec->base_address + lastMetadataByte + 1;
+    uintptr_t storageStart = firstAddress & ~(static_cast<uintptr_t>(sizeof(uintptr_t)) - 1);
+    uintptr_t storageEnd =
+        (lastAddress + sizeof(uintptr_t) - 1) & ~(static_cast<uintptr_t>(sizeof(uintptr_t)) - 1);
+    g_write_barrier_test_metadata = reinterpret_cast<uint8_t*>(firstAddress);
+    g_write_barrier_test_metadata_storage_start = reinterpret_cast<uint8_t*>(storageStart);
+    g_write_barrier_test_metadata_storage_size = storageEnd - storageStart;
     memset(
-        g_write_barrier_test_metadata,
+        g_write_barrier_test_metadata_storage_start,
         GCConfig::GetWriteBarrierTestBitMeaning() == 0 ? 0 : 0xFF,
         g_write_barrier_test_metadata_storage_size);
     g_write_barrier_test_claim_bits = GCConfig::GetWriteBarrierTestClaimBits();
-    return reinterpret_cast<uint8_t*>(
-        reinterpret_cast<uintptr_t>(g_write_barrier_test_metadata) -
-        g_write_barrier_test_first_metadata_byte);
+    return reinterpret_cast<uint8_t*>(fieldSpec->base_address);
 }
 
 uint8_t* GetWriteBarrierTestMetadataStart()
 {
-    return g_write_barrier_test_metadata;
+    return g_write_barrier_test_metadata_storage_start;
 }
 
 size_t GetWriteBarrierTestMetadataSize()
@@ -343,10 +364,12 @@ void ResetWriteBarrierTestMetadataForGc()
 {
     if (g_write_barrier_test_claim_bits && (g_write_barrier_test_metadata != nullptr))
     {
-        memset(
-            g_write_barrier_test_metadata,
-            GCConfig::GetWriteBarrierTestBitMeaning() == 0 ? 0 : 0xFF,
-            g_write_barrier_test_metadata_storage_size);
+        SideMetadataResult result = g_write_barrier_test_manager->ResetRangeQuiescent(
+            LxrSideMetadataKind::FieldUnlogged,
+            g_write_barrier_test_data_start,
+            g_write_barrier_test_data_size,
+            GCConfig::GetWriteBarrierTestBitMeaning() == 0 ? 0 : 1);
+        _ASSERTE(result == SideMetadataResult::Success);
     }
 }
 
@@ -397,6 +420,11 @@ extern "C" DLLEXPORT void GC_WriteBarrierTest_ResetRange(
     bool claimBits)
 {
     _ASSERTE(referenceCount != 0);
+    _ASSERTE(g_write_barrier_test_manager != nullptr);
+    if (g_write_barrier_test_manager == nullptr)
+    {
+        return;
+    }
 
     uintptr_t firstDestinationMetadataByte =
         destination >> (g_write_barrier_test_granularity_shift + 3);
@@ -448,17 +476,18 @@ extern "C" DLLEXPORT void GC_WriteBarrierTest_SetRequiresWork(
         static_cast<size_t>(metadataByte - g_write_barrier_test_first_metadata_byte);
     _ASSERTE(metadataOffset < g_write_barrier_test_metadata_size);
 
-    uint8_t mask = static_cast<uint8_t>(
-        1 << ((destination >> g_write_barrier_test_granularity_shift) & 7));
     bool workWhenSet = GCConfig::GetWriteBarrierTestBitMeaning() != 0;
-    if (requiresWork == workWhenSet)
+    _ASSERTE(g_write_barrier_test_manager != nullptr);
+    if (g_write_barrier_test_manager == nullptr)
     {
-        g_write_barrier_test_metadata[metadataOffset] |= mask;
+        return;
     }
-    else
-    {
-        g_write_barrier_test_metadata[metadataOffset] &= static_cast<uint8_t>(~mask);
-    }
+    SideMetadataResult result = g_write_barrier_test_manager->Store(
+        LxrSideMetadataKind::FieldUnlogged,
+        destination,
+        requiresWork == workWhenSet ? 1 : 0,
+        SideMetadataMemoryOrder::SequentiallyConsistent);
+    _ASSERTE(result == SideMetadataResult::Success);
 }
 
 extern "C" DLLEXPORT uint64_t GC_WriteBarrierTest_GetAttemptCount()

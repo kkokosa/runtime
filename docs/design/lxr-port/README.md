@@ -88,6 +88,7 @@ mechanisms share one oracle. `lxr-x/simplified` is explicitly excluded.
 | [`P1.4-allocation-complete-notification.md`](P1.4-allocation-complete-notification.md) | The generic exact allocation-complete callback, complete managed-birth path ledger, x64 fast-helper family, fail-closed image contract, and performance evidence |
 | [`P1.5-object-reference-enumeration.md`](P1.5-object-reference-enumeration.md) | The generic GC-side reference range iterator, collectible per-type resolver, compatibility matrix, real-layout parity, and native plus scenario-integrated scan performance evidence |
 | [`P1.6-gc-reserved-object-header-bits.md`](P1.6-gc-reserved-object-header-bits.md) | Generic 64-bit GC object-header state negotiation, atomic claim/publish protocol, complete sync-block coexistence ledger, compatibility, stress, and lock/hash evidence |
+| [`P2.1-side-metadata-framework.md`](P2.1-side-metadata-framework.md) | Collector-owned fixed-address side metadata, atomic bit/byte/word operations, selectable RC width, bulk reads, and contention/performance evidence |
 | [`scripts/`](scripts/) | The clone, build, sanity, benchmark and probe scripts actually used, plus `verify-ledger.sh` (the ledger's gate) and `verify-gate.sh` (the gate's own positive control) |
 
 ## P0.1 outcome in one paragraph

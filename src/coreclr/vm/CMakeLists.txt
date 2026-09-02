@@ -510,6 +510,7 @@ set(GC_SOURCES_WKS
     ../gc/gchandletable.cpp
     ../gc/gcload.cpp
     ../gc/gcbridge.cpp
+    ../gc/side_metadata.cpp
     ../gc/softwarewritewatch.cpp
     ../gc/handletablecache.cpp)
 
@@ -520,6 +521,7 @@ set(GC_HEADERS_WKS
     ../gc/gcscan.h
     ../gc/gcbridge.h
     ../gc/gchandletableimpl.h
+    ../gc/side_metadata.h
     ../gc/softwarewritewatch.h)
 
 if(FEATURE_EVENT_TRACE)

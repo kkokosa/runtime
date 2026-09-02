@@ -53,6 +53,7 @@ struct VirtualReserveFlags
     {
         None = 0,
         WriteWatch = 1,
+        NoReserve = 2,
     };
 };
 
@@ -298,6 +299,10 @@ public:
     //  Windows guarantees that the returned mapping will be aligned to the allocation
     //  granularity.
     static void* VirtualReserve(size_t size, size_t alignment, uint32_t flags, uint16_t node = NUMA_NODE_UNDEFINED);
+
+    // Reserve a virtual memory range at an exact address without replacing an existing mapping.
+    // Returns the requested address on success and nullptr otherwise.
+    static void* VirtualReserveAt(void* address, size_t size, uint32_t flags, uint16_t node = NUMA_NODE_UNDEFINED);
 
     // Release virtual memory range previously reserved using VirtualReserve
     // Parameters:

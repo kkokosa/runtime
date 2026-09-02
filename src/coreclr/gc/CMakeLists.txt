@@ -15,6 +15,7 @@ set(GC_SOURCES
   handletablecore.cpp
   handletablescan.cpp
   objecthandle.cpp
+  side_metadata.cpp
   softwarewritewatch.cpp
   gchandletable.cpp
   gcload.cpp
@@ -74,6 +75,7 @@ if (CLR_CMAKE_TARGET_WIN32)
     handletable.inl
     handletablepriv.h
     objecthandle.h
+    side_metadata.h
     softwarewritewatch.h
   )
 endif(CLR_CMAKE_TARGET_WIN32)
