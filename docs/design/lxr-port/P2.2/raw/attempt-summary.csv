@@ -1,0 +1,6 @@
+"id","source","result","resolution","log"
+"baseline-long-path","8866eee4907667c93752cc4411bcdd838b98fec5","EXPECTED-FAIL","Authorized R: retry passed","logs/baseline-long-failure.log"
+"linux-worktree-sdk","3869c3fd864af17b7aabdf375c78b28ac81cbcb1","EXPECTED-FAIL","Built exact archives with isolated Linux SDK","logs/linux-worktree-sdk-attempt.log"
+"x86-full-target","3869c3fd864af17b7aabdf375c78b28ac81cbcb1","UNRELATED-TOOLCHAIN-FAIL","Product x86 validator compiled and executed fail-closed","logs/x86-full-target-attempt.log"
+"arm64-full-target","3869c3fd864af17b7aabdf375c78b28ac81cbcb1","UNRELATED-TOOLCHAIN-FAIL","Exact-source ARM64 product translation units compiled","logs/arm64-full-target-attempt.log"
+"public-wrapper","7ffb101c387254399c38cfa656f279407017cc25","PASS","Windows/Linux validation, 8 runtime scenarios, 36 benchmark rows","logs/benchmark.log"

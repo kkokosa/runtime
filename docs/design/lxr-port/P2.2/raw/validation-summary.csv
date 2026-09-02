@@ -1,0 +1,4 @@
+"platform","passed","total","result","log"
+"windows-x64","2039","2039","PASS","R:\artifacts\P2.2\evidence\source-7ffb101c387\windows-validation\x64\run.log"
+"windows-x86","1","1","PASS","R:\artifacts\P2.2\evidence\source-7ffb101c387\windows-validation\x86\run.log"
+"linux-x64","2039","2039","PASS",

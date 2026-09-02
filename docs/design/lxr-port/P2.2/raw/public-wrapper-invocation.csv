@@ -1,0 +1,2 @@
+"repository_root","windows_runtime_root","linux_runtime_root","launch_count","warmup_count","iteration_count","result"
+"C:\Users\konradkokosa\.copilot\repos\copilot-worktrees\runtime-fork\kkokosa-solid-spoon\","C:\Users\konradkokosa\.copilot\repos\copilot-worktrees\runtime-fork\kkokosa-solid-spoon\artifacts\P2.2\runtime-root\windows-x64-debug","/root/p22-runtime-7ffb101c387/artifacts/bin/testhost/net11.0-linux-Debug-x64/shared/Microsoft.NETCore.App/11.0.0","3","8","20","PASS"
