@@ -345,6 +345,29 @@ Replace-ExactlyOnce `
     '*result = blockEpoch == static_cast<uint8_t>(globalEpoch - 1);'
 Invoke-BehaviorFailure 'predicate-gc-reusing' $tree 'FAIL: promoted is GC reusing'
 
+$tree = New-PerturbationTree 'predicate-gc-reusing-unallocated'
+Replace-ExactlyOnce `
+    (Join-Path $tree 'src\coreclr\gc\immix_block.cpp') `
+    @'
+    if ((metadataResult != SideMetadataResult::Success) ||
+        (state == ImmixBlockState::Unallocated))
+    {
+        return metadataResult;
+    }
+
+'@ `
+    @'
+    if (metadataResult != SideMetadataResult::Success)
+    {
+        return metadataResult;
+    }
+
+'@
+Invoke-BehaviorFailure `
+    'predicate-gc-reusing-unallocated' `
+    $tree `
+    'FAIL: released block is not GC reusing'
+
 $tree = New-PerturbationTree 'identity-source-hash'
 Add-Content -LiteralPath (
     Join-Path $tree 'src\coreclr\gc\immix_block.cpp') -Value 'identity-perturbation'

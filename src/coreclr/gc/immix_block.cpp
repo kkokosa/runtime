@@ -492,14 +492,23 @@ SideMetadataResult ImmixBlockManager::IsGcReusing(uintptr_t block, bool* result)
 
     *result = false;
     BlockOperationScope operation(this);
+    ImmixBlockState state = ImmixBlockState::Unallocated;
+    uint8_t unavailableLines = 0;
+    SideMetadataResult metadataResult = GetState(block, &state, &unavailableLines);
+    if ((metadataResult != SideMetadataResult::Success) ||
+        (state == ImmixBlockState::Unallocated))
+    {
+        return metadataResult;
+    }
+
     uint8_t globalEpoch = GetGlobalPhaseEpoch();
     if ((globalEpoch & 1) != 0)
     {
         return SideMetadataResult::InvalidArgument;
     }
 
-    uint8_t blockEpoch;
-    SideMetadataResult metadataResult = GetBlockPhaseEpoch(block, &blockEpoch);
+    uint8_t blockEpoch = 0;
+    metadataResult = GetBlockPhaseEpoch(block, &blockEpoch);
     if (metadataResult == SideMetadataResult::Success)
     {
         *result = blockEpoch == globalEpoch;

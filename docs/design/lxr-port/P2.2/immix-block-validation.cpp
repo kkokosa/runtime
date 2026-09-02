@@ -533,6 +533,13 @@ namespace
             fixture,
             DataStart + ImmixBlockGeometry::BlockBytes,
             ImmixBlockState::Unallocated);
+        ExpectMetadata(
+            "released block GC reuse predicate",
+            fixture.blocks.IsGcReusing(
+                DataStart + ImmixBlockGeometry::BlockBytes,
+                &predicate),
+            SideMetadataResult::Success);
+        Expect("released block is not GC reusing", !predicate);
 
         ExpectMetadata(
             "release pause",
@@ -540,6 +547,13 @@ namespace
             SideMetadataResult::Success);
         Expect("release pause updated", status == ImmixBlockOperationStatus::Updated);
         Expect("release epoch odd", fixture.blocks.GetGlobalPhaseEpoch() == 3);
+        ExpectMetadata(
+            "unallocated GC predicate in mutator phase",
+            fixture.blocks.IsGcReusing(
+                DataStart + ImmixBlockGeometry::BlockBytes,
+                &predicate),
+            SideMetadataResult::Success);
+        Expect("unallocated GC predicate remains false", !predicate);
         ExpectMetadata(
             "GC predicate rejects mutator phase",
             fixture.blocks.IsGcReusing(DataStart, &predicate),

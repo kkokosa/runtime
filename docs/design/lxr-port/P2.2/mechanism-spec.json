@@ -170,7 +170,13 @@
     "gcParity": "even",
     "wrapFrom": 254,
     "wrapTo": 1,
-    "wrapResetBlockEpochTo": 0
+    "wrapResetBlockEpochTo": 0,
+    "predicates": {
+      "nursery": "state == Unallocated && nurseryOrReusing",
+      "reusing": "state != Unallocated && nurseryOrReusing",
+      "gcReusing": "state != Unallocated && globalEpoch is even && blockEpoch == globalEpoch",
+      "gcReusingWrongPhase": "Unallocated returns false before parity validation; allocated rejects an odd global epoch"
+    }
   },
   "benchmark": {
     "blockCount": 8192,
