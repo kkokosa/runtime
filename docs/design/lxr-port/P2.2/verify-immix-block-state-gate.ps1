@@ -399,3 +399,4 @@ if ($summary.Count -ne $expectedCount) {
 $summary | Export-Csv (Join-Path $OutputDirectory 'gate-summary.csv') -NoTypeInformation
 Write-Host "PASS: $($summary.Count) P2.2 archive gate scenarios"
 Write-Host "Output: $OutputDirectory"
+exit 0
