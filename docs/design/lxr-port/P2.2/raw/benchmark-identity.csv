@@ -1,0 +1,2 @@
+"launch_count","warmup_count","iteration_count","operations_per_invoke","methods","worker_counts","rows","processor","logical_processors","os","launcher_framework","benchmark_runtime","native_sha256","result"
+"3","8","20","4096","12","1;4;16","36","Intel64 Family 6 Model 106 Stepping 6, GenuineIntel","16","Microsoft Windows 10.0.26200",".NET 10.0.11",".NET 11.0","7479DEF83E2DD6C1B0BC7A7D17582C1A851B5751E3F96A0C55C6778DFC41326A","PASS"
