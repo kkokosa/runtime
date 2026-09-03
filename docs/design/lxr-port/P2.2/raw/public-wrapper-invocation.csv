@@ -1,0 +1,2 @@
+"repository_root","windows_runtime_root","linux_runtime_root","launch_count","warmup_count","iteration_count","result"
+"C:\p22-528aec","C:\p22-528aec\artifacts\bin\testhost\net11.0-windows-Debug-x64\shared\Microsoft.NETCore.App\11.0.0","/root/p22-runtime-528aec04081/artifacts/bin/testhost/net11.0-linux-Debug-x64/shared/Microsoft.NETCore.App/11.0.0","3","8","20","PASS"

@@ -1,0 +1,5 @@
+"platform","build","validation","runtime","execution"
+"windows-x64","PASS","2043/2043","4/4","linked and standalone Workstation/Server"
+"linux-x64","PASS","2043/2043","4/4","real gcenv.unix plus separate OS shim"
+"windows-x86","PASS","1/1","not run","explicit fixed-metadata fail-closed"
+"windows-arm64","PASS","not run","not run","product translation units build-only"
