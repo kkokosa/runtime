@@ -7,6 +7,8 @@ param(
     [string]$WindowsRuntimeRoot,
     [Parameter(Mandatory)]
     [string]$LinuxRuntimeRoot,
+    [Parameter(Mandatory)]
+    [string]$LinuxCombinedRuntimeRoot,
     [string]$RepositoryRoot,
     [string]$OutputDirectory,
     [ValidateRange(1, 10)]
@@ -88,6 +90,7 @@ $requiredWindowsPaths = @(
     (Join-Path $scriptRoot 'run-immix-block-validation.sh'),
     (Join-Path $scriptRoot 'run-immix-block-runtime-smoke.ps1'),
     (Join-Path $scriptRoot 'run-immix-block-runtime-smoke.sh'),
+    (Join-Path $scriptRoot 'run-immix-block-combined-exports.sh'),
     (Join-Path $scriptRoot 'run-immix-block-benchmark.ps1')
 )
 foreach ($path in $requiredWindowsPaths) {
@@ -115,6 +118,10 @@ foreach ($path in $linuxRequired) {
     if ($LASTEXITCODE -ne 0) {
         throw "Linux RuntimeRoot is incomplete; missing '$path'."
     }
+    & wsl.exe --cd /root test -f "$LinuxCombinedRuntimeRoot/libcoreclr.so"
+    if ($LASTEXITCODE -ne 0) {
+        throw "Combined-feature Linux RuntimeRoot is incomplete: '$LinuxCombinedRuntimeRoot'."
+    }
 }
 
 New-Item -ItemType Directory -Path $OutputDirectory | Out-Null
@@ -122,6 +129,7 @@ $windowsValidation = Join-Path $OutputDirectory 'windows-validation'
 $linuxValidation = Join-Path $OutputDirectory 'linux-validation'
 $windowsRuntime = Join-Path $OutputDirectory 'windows-runtime'
 $linuxRuntime = Join-Path $OutputDirectory 'linux-runtime'
+$combinedExports = Join-Path $OutputDirectory 'combined-exports'
 $benchmark = Join-Path $OutputDirectory 'benchmark'
 
 & (Join-Path $scriptRoot 'run-immix-block-validation.ps1') `
@@ -154,6 +162,17 @@ $linuxRuntimeOutput = Convert-ToWslPath $linuxRuntime
     $linuxRuntimeOutput
 if ($LASTEXITCODE -ne 0) {
     throw 'Linux Immix block runtime smoke failed.'
+}
+
+$combinedExportScript =
+    "$repositoryRootLinux/docs/design/lxr-port/P2.2/run-immix-block-combined-exports.sh"
+$combinedExportOutput = Convert-ToWslPath $combinedExports
+& wsl.exe --cd /root bash `
+    $combinedExportScript `
+    "$LinuxCombinedRuntimeRoot/libcoreclr.so" `
+    $combinedExportOutput
+if ($LASTEXITCODE -ne 0) {
+    throw 'Linux combined-feature export validation failed.'
 }
 
 & (Join-Path $scriptRoot 'run-immix-block-benchmark.ps1') `
@@ -190,11 +209,15 @@ $linuxRuntimeRows = @(
 @($windowsRuntimeRows + $linuxRuntimeRows) | Export-Csv `
     (Join-Path $OutputDirectory 'runtime-smoke-summary.csv') `
     -NoTypeInformation
+Copy-Item `
+    (Join-Path $combinedExports 'combined-export-summary.csv') `
+    (Join-Path $OutputDirectory 'combined-export-summary.csv')
 
 [pscustomobject][ordered]@{
     repository_root = $RepositoryRoot
     windows_runtime_root = $WindowsRuntimeRoot
     linux_runtime_root = $LinuxRuntimeRoot
+    linux_combined_runtime_root = $LinuxCombinedRuntimeRoot
     launch_count = $LaunchCount
     warmup_count = $WarmupCount
     iteration_count = $IterationCount

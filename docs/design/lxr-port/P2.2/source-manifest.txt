@@ -8,6 +8,7 @@ docs/design/lxr-port/P2.2/immix-block-benchmark/Program.cs
 docs/design/lxr-port/P2.2/immix-block-benchmark/immix-block-benchmark.csproj
 docs/design/lxr-port/P2.2/immix-block-validation.cpp
 docs/design/lxr-port/P2.2/mechanism-spec.json
+docs/design/lxr-port/P2.2/run-immix-block-combined-exports.sh
 docs/design/lxr-port/P2.2/run-immix-block-benchmark.ps1
 docs/design/lxr-port/P2.2/run-immix-block-evidence.ps1
 docs/design/lxr-port/P2.2/run-immix-block-runtime-smoke.ps1

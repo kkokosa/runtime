@@ -93,7 +93,8 @@ namespace
         Fixture& fixture,
         uintptr_t block,
         uint8_t rawState,
-        uintptr_t owner = ImmixBlockManager::NoOwner)
+        uintptr_t owner = ImmixBlockManager::NoOwner,
+        uint8_t phaseEpoch = 0)
     {
         ExpectMetadata(
             "seed block state",
@@ -115,6 +116,30 @@ namespace
             "clear block lock",
             fixture.metadata.Store(
                 LxrSideMetadataKind::BlockInUse,
+                block,
+                0,
+                SideMetadataMemoryOrder::SequentiallyConsistent),
+            SideMetadataResult::Success);
+        ExpectMetadata(
+            "seed phase epoch",
+            fixture.metadata.Store(
+                LxrSideMetadataKind::PhaseEpoch,
+                block,
+                phaseEpoch,
+                SideMetadataMemoryOrder::SequentiallyConsistent),
+            SideMetadataResult::Success);
+        ExpectMetadata(
+            "clear promotion state",
+            fixture.metadata.Store(
+                LxrSideMetadataKind::NurseryPromotion,
+                block,
+                0,
+                SideMetadataMemoryOrder::SequentiallyConsistent),
+            SideMetadataResult::Success);
+        ExpectMetadata(
+            "clear defrag state",
+            fixture.metadata.Store(
+                LxrSideMetadataKind::BlockDefrag,
                 block,
                 0,
                 SideMetadataMemoryOrder::SequentiallyConsistent),
@@ -419,6 +444,23 @@ namespace
             SideMetadataResult::Success);
         Expect("owner return updated", status == ImmixBlockOperationStatus::Updated);
 
+        uintptr_t nurseryBlock =
+            DataStart + 2 * ImmixBlockGeometry::BlockBytes;
+        ExpectMetadata(
+            "second nursery mutator acquire",
+            fixture.blocks.TryAcquire(
+                nurseryBlock,
+                Owner1,
+                ImmixBlockAcquireKind::MutatorFresh,
+                &status),
+            SideMetadataResult::Success);
+        Expect("second nursery acquired", status == ImmixBlockOperationStatus::Updated);
+        ExpectMetadata(
+            "second nursery return",
+            fixture.blocks.TryReturn(nurseryBlock, Owner1, &status),
+            SideMetadataResult::Success);
+        Expect("second nursery returned", status == ImmixBlockOperationStatus::Updated);
+
         ExpectMetadata(
             "start pause",
             fixture.blocks.StartGcPause(&status),
@@ -435,6 +477,30 @@ namespace
             fixture.blocks.StartGcPause(&status),
             SideMetadataResult::Success);
         Expect("repeat start invalid", status == ImmixBlockOperationStatus::InvalidTransition);
+
+        ExpectMetadata(
+            "normal copy rejects prior nursery",
+            fixture.blocks.TryAcquire(
+                nurseryBlock,
+                Owner2,
+                ImmixBlockAcquireKind::GcCopyFresh,
+                &status),
+            SideMetadataResult::Success);
+        Expect("normal copy nursery is stale", status == ImmixBlockOperationStatus::Stale);
+        ExpectMetadata(
+            "mature evacuation accepts prior nursery",
+            fixture.blocks.TryAcquire(
+                nurseryBlock,
+                Owner2,
+                ImmixBlockAcquireKind::GcMatureEvacuationFresh,
+                &status),
+            SideMetadataResult::Success);
+        Expect("mature evacuation nursery updated", status == ImmixBlockOperationStatus::Updated);
+        ExpectMetadata(
+            "mature evacuation nursery return",
+            fixture.blocks.TryReturn(nurseryBlock, Owner2, &status),
+            SideMetadataResult::Success);
+        Expect("mature evacuation nursery returned", status == ImmixBlockOperationStatus::Updated);
 
         ExpectMetadata(
             "promote nursery",
@@ -490,6 +556,7 @@ namespace
         Expect("prepare reusable updated", status == ImmixBlockOperationStatus::Updated);
         ExpectState("prepared state", fixture, DataStart, ImmixBlockState::Unmarked);
 
+        SeedState(fixture, DataStart, 255);
         ExpectMetadata(
             "GC copy reusable acquire",
             fixture.blocks.TryAcquire(
@@ -504,6 +571,15 @@ namespace
             fixture.blocks.TryReturn(DataStart, Owner2, &status),
             SideMetadataResult::Success);
         Expect("GC copy return updated", status == ImmixBlockOperationStatus::Updated);
+        ExpectMetadata(
+            "same-GC copy reuse rejected",
+            fixture.blocks.TryAcquire(
+                DataStart,
+                Owner1,
+                ImmixBlockAcquireKind::GcCopyReusable,
+                &status),
+            SideMetadataResult::Success);
+        Expect("same-GC copy reuse stale", status == ImmixBlockOperationStatus::Stale);
 
         SeedState(fixture, DataStart + ImmixBlockGeometry::BlockBytes, 0);
         ExpectMetadata(
@@ -591,6 +667,34 @@ namespace
             fixture.blocks.TryReturn(DataStart, Owner1, &status),
             SideMetadataResult::Success);
         Expect("mutator reusable return updated", status == ImmixBlockOperationStatus::Updated);
+        ExpectMetadata(
+            "same-mutator-phase reuse rejected",
+            fixture.blocks.TryAcquire(
+                DataStart,
+                Owner2,
+                ImmixBlockAcquireKind::MutatorReusable,
+                &status),
+            SideMetadataResult::Success);
+        Expect("same-mutator-phase reuse stale", status == ImmixBlockOperationStatus::Stale);
+        ExpectMetadata(
+            "start GC after mutator reuse",
+            fixture.blocks.StartGcPause(&status),
+            SideMetadataResult::Success);
+        Expect("GC after mutator reuse started", status == ImmixBlockOperationStatus::Updated);
+        ExpectMetadata(
+            "copy rejects previous mutator reuse",
+            fixture.blocks.TryAcquire(
+                DataStart,
+                Owner2,
+                ImmixBlockAcquireKind::GcCopyReusable,
+                &status),
+            SideMetadataResult::Success);
+        Expect("previous mutator reuse is stale", status == ImmixBlockOperationStatus::Stale);
+        ExpectMetadata(
+            "release GC after reuse check",
+            fixture.blocks.ReleaseGcPause(&status),
+            SideMetadataResult::Success);
+        Expect("GC after reuse check released", status == ImmixBlockOperationStatus::Updated);
 
         SeedState(fixture, DataStart, 0);
         ExpectMetadata(

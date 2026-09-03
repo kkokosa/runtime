@@ -1,4 +1,0 @@
-"id","source","result","resolution","log"
-"baseline-long-path","8866eee4907667c93752cc4411bcdd838b98fec5","EXPECTED-FAIL","Authorized R: retry passed before implementation","logs.zip:baseline-long-failure.log"
-"windows-archive-identity","528aec04081327d91ca4b58e3daac374818bc570","EXPECTED-FAIL","Rerun with exact RepositoryCommit passed","logs.zip:test-enabled-windows-x64.log"
-"public-wrapper","528aec04081327d91ca4b58e3daac374818bc570","PASS","Windows/Linux validation, 8 runtime scenarios, 36 benchmark rows","logs.zip:public-full-evidence-wrapper.log"

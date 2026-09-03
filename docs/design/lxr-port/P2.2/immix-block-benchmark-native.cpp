@@ -417,14 +417,33 @@ namespace
             (status == ImmixBlockOperationStatus::Updated);
     }
 
-    bool EnsureGcPhase()
+    bool AdvanceMutatorPhase()
     {
+        ImmixBlockOperationStatus status;
         if ((s_blocks->GetGlobalPhaseEpoch() & 1) == 0)
         {
-            return true;
+            return (s_blocks->ReleaseGcPause(&status) == SideMetadataResult::Success) &&
+                (status == ImmixBlockOperationStatus::Updated);
         }
 
+        return (s_blocks->StartGcPause(&status) == SideMetadataResult::Success) &&
+            (status == ImmixBlockOperationStatus::Updated) &&
+            (s_blocks->ReleaseGcPause(&status) == SideMetadataResult::Success) &&
+            (status == ImmixBlockOperationStatus::Updated);
+    }
+
+    bool AdvanceGcPhase()
+    {
         ImmixBlockOperationStatus status;
+        if ((s_blocks->GetGlobalPhaseEpoch() & 1) == 0)
+        {
+            if ((s_blocks->ReleaseGcPause(&status) != SideMetadataResult::Success) ||
+                (status != ImmixBlockOperationStatus::Updated))
+            {
+                return false;
+            }
+        }
+
         return (s_blocks->StartGcPause(&status) == SideMetadataResult::Success) &&
             (status == ImmixBlockOperationStatus::Updated);
     }
@@ -504,8 +523,20 @@ P22_EXPORT P22_NOINLINE uintptr_t P22_RunBatch(
     uint32_t workerCount)
 {
     BenchmarkMode benchmarkMode = static_cast<BenchmarkMode>(mode);
-    bool gcPhase = benchmarkMode == BenchmarkMode::Copy;
-    if (!(gcPhase ? EnsureGcPhase() : EnsureMutatorPhase()))
+    bool phaseReady;
+    if (benchmarkMode == BenchmarkMode::Copy)
+    {
+        phaseReady = AdvanceGcPhase();
+    }
+    else if (benchmarkMode == BenchmarkMode::Reuse)
+    {
+        phaseReady = AdvanceMutatorPhase();
+    }
+    else
+    {
+        phaseReady = EnsureMutatorPhase();
+    }
+    if (!phaseReady)
     {
         return UINTPTR_MAX;
     }

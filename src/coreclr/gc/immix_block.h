@@ -88,6 +88,7 @@ enum class ImmixBlockAcquireKind : uint8_t
     MutatorReusable,
     GcCopyFresh,
     GcCopyReusable,
+    GcMatureEvacuationFresh,
 };
 
 enum class ImmixBlockOperationStatus : uint8_t
@@ -179,6 +180,7 @@ private:
         uint8_t* unavailableLines);
     static bool IsMutatorAcquire(ImmixBlockAcquireKind kind);
     static bool IsFreshAcquire(ImmixBlockAcquireKind kind);
+    static bool IsMatureEvacuationAcquire(ImmixBlockAcquireKind kind);
 
     SideMetadataResult ValidateBlock(uintptr_t block) const;
     SideMetadataResult LoadByte(

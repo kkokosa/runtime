@@ -368,6 +368,53 @@ Invoke-BehaviorFailure `
     $tree `
     'FAIL: released block is not GC reusing'
 
+$tree = New-PerturbationTree 'eligibility-mutator-reusing'
+Replace-ExactlyOnce `
+    (Join-Path $tree 'src\coreclr\gc\immix_block.cpp') `
+    @'
+    bool reusing =
+        (state != ImmixBlockState::Unallocated) && nurseryOrReusing;
+'@ `
+    @'
+    bool reusing = false;
+'@
+Invoke-BehaviorFailure `
+    'eligibility-mutator-reusing' `
+    $tree `
+    'FAIL: same-mutator-phase reuse stale'
+
+$tree = New-PerturbationTree 'eligibility-gc-reusing'
+Replace-ExactlyOnce `
+    (Join-Path $tree 'src\coreclr\gc\immix_block.cpp') `
+    @'
+    bool gcReusing =
+        (state != ImmixBlockState::Unallocated) &&
+        ((globalEpoch & 1) == 0) &&
+        (blockEpoch == globalEpoch);
+'@ `
+    @'
+    bool gcReusing = false;
+'@
+Invoke-BehaviorFailure `
+    'eligibility-gc-reusing' `
+    $tree `
+    'FAIL: same-GC copy reuse stale'
+
+$tree = New-PerturbationTree 'eligibility-clean-copy-nursery'
+Replace-ExactlyOnce `
+    (Join-Path $tree 'src\coreclr\gc\immix_block.cpp') `
+    @'
+    bool nursery =
+        (state == ImmixBlockState::Unallocated) && nurseryOrReusing;
+'@ `
+    @'
+    bool nursery = false;
+'@
+Invoke-BehaviorFailure `
+    'eligibility-clean-copy-nursery' `
+    $tree `
+    'FAIL: normal copy nursery is stale'
+
 $tree = New-PerturbationTree 'identity-source-hash'
 Add-Content -LiteralPath (
     Join-Path $tree 'src\coreclr\gc\immix_block.cpp') -Value 'identity-perturbation'
@@ -420,6 +467,7 @@ if ($summary.Count -ne $expectedCount) {
 }
 
 $summary | Export-Csv (Join-Path $OutputDirectory 'gate-summary.csv') -NoTypeInformation
+Remove-Item -LiteralPath $scratch -Recurse -Force
 Write-Host "PASS: $($summary.Count) P2.2 archive gate scenarios"
 Write-Host "Output: $OutputDirectory"
 exit 0

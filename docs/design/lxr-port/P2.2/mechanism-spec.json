@@ -54,7 +54,7 @@
     {
       "from": "Unallocated",
       "to": "Unmarked",
-      "operations": "GcCopyFresh|PromoteInPlace"
+      "operations": "GcCopyFresh|GcMatureEvacuationFresh|PromoteInPlace"
     },
     {
       "from": "Unmarked",
@@ -177,6 +177,12 @@
       "gcReusing": "state != Unallocated && globalEpoch is even && blockEpoch == globalEpoch",
       "gcReusingWrongPhase": "Unallocated returns false before parity validation; allocated rejects an odd global epoch"
     }
+  },
+  "acquisitionEligibility": {
+    "mutatorReusable": "state != Unallocated && !isReusing && !isDefragSource && owner is none",
+    "gcCopyReusable": "state != Unallocated && !isReusing && !isGcReusing && !isDefragSource && owner is none",
+    "gcCopyFresh": "state == Unallocated && !isNursery",
+    "gcMatureEvacuationFresh": "state == Unallocated"
   },
   "benchmark": {
     "blockCount": 8192,

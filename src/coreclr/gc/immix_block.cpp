@@ -524,7 +524,7 @@ SideMetadataResult ImmixBlockManager::TryAcquire(
 {
     if ((status == nullptr) ||
         (owner == NoOwner) ||
-        (kind > ImmixBlockAcquireKind::GcCopyReusable))
+        (kind > ImmixBlockAcquireKind::GcMatureEvacuationFresh))
     {
         return SideMetadataResult::InvalidArgument;
     }
@@ -566,6 +566,33 @@ SideMetadataResult ImmixBlockManager::TryAcquire(
         return SideMetadataResult::Success;
     }
     if (currentOwner != NoOwner)
+    {
+        *status = ImmixBlockOperationStatus::Stale;
+        Unlock(block);
+        return SideMetadataResult::Success;
+    }
+
+    uint8_t blockEpoch = 0;
+    result = GetBlockPhaseEpoch(block, &blockEpoch);
+    if (result != SideMetadataResult::Success)
+    {
+        Unlock(block);
+        return result;
+    }
+
+    bool nurseryOrReusing = (globalEpoch & 1) != 0
+        ? blockEpoch == globalEpoch
+        : blockEpoch == static_cast<uint8_t>(globalEpoch - 1);
+    bool reusing =
+        (state != ImmixBlockState::Unallocated) && nurseryOrReusing;
+    bool gcReusing =
+        (state != ImmixBlockState::Unallocated) &&
+        ((globalEpoch & 1) == 0) &&
+        (blockEpoch == globalEpoch);
+    bool nursery =
+        (state == ImmixBlockState::Unallocated) && nurseryOrReusing;
+    if ((!fresh && (reusing || (!mutator && gcReusing))) ||
+        ((kind == ImmixBlockAcquireKind::GcCopyFresh) && nursery))
     {
         *status = ImmixBlockOperationStatus::Stale;
         Unlock(block);
@@ -1064,7 +1091,13 @@ bool ImmixBlockManager::IsMutatorAcquire(ImmixBlockAcquireKind kind)
 bool ImmixBlockManager::IsFreshAcquire(ImmixBlockAcquireKind kind)
 {
     return (kind == ImmixBlockAcquireKind::MutatorFresh) ||
-        (kind == ImmixBlockAcquireKind::GcCopyFresh);
+        (kind == ImmixBlockAcquireKind::GcCopyFresh) ||
+        IsMatureEvacuationAcquire(kind);
+}
+
+bool ImmixBlockManager::IsMatureEvacuationAcquire(ImmixBlockAcquireKind kind)
+{
+    return kind == ImmixBlockAcquireKind::GcMatureEvacuationFresh;
 }
 
 SideMetadataResult ImmixBlockManager::ValidateBlock(uintptr_t block) const

@@ -77,6 +77,7 @@ foreach ($path in @(
     (Join-Path $scriptRoot 'run-immix-block-validation.sh'),
     (Join-Path $scriptRoot 'run-immix-block-runtime-smoke.ps1'),
     (Join-Path $scriptRoot 'run-immix-block-runtime-smoke.sh'),
+    (Join-Path $scriptRoot 'run-immix-block-combined-exports.sh'),
     (Join-Path $scriptRoot 'run-immix-block-benchmark.ps1'),
     (Join-Path $scriptRoot 'run-immix-block-evidence.ps1'))) {
     Assert-Check (Test-Path -LiteralPath $path -PathType Leaf) "Required product or evidence source is missing: $path"
@@ -168,6 +169,19 @@ foreach ($platform in $manifest.runtimePlatforms) {
             Assert-Check (($row[0].result -eq 'PASS') -and ([int]$row[0].exit_code -eq 0)) "Runtime smoke failed for $platform/$linkage/$gcMode."
         }
     }
+}
+
+$combinedExports = @(Import-Csv (Join-Path $raw 'combined-export-summary.csv'))
+$expectedCombinedExports = @(
+    'GC_ImmixBlockStateTest_Run',
+    'GC_WriteBarrierTest_Reset',
+    'GC_AllocationNotificationTest_Reset'
+)
+Assert-Check ($combinedExports.Count -eq $expectedCombinedExports.Count) 'Combined export evidence is incomplete.'
+foreach ($symbol in $expectedCombinedExports) {
+    $row = @($combinedExports | Where-Object symbol -eq $symbol)
+    Assert-Check ($row.Count -eq 1) "Combined export row differs for $symbol."
+    Assert-Check ($row[0].result -eq 'PASS') "Combined export failed for $symbol."
 }
 
 $benchmark = @(Import-Csv (Join-Path $raw 'benchmark-raw.csv'))
