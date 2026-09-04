@@ -44,6 +44,21 @@ if(FEATURE_GDBJIT)
     gdbjit_unixexports.src
   )
 endif(FEATURE_GDBJIT)
+if(CLR_CMAKE_ENABLE_IMMIX_BLOCK_STATE_TEST)
+  list(APPEND DEF_SOURCES
+    mscorwks_immixblockstatetest_unixexports.src
+  )
+  convert_to_absolute_path(DEF_SOURCES ${DEF_SOURCES})
+  set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS ${DEF_SOURCES})
+  set(COMBINED_DEF_SOURCE
+    ${CMAKE_CURRENT_BINARY_DIR}/mscorwks_immixblockstatetest_combined_unixexports.src)
+  file(WRITE ${COMBINED_DEF_SOURCE} "")
+  foreach(DEF_SOURCE IN LISTS DEF_SOURCES)
+    file(READ ${DEF_SOURCE} DEF_SOURCE_CONTENT)
+    file(APPEND ${COMBINED_DEF_SOURCE} "${DEF_SOURCE_CONTENT}\n")
+  endforeach()
+  set(DEF_SOURCES ${COMBINED_DEF_SOURCE})
+endif()
 endif(CLR_CMAKE_TARGET_WIN32)
 
 convert_to_absolute_path(DEF_SOURCES ${DEF_SOURCES})

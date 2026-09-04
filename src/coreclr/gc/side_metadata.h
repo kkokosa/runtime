@@ -229,6 +229,10 @@ public:
         size_t dataSize,
         uintptr_t value);
 
+    SideMetadataResult ResetAllDataRangesQuiescent(
+        LxrSideMetadataKind kind,
+        uintptr_t value);
+
     SideMetadataResult CopyRangeQuiescent(
         LxrSideMetadataKind sourceKind,
         uintptr_t sourceStart,
@@ -236,6 +240,7 @@ public:
         uintptr_t destinationStart,
         size_t dataSize);
 
+    bool IsSpecEnabled(LxrSideMetadataKind kind) const;
     uintptr_t GetBiasedBase(LxrSideMetadataKind kind) const;
 
     static uint32_t ComputeWordShiftForByteOrder(
@@ -280,10 +285,13 @@ private:
         SideMetadataMemoryOrder order,
         UpdateOperation operation,
         uintptr_t* previous);
-
+    SideMetadataResult ResetRangeQuiescentCore(
+        const SideMetadataSpec& spec,
+        uintptr_t dataStart,
+        size_t dataSize,
+        uintptr_t value);
     SideMetadataResult AddDataRange(uintptr_t start, uintptr_t end);
     void ClearDataRanges();
-    bool IsSpecEnabled(LxrSideMetadataKind kind) const;
 
     static uintptr_t AtomicLoadWord(volatile uintptr_t* word, SideMetadataMemoryOrder order);
     static uintptr_t CompareExchangeWord(volatile uintptr_t* word, uintptr_t value, uintptr_t comparand);

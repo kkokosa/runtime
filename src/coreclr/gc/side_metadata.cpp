@@ -3,6 +3,9 @@
 
 #include "common.h"
 #include "gcenv.h"
+#if !defined(BUILD_AS_STANDALONE) || defined(FEATURE_STANDALONE_GC)
+#include "gcenv.inl"
+#endif
 #include "side_metadata.h"
 
 #include <string.h>
@@ -860,12 +863,23 @@ SideMetadataResult SideMetadataManager::ResetRangeQuiescent(
         return SideMetadataResult::AddressNotOwned;
     }
 
+    return ResetRangeQuiescentCore(*spec, dataStart, dataSize, value);
+}
+
+SideMetadataResult SideMetadataManager::ResetRangeQuiescentCore(
+    const SideMetadataSpec& spec,
+    uintptr_t dataStart,
+    size_t dataSize,
+    uintptr_t value)
+{
+    uint32_t bitCount = static_cast<uint32_t>(1) << spec.log_bits_per_value;
+    size_t granularity = static_cast<size_t>(1) << spec.log_bytes_per_value;
     SideMetadataLocation first = {};
     SideMetadataLocation last = {};
-    SideMetadataResult result = GetLocationUnchecked(*spec, dataStart, &first);
+    SideMetadataResult result = GetLocationUnchecked(spec, dataStart, &first);
     if (result == SideMetadataResult::Success)
     {
-        result = GetLocationUnchecked(*spec, dataStart + dataSize - granularity, &last);
+        result = GetLocationUnchecked(spec, dataStart + dataSize - granularity, &last);
     }
     if (result != SideMetadataResult::Success)
     {
@@ -921,6 +935,60 @@ SideMetadataResult SideMetadataManager::ResetRangeQuiescent(
                 }
                 oldValue = observed;
             }
+        }
+    }
+
+    return SideMetadataResult::Success;
+}
+
+SideMetadataResult SideMetadataManager::ResetAllDataRangesQuiescent(
+    LxrSideMetadataKind kind,
+    uintptr_t value)
+{
+    if ((m_layout == nullptr) || m_commit_failed)
+    {
+        return SideMetadataResult::InvalidArgument;
+    }
+
+    const SideMetadataSpec* spec = m_layout->GetSpec(kind);
+    if ((spec == nullptr) || !IsSpecEnabled(kind))
+    {
+        return SideMetadataResult::InvalidArgument;
+    }
+
+    uint32_t bitCount = static_cast<uint32_t>(1) << spec->log_bits_per_value;
+    if (!IsValueValid(value, bitCount))
+    {
+        return SideMetadataResult::InvalidArgument;
+    }
+
+    size_t granularity = static_cast<size_t>(1) << spec->log_bytes_per_value;
+    for (DataRange* range = m_data_ranges; range != nullptr; range = range->next)
+    {
+        uintptr_t alignedEnd;
+        if (!TryAlignUp(range->end, granularity, &alignedEnd))
+        {
+            return SideMetadataResult::AddressOverflow;
+        }
+    }
+
+    for (DataRange* range = m_data_ranges; range != nullptr; range = range->next)
+    {
+        uintptr_t alignedStart = range->start & ~(static_cast<uintptr_t>(granularity) - 1);
+        uintptr_t alignedEnd;
+        if (!TryAlignUp(range->end, granularity, &alignedEnd))
+        {
+            return SideMetadataResult::AddressOverflow;
+        }
+
+        SideMetadataResult result = ResetRangeQuiescentCore(
+            *spec,
+            alignedStart,
+            alignedEnd - alignedStart,
+            value);
+        if (result != SideMetadataResult::Success)
+        {
+            return result;
         }
     }
 

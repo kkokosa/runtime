@@ -102,6 +102,12 @@ if (NOT CLR_CMAKE_HOST_ARCH_WASM)
         )
     endif()
 
+    if(CLR_CMAKE_ENABLE_IMMIX_BLOCK_STATE_TEST AND CLR_CMAKE_TARGET_WIN32 AND CLR_CMAKE_TARGET_ARCH_AMD64)
+        target_link_options(coreclr PRIVATE
+            "/EXPORT:GC_ImmixBlockStateTest_Run"
+        )
+    endif()
+
     add_custom_target(coreclr_exports DEPENDS ${EXPORTS_FILE})
     add_custom_target(coreclr_def DEPENDS ${DEF_FILE})
 

@@ -11,7 +11,8 @@ The copy of the paper held locally is the **extended version**,
 paper, and its table and figure numbering cannot be assumed to match. Cite it accordingly; see
 [`P0.2-paper-targets.md`](P0.2-paper-targets.md) §1.
 
-These documents record research and design decisions. **No collector code has landed yet.**
+These documents record research, design decisions, and opt-in collector
+substrate. P2.1 and P2.2 do not select or ship an LXR collector.
 
 ## Parity contract
 
@@ -89,6 +90,7 @@ mechanisms share one oracle. `lxr-x/simplified` is explicitly excluded.
 | [`P1.5-object-reference-enumeration.md`](P1.5-object-reference-enumeration.md) | The generic GC-side reference range iterator, collectible per-type resolver, compatibility matrix, real-layout parity, and native plus scenario-integrated scan performance evidence |
 | [`P1.6-gc-reserved-object-header-bits.md`](P1.6-gc-reserved-object-header-bits.md) | Generic 64-bit GC object-header state negotiation, atomic claim/publish protocol, complete sync-block coexistence ledger, compatibility, stress, and lock/hash evidence |
 | [`P2.1-side-metadata-framework.md`](P2.1-side-metadata-framework.md) | Collector-owned fixed-address side metadata, atomic bit/byte/word operations, selectable RC width, bulk reads, and contention/performance evidence |
+| [`P2.2-block-line-state.md`](P2.2-block-line-state.md) | Checked 32 KiB block/256-byte line geometry, the block lifecycle state machine, ownership, and phase-epoch predicates |
 | [`scripts/`](scripts/) | The clone, build, sanity, benchmark and probe scripts actually used, plus `verify-ledger.sh` (the ledger's gate) and `verify-gate.sh` (the gate's own positive control) |
 
 ## P0.1 outcome in one paragraph

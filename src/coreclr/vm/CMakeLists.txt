@@ -524,6 +524,14 @@ set(GC_HEADERS_WKS
     ../gc/side_metadata.h
     ../gc/softwarewritewatch.h)
 
+if(CLR_CMAKE_ENABLE_IMMIX_BLOCK_STATE_TEST)
+    list(APPEND GC_SOURCES_WKS
+        ../gc/immix_block.cpp
+        ../gc/immixblockstatetest.cpp)
+    list(APPEND GC_HEADERS_WKS
+        ../gc/immix_block.h)
+endif()
+
 if(FEATURE_EVENT_TRACE)
     list(APPEND VM_SOURCES_WKS
         eventtrace.cpp

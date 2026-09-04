@@ -146,6 +146,12 @@ if(CLR_CMAKE_ENABLE_OBJECT_REFERENCE_ENUMERATION_TEST)
   list(APPEND GC_SOURCES objectreferenceenumerationtest.cpp)
 endif()
 
+if(CLR_CMAKE_ENABLE_IMMIX_BLOCK_STATE_TEST)
+  list(APPEND GC_SOURCES
+    immix_block.cpp
+    immixblockstatetest.cpp)
+endif()
+
 if(FEATURE_STANDALONE_GC)
   if (CLR_CMAKE_TARGET_ARCH_ARM64 OR CLR_CMAKE_TARGET_ARCH_AMD64)
     set(BUILD_EXP_GC 1)
