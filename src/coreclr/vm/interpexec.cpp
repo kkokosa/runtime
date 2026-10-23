@@ -1293,7 +1293,8 @@ extern "C" ContinuationObject* AsyncHelpers_ResumeInterpreterContinuationWorker(
             else if (pSuspendData->asyncMethodReturnType != NULL && pSuspendData->asyncMethodReturnType->ContainsGCPointers())
             {
                 // ValueType containing gc refs, needs to be written with write barriers
-                memmoveGCRefs(resultStorage, returnValueLocation, returnValueSize);
+                memmoveGCRefsWithLayout(
+                    resultStorage, returnValueLocation, returnValueSize, pSuspendData->asyncMethodReturnType);
             }
             else
             {
@@ -4843,23 +4844,33 @@ do                                                                      \
                     InterpIntervalMapEntry *pCopyEntry = pAsyncSuspendData->liveLocalsIntervals;
                     if (pCopyEntry->countBytes > 0)
                     {
+                        for (InterpIntervalMapEntry *pSizeEntry = pCopyEntry; pSizeEntry->countBytes != 0; pSizeEntry++)
+                        {
+                            bytesTotal += pSizeEntry->countBytes;
+                        }
+
                         GCHeapMemoryBarrier();
+
+                        // A collector that needs old values logs exactly the reference fields of the continuation that
+                        // the copy overwrites; the copied locals are not whole reference ranges, so the bulk-move hook
+                        // must not see them.
+                        bool oldValuesLogged = ErectWriteBarrierObjectRangePre(
+                            OBJECTREFToObject(continuation), pContinuationDataStart, bytesTotal);
                         while (pCopyEntry->countBytes != 0)
                         {
-                            if (g_heap_type != GC_HEAP_CUSTOM)
+                            if ((g_heap_type != GC_HEAP_CUSTOM) || oldValuesLogged)
                             {
                             InlinedForwardGCSafeCopyHelper(pContinuationData, LOCAL_VAR_ADDR(pCopyEntry->startOffset, uint8_t), pCopyEntry->countBytes);
                             }
-							else
-							{
+                            else
+                            {
                                 GCHeapUtilities::GetFastGCFunctions().bulk_move_with_write_barrier(GCHeapUtilities::GetFastGCFunctions().context, pContinuationData, LOCAL_VAR_ADDR(pCopyEntry->startOffset, uint8_t), pCopyEntry->countBytes);
-                        	}
-                            bytesTotal += pCopyEntry->countBytes;
+                            }
                             pContinuationData += pCopyEntry->countBytes;
                             pCopyEntry++;
                         }
- 						if (g_heap_type != GC_HEAP_CUSTOM)
- 						{
+                        if (g_heap_type != GC_HEAP_CUSTOM)
+                        {
                         InlinedSetCardsAfterBulkCopyHelper((Object**)pContinuationDataStart, bytesTotal);
                         }
                     }

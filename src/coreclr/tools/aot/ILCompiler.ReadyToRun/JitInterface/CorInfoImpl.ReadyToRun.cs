@@ -1151,6 +1151,12 @@ namespace Internal.JitInterface
                 case CorInfoHelpFunc.CORINFO_HELP_BULK_WRITEBARRIER:
                     id = ReadyToRunHelper.BulkWriteBarrier;
                     break;
+                case CorInfoHelpFunc.CORINFO_HELP_BULK_WRITEBARRIER_WITH_LAYOUT:
+                    id = ReadyToRunHelper.BulkWriteBarrierWithLayout;
+                    break;
+                case CorInfoHelpFunc.CORINFO_HELP_BULK_WRITEBARRIER_CLEAR_WITH_LAYOUT:
+                    id = ReadyToRunHelper.BulkWriteBarrierClearWithLayout;
+                    break;
 
                 case CorInfoHelpFunc.CORINFO_HELP_ARRADDR_ST:
                     id = ReadyToRunHelper.Stelem_Ref;

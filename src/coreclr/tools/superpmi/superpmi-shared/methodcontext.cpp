@@ -1246,6 +1246,8 @@ const char* CorJitFlagToString(CORJIT_FLAGS::CorJitFlag flag)
         return "CORJIT_FLAG_USE_DISPATCH_HELPERS";
     case CORJIT_FLAGS::CorJitFlag::CORJIT_FLAG_WASM_MANAGED_HELPER:
         return "CORJIT_FLAG_WASM_MANAGED_HELPER";
+    case CORJIT_FLAGS::CorJitFlag::CORJIT_FLAG_WRITE_BARRIER_REQUIRES_OLD_VALUE:
+        return "CORJIT_FLAG_WRITE_BARRIER_REQUIRES_OLD_VALUE";
 
     default:
         return "<unknown>";

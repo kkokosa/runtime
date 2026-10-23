@@ -359,7 +359,7 @@ void CopyValueClassUnchecked(void* dest, void* src, MethodTable *pMT)
 
     if (pMT->ContainsGCPointers())
     {
-        memmoveGCRefs(dest, src, pMT->GetNumInstanceFieldBytesIfContainsGCPointers());
+        memmoveGCRefsWithLayout(dest, src, pMT->GetNumInstanceFieldBytesIfContainsGCPointers(), pMT);
     }
     else
     {

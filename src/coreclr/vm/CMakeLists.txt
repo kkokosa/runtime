@@ -535,6 +535,7 @@ set(GC_SOURCES_WKS
     ../gc/gchandletable.cpp
     ../gc/gcload.cpp
     ../gc/gcbridge.cpp
+    ../gc/side_metadata.cpp
     ../gc/softwarewritewatch.cpp
     ../gc/handletablecache.cpp)
 
@@ -545,7 +546,99 @@ set(GC_HEADERS_WKS
     ../gc/gcscan.h
     ../gc/gcbridge.h
     ../gc/gchandletableimpl.h
+    ../gc/side_metadata.h
     ../gc/softwarewritewatch.h)
+
+if(CLR_CMAKE_ENABLE_IMMIX_BLOCK_STATE_TEST OR CLR_CMAKE_ENABLE_REFERENCE_COUNT_TEST OR
+   CLR_CMAKE_ENABLE_IMMIX_ALLOCATION_TEST OR CLR_CMAKE_ENABLE_LARGE_OBJECT_SPACE_TEST OR
+   CLR_CMAKE_ENABLE_LXR_RC_VERTICAL)
+    list(APPEND GC_SOURCES_WKS ../gc/immix_block.cpp)
+    list(APPEND GC_HEADERS_WKS ../gc/immix_block.h)
+endif()
+
+if(CLR_CMAKE_ENABLE_IMMIX_BLOCK_STATE_TEST)
+    list(APPEND GC_SOURCES_WKS ../gc/immixblockstatetest.cpp)
+endif()
+
+if(CLR_CMAKE_ENABLE_REFERENCE_COUNT_TEST OR CLR_CMAKE_ENABLE_LXR_RC_VERTICAL)
+    list(APPEND GC_SOURCES_WKS ../gc/reference_count.cpp)
+    list(APPEND GC_HEADERS_WKS ../gc/reference_count.h)
+endif()
+
+if(CLR_CMAKE_ENABLE_REFERENCE_COUNT_TEST)
+    list(APPEND GC_SOURCES_WKS ../gc/referencecounttest.cpp)
+endif()
+
+if(CLR_CMAKE_ENABLE_LXR_WORK_PACKET_SCHEDULER_TEST OR
+   CLR_CMAKE_ENABLE_LXR_DEFERRED_BUCKET_TEST OR
+   CLR_CMAKE_ENABLE_LXR_LAZY_COMPLETION_COUNTER_TEST OR
+   CLR_CMAKE_ENABLE_LXR_PAUSE_COORDINATOR_TEST OR CLR_CMAKE_ENABLE_LXR_RC_VERTICAL)
+    list(APPEND GC_SOURCES_WKS
+        ../gc/lxr_work_packet.cpp
+        ../gc/lxr_work_scheduler.cpp)
+    list(APPEND GC_HEADERS_WKS
+        ../gc/lxr_work_packet.h
+        ../gc/lxr_work_scheduler.h)
+endif()
+
+if(CLR_CMAKE_ENABLE_LXR_LAZY_COMPLETION_COUNTER_TEST OR CLR_CMAKE_ENABLE_LXR_RC_VERTICAL)
+    list(APPEND GC_SOURCES_WKS ../gc/lxr_completion_counter.cpp)
+    list(APPEND GC_HEADERS_WKS
+        ../gc/lxr_completion_counter.h)
+endif()
+
+if(CLR_CMAKE_ENABLE_LXR_LAZY_COMPLETION_COUNTER_TEST)
+    list(APPEND GC_SOURCES_WKS ../gc/lxrcompletioncountertest.cpp)
+endif()
+
+if(CLR_CMAKE_ENABLE_LXR_WORK_PACKET_SCHEDULER_TEST)
+    list(APPEND GC_SOURCES_WKS ../gc/lxrworkpacketschedulertest.cpp)
+endif()
+
+if(CLR_CMAKE_ENABLE_LXR_DEFERRED_BUCKET_TEST)
+    list(APPEND GC_SOURCES_WKS ../gc/lxrdeferredbuckettest.cpp)
+endif()
+
+if(CLR_CMAKE_ENABLE_IMMIX_ALLOCATION_TEST OR CLR_CMAKE_ENABLE_LXR_RC_VERTICAL)
+    list(APPEND GC_SOURCES_WKS ../gc/immix_allocation.cpp)
+    list(APPEND GC_HEADERS_WKS
+        ../gc/immix_allocation.h)
+endif()
+
+if(CLR_CMAKE_ENABLE_IMMIX_ALLOCATION_TEST)
+    list(APPEND GC_SOURCES_WKS ../gc/immixallocationtest.cpp)
+endif()
+
+if(CLR_CMAKE_ENABLE_LARGE_OBJECT_SPACE_TEST OR CLR_CMAKE_ENABLE_LXR_RC_VERTICAL)
+    list(APPEND GC_SOURCES_WKS ../gc/large_object_space.cpp)
+    list(APPEND GC_HEADERS_WKS
+        ../gc/large_object_space.h)
+endif()
+
+if(CLR_CMAKE_ENABLE_LARGE_OBJECT_SPACE_TEST)
+    list(APPEND GC_SOURCES_WKS ../gc/largeobjectspacetest.cpp)
+endif()
+
+if(CLR_CMAKE_ENABLE_LXR_PAUSE_COORDINATOR_TEST OR CLR_CMAKE_ENABLE_LXR_RC_VERTICAL)
+    list(APPEND GC_SOURCES_WKS
+        ../gc/lxr_pause_coordinator.cpp
+        ../gc/lxr_pause_schedule.cpp)
+    list(APPEND GC_HEADERS_WKS
+        ../gc/lxr_pause_coordinator.h
+        ../gc/lxr_pause_schedule.h)
+endif()
+
+if(CLR_CMAKE_ENABLE_LXR_PAUSE_COORDINATOR_TEST)
+    list(APPEND GC_SOURCES_WKS ../gc/lxrpausecoordinatortest.cpp)
+endif()
+
+if(CLR_CMAKE_ENABLE_LXR_RC_VERTICAL)
+    add_compile_definitions(FEATURE_LXR_RC_VERTICAL)
+    list(APPEND GC_SOURCES_WKS
+        ../gc/lxr_reference_counting.cpp ../gc/lxrrcverticaltest.cpp)
+    list(APPEND GC_HEADERS_WKS
+        ../gc/lxr_reference_counting.h ../gc/lxrrcverticaltest.h)
+endif()
 
 if(FEATURE_EVENT_TRACE)
     list(APPEND VM_SOURCES_WKS
@@ -1032,6 +1125,18 @@ list(APPEND VM_SOURCES_WKS
      ${GC_SOURCES_WKS}
 )
 
+if(CLR_CMAKE_ENABLE_OBJECT_REFERENCE_ENUMERATION_TEST)
+    list(APPEND VM_SOURCES_WKS
+        ../gc/objectreferenceenumerationtest.cpp
+    )
+endif()
+
+if(CLR_CMAKE_ENABLE_OBJECT_HEADER_BITS_TEST)
+    list(APPEND VM_SOURCES_WKS
+        objectheaderbitstest.cpp
+    )
+endif()
+
 list(APPEND VM_HEADERS_WKS
      ${GC_HEADERS_WKS}
 )
@@ -1118,6 +1223,20 @@ if(FEATURE_SVR_GC)
     target_compile_definitions(vm_gc_svr PRIVATE GC_DESCRIPTOR SERVER_GC)
     add_dependencies(vm_gc_svr eventing_headers)
     add_pgo(vm_gc_svr)
+endif()
+
+if(CLR_CMAKE_ENABLE_OBJECT_REFERENCE_ENUMERATION_TEST)
+    target_compile_definitions(vm_gc_wks PRIVATE FEATURE_OBJECT_REFERENCE_ENUMERATION_TEST)
+    if(FEATURE_SVR_GC)
+        target_compile_definitions(vm_gc_svr PRIVATE FEATURE_OBJECT_REFERENCE_ENUMERATION_TEST)
+    endif()
+endif()
+
+if(CLR_CMAKE_ENABLE_OBJECT_HEADER_BITS_TEST)
+    target_compile_definitions(vm_gc_wks PRIVATE FEATURE_OBJECT_HEADER_BITS_TEST)
+    if(FEATURE_SVR_GC)
+        target_compile_definitions(vm_gc_svr PRIVATE FEATURE_OBJECT_HEADER_BITS_TEST)
+    endif()
 endif()
 
 if (NOT CLR_CMAKE_TARGET_ARCH_WASM)

@@ -259,6 +259,7 @@ std::string SpmiDumpHelper::DumpJitFlags(unsigned long long flags)
 
     AddFlag(USE_DISPATCH_HELPERS);
     AddFlag(WASM_MANAGED_HELPER);
+    AddFlag(WRITE_BARRIER_REQUIRES_OLD_VALUE);
 
     // "Extra jit flag" support
     //
