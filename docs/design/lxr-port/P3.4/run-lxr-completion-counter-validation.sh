@@ -11,9 +11,9 @@ fi
 mkdir -p "$output"
 clang++ -std=c++17 -pthread -O2 -Wall -Wextra -Werror \
     -DLXR_ENABLE_LAZY_COMPLETION_COUNTER \
-    "$repo_root/src/coreclr/gc/lxr_completion_counter.cpp" \
-    "$repo_root/src/coreclr/gc/lxr_work_packet.cpp" \
-    "$repo_root/src/coreclr/gc/lxr_work_scheduler.cpp" \
+    "$repo_root/src/coreclr/gc_lxr/lxr_completion_counter.cpp" \
+    "$repo_root/src/coreclr/gc_lxr/lxr_work_packet.cpp" \
+    "$repo_root/src/coreclr/gc_lxr/lxr_work_scheduler.cpp" \
     "$repo_root/docs/design/lxr-port/P3.4/lxr-completion-counter-validation.cpp" \
     -o "$output/lxr-completion-counter-validation" \
     >"$output/build.log" 2>&1

@@ -8,6 +8,7 @@ script_root="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 repository_root="${1:-$(cd "$script_root/../../../.." && pwd)}"
 output_root="${2:-$repository_root/artifacts/P2.1/validation/linux-$(date -u +%Y%m%dT%H%M%SZ)-$$}"
 gc_root="$repository_root/src/coreclr/gc"
+lxr_root="$repository_root/src/coreclr/gc_lxr"
 native_root="$repository_root/src/native"
 
 mkdir -p "$output_root"
@@ -32,13 +33,14 @@ command=(
   -DHOST_AMD64
   -DTARGET_64BIT
   -DHOST_64BIT
+  -I"$lxr_root"
   -I"$gc_root"
   -I"$gc_root/env"
   -I"$native_root"
   -I"$native_root/inc"
   "$script_root/side-metadata-validation.cpp"
   "$script_root/side-metadata-test-platform.cpp"
-  "$gc_root/side_metadata.cpp"
+  "$lxr_root/side_metadata.cpp"
   -o "$output_root/side-metadata-validation"
 )
 

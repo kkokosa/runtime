@@ -1,7 +1,7 @@
 // Licensed to the .NET Foundation under one or more agreements.
 // The .NET Foundation licenses this file to you under the MIT license.
 
-// Native test of the LXR write barrier assembly (src/coreclr/gc/amd64/lxr_writebarrier.S and .asm).
+// Native test of the LXR write barrier assembly (src/coreclr/gc_lxr/amd64/lxr_writebarrier.S and .asm).
 //
 // The test does what the runtime does in InitJITWriteBarrierHelpers: it copies the barrier block to a new executable
 // page, fills the patchable slots from their source globals, and calls the copy. A side-metadata array and a small

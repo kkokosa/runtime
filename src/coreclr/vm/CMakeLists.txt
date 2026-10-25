@@ -9,6 +9,7 @@ if(FEATURE_INPROC_CRASHREPORT)
 endif(FEATURE_INPROC_CRASHREPORT)
 include_directories(${CLR_SRC_NATIVE_DIR})
 include_directories(${RUNTIME_DIR})
+include_directories(../gc ../gc_lxr ../gc_lxr/tests)
 
 # needed when zLib compression is used
 include_directories(${CLR_SRC_NATIVE_DIR}/libs/System.IO.Compression.Native)
@@ -535,7 +536,7 @@ set(GC_SOURCES_WKS
     ../gc/gchandletable.cpp
     ../gc/gcload.cpp
     ../gc/gcbridge.cpp
-    ../gc/side_metadata.cpp
+    ../gc_lxr/side_metadata.cpp
     ../gc/softwarewritewatch.cpp
     ../gc/handletablecache.cpp)
 
@@ -546,27 +547,27 @@ set(GC_HEADERS_WKS
     ../gc/gcscan.h
     ../gc/gcbridge.h
     ../gc/gchandletableimpl.h
-    ../gc/side_metadata.h
+    ../gc_lxr/side_metadata.h
     ../gc/softwarewritewatch.h)
 
 if(CLR_CMAKE_ENABLE_IMMIX_BLOCK_STATE_TEST OR CLR_CMAKE_ENABLE_REFERENCE_COUNT_TEST OR
    CLR_CMAKE_ENABLE_IMMIX_ALLOCATION_TEST OR CLR_CMAKE_ENABLE_LARGE_OBJECT_SPACE_TEST OR
    CLR_CMAKE_ENABLE_LXR_RC_VERTICAL)
-    list(APPEND GC_SOURCES_WKS ../gc/immix_block.cpp)
-    list(APPEND GC_HEADERS_WKS ../gc/immix_block.h)
+    list(APPEND GC_SOURCES_WKS ../gc_lxr/immix_block.cpp)
+    list(APPEND GC_HEADERS_WKS ../gc_lxr/immix_block.h)
 endif()
 
 if(CLR_CMAKE_ENABLE_IMMIX_BLOCK_STATE_TEST)
-    list(APPEND GC_SOURCES_WKS ../gc/immixblockstatetest.cpp)
+    list(APPEND GC_SOURCES_WKS ../gc_lxr/tests/immixblockstatetest.cpp)
 endif()
 
 if(CLR_CMAKE_ENABLE_REFERENCE_COUNT_TEST OR CLR_CMAKE_ENABLE_LXR_RC_VERTICAL)
-    list(APPEND GC_SOURCES_WKS ../gc/reference_count.cpp)
-    list(APPEND GC_HEADERS_WKS ../gc/reference_count.h)
+    list(APPEND GC_SOURCES_WKS ../gc_lxr/reference_count.cpp)
+    list(APPEND GC_HEADERS_WKS ../gc_lxr/reference_count.h)
 endif()
 
 if(CLR_CMAKE_ENABLE_REFERENCE_COUNT_TEST)
-    list(APPEND GC_SOURCES_WKS ../gc/referencecounttest.cpp)
+    list(APPEND GC_SOURCES_WKS ../gc_lxr/tests/referencecounttest.cpp)
 endif()
 
 if(CLR_CMAKE_ENABLE_LXR_WORK_PACKET_SCHEDULER_TEST OR
@@ -574,70 +575,70 @@ if(CLR_CMAKE_ENABLE_LXR_WORK_PACKET_SCHEDULER_TEST OR
    CLR_CMAKE_ENABLE_LXR_LAZY_COMPLETION_COUNTER_TEST OR
    CLR_CMAKE_ENABLE_LXR_PAUSE_COORDINATOR_TEST OR CLR_CMAKE_ENABLE_LXR_RC_VERTICAL)
     list(APPEND GC_SOURCES_WKS
-        ../gc/lxr_work_packet.cpp
-        ../gc/lxr_work_scheduler.cpp)
+        ../gc_lxr/lxr_work_packet.cpp
+        ../gc_lxr/lxr_work_scheduler.cpp)
     list(APPEND GC_HEADERS_WKS
-        ../gc/lxr_work_packet.h
-        ../gc/lxr_work_scheduler.h)
+        ../gc_lxr/lxr_work_packet.h
+        ../gc_lxr/lxr_work_scheduler.h)
 endif()
 
 if(CLR_CMAKE_ENABLE_LXR_LAZY_COMPLETION_COUNTER_TEST OR CLR_CMAKE_ENABLE_LXR_RC_VERTICAL)
-    list(APPEND GC_SOURCES_WKS ../gc/lxr_completion_counter.cpp)
+    list(APPEND GC_SOURCES_WKS ../gc_lxr/lxr_completion_counter.cpp)
     list(APPEND GC_HEADERS_WKS
-        ../gc/lxr_completion_counter.h)
+        ../gc_lxr/lxr_completion_counter.h)
 endif()
 
 if(CLR_CMAKE_ENABLE_LXR_LAZY_COMPLETION_COUNTER_TEST)
-    list(APPEND GC_SOURCES_WKS ../gc/lxrcompletioncountertest.cpp)
+    list(APPEND GC_SOURCES_WKS ../gc_lxr/tests/lxrcompletioncountertest.cpp)
 endif()
 
 if(CLR_CMAKE_ENABLE_LXR_WORK_PACKET_SCHEDULER_TEST)
-    list(APPEND GC_SOURCES_WKS ../gc/lxrworkpacketschedulertest.cpp)
+    list(APPEND GC_SOURCES_WKS ../gc_lxr/tests/lxrworkpacketschedulertest.cpp)
 endif()
 
 if(CLR_CMAKE_ENABLE_LXR_DEFERRED_BUCKET_TEST)
-    list(APPEND GC_SOURCES_WKS ../gc/lxrdeferredbuckettest.cpp)
+    list(APPEND GC_SOURCES_WKS ../gc_lxr/tests/lxrdeferredbuckettest.cpp)
 endif()
 
 if(CLR_CMAKE_ENABLE_IMMIX_ALLOCATION_TEST OR CLR_CMAKE_ENABLE_LXR_RC_VERTICAL)
-    list(APPEND GC_SOURCES_WKS ../gc/immix_allocation.cpp)
+    list(APPEND GC_SOURCES_WKS ../gc_lxr/immix_allocation.cpp)
     list(APPEND GC_HEADERS_WKS
-        ../gc/immix_allocation.h)
+        ../gc_lxr/immix_allocation.h)
 endif()
 
 if(CLR_CMAKE_ENABLE_IMMIX_ALLOCATION_TEST)
-    list(APPEND GC_SOURCES_WKS ../gc/immixallocationtest.cpp)
+    list(APPEND GC_SOURCES_WKS ../gc_lxr/tests/immixallocationtest.cpp)
 endif()
 
 if(CLR_CMAKE_ENABLE_LARGE_OBJECT_SPACE_TEST OR CLR_CMAKE_ENABLE_LXR_RC_VERTICAL)
-    list(APPEND GC_SOURCES_WKS ../gc/large_object_space.cpp)
+    list(APPEND GC_SOURCES_WKS ../gc_lxr/large_object_space.cpp)
     list(APPEND GC_HEADERS_WKS
-        ../gc/large_object_space.h)
+        ../gc_lxr/large_object_space.h)
 endif()
 
 if(CLR_CMAKE_ENABLE_LARGE_OBJECT_SPACE_TEST)
-    list(APPEND GC_SOURCES_WKS ../gc/largeobjectspacetest.cpp)
+    list(APPEND GC_SOURCES_WKS ../gc_lxr/tests/largeobjectspacetest.cpp)
 endif()
 
 if(CLR_CMAKE_ENABLE_LXR_PAUSE_COORDINATOR_TEST OR CLR_CMAKE_ENABLE_LXR_RC_VERTICAL)
     list(APPEND GC_SOURCES_WKS
-        ../gc/lxr_pause_coordinator.cpp
-        ../gc/lxr_pause_schedule.cpp)
+        ../gc_lxr/lxr_pause_coordinator.cpp
+        ../gc_lxr/lxr_pause_schedule.cpp)
     list(APPEND GC_HEADERS_WKS
-        ../gc/lxr_pause_coordinator.h
-        ../gc/lxr_pause_schedule.h)
+        ../gc_lxr/lxr_pause_coordinator.h
+        ../gc_lxr/lxr_pause_schedule.h)
 endif()
 
 if(CLR_CMAKE_ENABLE_LXR_PAUSE_COORDINATOR_TEST)
-    list(APPEND GC_SOURCES_WKS ../gc/lxrpausecoordinatortest.cpp)
+    list(APPEND GC_SOURCES_WKS ../gc_lxr/tests/lxrpausecoordinatortest.cpp)
 endif()
 
 if(CLR_CMAKE_ENABLE_LXR_RC_VERTICAL)
     add_compile_definitions(FEATURE_LXR_RC_VERTICAL)
     list(APPEND GC_SOURCES_WKS
-        ../gc/lxr_reference_counting.cpp ../gc/lxrrcverticaltest.cpp)
+        ../gc_lxr/lxr_reference_counting.cpp ../gc_lxr/tests/lxrrcverticaltest.cpp)
     list(APPEND GC_HEADERS_WKS
-        ../gc/lxr_reference_counting.h ../gc/lxrrcverticaltest.h)
+        ../gc_lxr/lxr_reference_counting.h ../gc_lxr/tests/lxrrcverticaltest.h)
 endif()
 
 if(FEATURE_EVENT_TRACE)

@@ -14,8 +14,8 @@ mkdir -p "$output_root"
 
 c++ -std=c++17 -O2 -pthread \
     -I"$repo_root/src/coreclr/gc" \
-    "$repo_root/src/coreclr/gc/lxr_work_packet.cpp" \
-    "$repo_root/src/coreclr/gc/lxr_work_scheduler.cpp" \
+    "$repo_root/src/coreclr/gc_lxr/lxr_work_packet.cpp" \
+    "$repo_root/src/coreclr/gc_lxr/lxr_work_scheduler.cpp" \
     "$script_root/lxr-work-packet-validation.cpp" \
     -o "$output_root/lxr-work-packet-validation" \
     >"$output_root/build.log" 2>&1

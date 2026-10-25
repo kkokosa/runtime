@@ -1,5 +1,7 @@
 set(CMAKE_INCLUDE_CURRENT_DIR ON)
 
+include_directories(../gc_lxr ../gc_lxr/tests)
+
 if(CLR_CMAKE_ENABLE_LXR_RC_VERTICAL)
   add_compile_definitions(FEATURE_LXR_RC_VERTICAL)
 endif()
@@ -19,7 +21,7 @@ set(GC_SOURCES
   handletablecore.cpp
   handletablescan.cpp
   objecthandle.cpp
-  side_metadata.cpp
+  ../gc_lxr/side_metadata.cpp
   softwarewritewatch.cpp
   gchandletable.cpp
   gcload.cpp
@@ -79,7 +81,7 @@ if (CLR_CMAKE_TARGET_WIN32)
     handletable.inl
     handletablepriv.h
     objecthandle.h
-    side_metadata.h
+    ../gc_lxr/side_metadata.h
     softwarewritewatch.h
   )
 endif(CLR_CMAKE_TARGET_WIN32)
@@ -139,21 +141,21 @@ endif()
 if(CLR_CMAKE_ENABLE_IMMIX_BLOCK_STATE_TEST OR CLR_CMAKE_ENABLE_REFERENCE_COUNT_TEST OR
    CLR_CMAKE_ENABLE_IMMIX_ALLOCATION_TEST OR CLR_CMAKE_ENABLE_LARGE_OBJECT_SPACE_TEST OR
    CLR_CMAKE_ENABLE_LXR_RC_VERTICAL)
-  list(APPEND GC_SOURCES immix_block.cpp)
+  list(APPEND GC_SOURCES ../gc_lxr/immix_block.cpp)
 endif()
 
 if(CLR_CMAKE_ENABLE_IMMIX_BLOCK_STATE_TEST)
-  list(APPEND GC_SOURCES immixblockstatetest.cpp)
+  list(APPEND GC_SOURCES ../gc_lxr/tests/immixblockstatetest.cpp)
 endif()
 
 if(CLR_CMAKE_ENABLE_REFERENCE_COUNT_TEST OR CLR_CMAKE_ENABLE_LXR_RC_VERTICAL)
   list(APPEND GC_SOURCES
-    reference_count.cpp
-    reference_count.h)
+    ../gc_lxr/reference_count.cpp
+    ../gc_lxr/reference_count.h)
 endif()
 
 if(CLR_CMAKE_ENABLE_REFERENCE_COUNT_TEST)
-  list(APPEND GC_SOURCES referencecounttest.cpp)
+  list(APPEND GC_SOURCES ../gc_lxr/tests/referencecounttest.cpp)
 endif()
 
 if(CLR_CMAKE_ENABLE_LXR_WORK_PACKET_SCHEDULER_TEST OR
@@ -161,56 +163,56 @@ if(CLR_CMAKE_ENABLE_LXR_WORK_PACKET_SCHEDULER_TEST OR
    CLR_CMAKE_ENABLE_LXR_LAZY_COMPLETION_COUNTER_TEST OR
    CLR_CMAKE_ENABLE_LXR_PAUSE_COORDINATOR_TEST OR CLR_CMAKE_ENABLE_LXR_RC_VERTICAL)
   list(APPEND GC_SOURCES
-    lxr_work_packet.cpp
-    lxr_work_scheduler.cpp)
+    ../gc_lxr/lxr_work_packet.cpp
+    ../gc_lxr/lxr_work_scheduler.cpp)
 endif()
 
 if(CLR_CMAKE_ENABLE_LXR_LAZY_COMPLETION_COUNTER_TEST OR CLR_CMAKE_ENABLE_LXR_RC_VERTICAL)
-  list(APPEND GC_SOURCES lxr_completion_counter.cpp)
+  list(APPEND GC_SOURCES ../gc_lxr/lxr_completion_counter.cpp)
 endif()
 
 if(CLR_CMAKE_ENABLE_LXR_LAZY_COMPLETION_COUNTER_TEST)
-  list(APPEND GC_SOURCES lxrcompletioncountertest.cpp)
+  list(APPEND GC_SOURCES ../gc_lxr/tests/lxrcompletioncountertest.cpp)
 endif()
 
 if(CLR_CMAKE_ENABLE_LXR_WORK_PACKET_SCHEDULER_TEST)
-  list(APPEND GC_SOURCES lxrworkpacketschedulertest.cpp)
+  list(APPEND GC_SOURCES ../gc_lxr/tests/lxrworkpacketschedulertest.cpp)
 endif()
 
 if(CLR_CMAKE_ENABLE_LXR_DEFERRED_BUCKET_TEST)
-  list(APPEND GC_SOURCES lxrdeferredbuckettest.cpp)
+  list(APPEND GC_SOURCES ../gc_lxr/tests/lxrdeferredbuckettest.cpp)
 endif()
 
 if(CLR_CMAKE_ENABLE_IMMIX_ALLOCATION_TEST OR CLR_CMAKE_ENABLE_LXR_RC_VERTICAL)
-  list(APPEND GC_SOURCES immix_allocation.cpp)
+  list(APPEND GC_SOURCES ../gc_lxr/immix_allocation.cpp)
 endif()
 
 if(CLR_CMAKE_ENABLE_IMMIX_ALLOCATION_TEST)
-  list(APPEND GC_SOURCES immixallocationtest.cpp)
+  list(APPEND GC_SOURCES ../gc_lxr/tests/immixallocationtest.cpp)
 endif()
 
 if(CLR_CMAKE_ENABLE_LARGE_OBJECT_SPACE_TEST OR CLR_CMAKE_ENABLE_LXR_RC_VERTICAL)
-  list(APPEND GC_SOURCES large_object_space.cpp)
+  list(APPEND GC_SOURCES ../gc_lxr/large_object_space.cpp)
 endif()
 
 if(CLR_CMAKE_ENABLE_LARGE_OBJECT_SPACE_TEST)
-  list(APPEND GC_SOURCES largeobjectspacetest.cpp)
+  list(APPEND GC_SOURCES ../gc_lxr/tests/largeobjectspacetest.cpp)
 endif()
 
 if(CLR_CMAKE_ENABLE_LXR_PAUSE_COORDINATOR_TEST OR CLR_CMAKE_ENABLE_LXR_RC_VERTICAL)
   list(APPEND GC_SOURCES
-    lxr_pause_coordinator.cpp
-    lxr_pause_schedule.cpp)
+    ../gc_lxr/lxr_pause_coordinator.cpp
+    ../gc_lxr/lxr_pause_schedule.cpp)
 endif()
 
 if(CLR_CMAKE_ENABLE_LXR_PAUSE_COORDINATOR_TEST)
-  list(APPEND GC_SOURCES lxrpausecoordinatortest.cpp)
+  list(APPEND GC_SOURCES ../gc_lxr/tests/lxrpausecoordinatortest.cpp)
 endif()
 
 if(CLR_CMAKE_ENABLE_LXR_RC_VERTICAL)
   list(APPEND GC_SOURCES
-    lxr_reference_counting.cpp lxr_reference_counting.h
-    lxrrcverticaltest.cpp lxrrcverticaltest.h)
+    ../gc_lxr/lxr_reference_counting.cpp ../gc_lxr/lxr_reference_counting.h
+    ../gc_lxr/tests/lxrrcverticaltest.cpp ../gc_lxr/tests/lxrrcverticaltest.h)
 endif()
 
 if(FEATURE_STANDALONE_GC)
@@ -306,36 +308,6 @@ if(FEATURE_STANDALONE_GC)
   add_subdirectory(datadescriptor)
 
   install_clr(TARGETS clrgc DESTINATIONS . sharedFramework COMPONENT runtime)
-  if(CLR_CMAKE_ENABLE_LXR_GC)
-    # The write barrier helpers (PR #3316 mechanism, GetAssignRefFunctions) are assembly.
-    if(CLR_CMAKE_TARGET_WIN32)
-      set(LXR_WRITE_BARRIER_ASM amd64/lxr_writebarrier.asm)
-    else()
-      set(LXR_WRITE_BARRIER_ASM amd64/lxr_writebarrier.S)
-    endif()
-    add_library_clr(lxr_writebarrier OBJECT ${LXR_WRITE_BARRIER_ASM})
-    target_include_directories(lxr_writebarrier PRIVATE
-      ${ARCH_SOURCES_DIR}
-      ../pal/inc
-      ../vm/${ARCH_SOURCES_DIR}
-      ${CMAKE_CURRENT_BINARY_DIR}/../vm/wks)
-    if(CLR_CMAKE_TARGET_WIN32)
-      add_dependencies(lxr_writebarrier asmconstants_inc)
-    endif()
-    add_library_clr(clrlxrgc SHARED
-      gceventstatus.cpp gcconfig.cpp gccommon.cpp gcscan.cpp
-      handletable.cpp handletablecore.cpp handletablescan.cpp handletablecache.cpp
-      objecthandle.cpp gchandletable.cpp gcbridge.cpp softwarewritewatch.cpp
-      side_metadata.cpp immix_block.cpp reference_count.cpp immix_allocation.cpp
-      large_object_space.cpp lxr_work_packet.cpp lxr_work_scheduler.cpp
-      lxr_completion_counter.cpp lxr_pause_schedule.cpp lxr_pause_coordinator.cpp
-      lxr_reference_counting.cpp lxr_finalizer_registry.h lxr_finalizer_pause.h lxr_pin_list.h lxr_young_spans.h lxr_gc.cpp lxr_gc.h lxr_gcload.cpp
-      lxr_write_barrier.cpp lxr_write_barrier.h lxr_worker_policy.h lxr_prefetch.h
-      $<TARGET_OBJECTS:lxr_writebarrier>)
-    add_dependencies(clrlxrgc eventing_headers)
-    target_link_libraries(clrlxrgc PRIVATE ${GC_LINK_LIBRARIES})
-    install_clr(TARGETS clrlxrgc DESTINATIONS . sharedFramework COMPONENT runtime)
-  endif()
   if (CLR_CMAKE_TARGET_ARCH_ARM64 OR CLR_CMAKE_TARGET_ARCH_AMD64)
     install_clr(TARGETS clrgcexp DESTINATIONS . sharedFramework COMPONENT runtime)
   endif (CLR_CMAKE_TARGET_ARCH_ARM64 OR CLR_CMAKE_TARGET_ARCH_AMD64)

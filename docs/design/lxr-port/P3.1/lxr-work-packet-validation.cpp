@@ -1,8 +1,8 @@
 // Licensed to the .NET Foundation under one or more agreements.
 // The .NET Foundation licenses this file to you under the MIT license.
 
-#include "../../../../src/coreclr/gc/lxr_work_packet.h"
-#include "../../../../src/coreclr/gc/lxr_work_scheduler.h"
+#include "../../../../src/coreclr/gc_lxr/lxr_work_packet.h"
+#include "../../../../src/coreclr/gc_lxr/lxr_work_scheduler.h"
 
 #include <array>
 #include <atomic>

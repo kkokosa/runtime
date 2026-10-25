@@ -6,7 +6,7 @@ set -u
 REPO="$1"
 OUT="$2"
 mkdir -p "$OUT"
-GC="$REPO/src/coreclr/gc"
+GC="$REPO/src/coreclr/gc_lxr"
 TEST="$REPO/docs/design/lxr-port/P21-specialized-barrier/lxr-write-barrier-test.cpp"
 
 build() {  # build <name> <asm defines> <cxx defines>

@@ -8,6 +8,7 @@ script_root="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 repository_root="${1:-$(cd "$script_root/../../../.." && pwd)}"
 output_root="${2:-$repository_root/artifacts/P2.4/validation/linux-$(date -u +%Y%m%dT%H%M%SZ)-$$}"
 gc_root="$repository_root/src/coreclr/gc"
+lxr_root="$repository_root/src/coreclr/gc_lxr"
 native_root="$repository_root/src/native"
 
 mkdir -p "$output_root"
@@ -32,15 +33,16 @@ command=(
   -DTARGET_64BIT
   -DHOST_64BIT
   -DLXR_F9_TEST_HOOKS
+  -I"$lxr_root"
   -I"$gc_root"
   -I"$gc_root/env"
   -I"$native_root"
   -I"$native_root/inc"
   "$script_root/immix-allocation-validation.cpp"
   "$script_root/../P2.1/side-metadata-test-platform.cpp"
-  "$gc_root/side_metadata.cpp"
-  "$gc_root/immix_block.cpp"
-  "$gc_root/immix_allocation.cpp"
+  "$lxr_root/side_metadata.cpp"
+  "$lxr_root/immix_block.cpp"
+  "$lxr_root/immix_allocation.cpp"
   -o "$output_root/immix-allocation-validation"
 )
 

@@ -48,6 +48,7 @@ case "$control" in
     *) echo "Unsupported control: $control" >&2; exit 1 ;;
 esac
 gc="$root/src/coreclr/gc"
+LXR="$root/src/coreclr/gc_lxr"
 sources=(
     side_metadata.cpp immix_block.cpp immix_allocation.cpp reference_count.cpp
     large_object_space.cpp lxr_work_packet.cpp lxr_work_scheduler.cpp
@@ -55,19 +56,19 @@ sources=(
     lxr_reference_counting.cpp
 )
 for index in "${!sources[@]}"; do
-    sources[$index]="$gc/${sources[$index]}"
+    sources[$index]="$LXR/${sources[$index]}"
 done
 sources+=(
     "$root/docs/design/lxr-port/P2.5/large-object-space-test-platform.cpp"
     "$root/docs/design/lxr-port/P4/lxr-rc-validation.cpp"
 )
-sha256sum "${sources[@]}" "$gc"/*.h > "$output/source-identities.txt"
+sha256sum "${sources[@]}" "$LXR"/*.h "$gc"/*.h > "$output/source-identities.txt"
 command=(
     clang++ -std=c++17 -pthread -Wall -Wextra -Werror -Wno-unused-parameter -Wno-invalid-offsetof
     "${flags[@]}" -DBUILD_AS_STANDALONE -DTARGET_UNIX -DHOST_UNIX -DTARGET_LINUX
     -DTARGET_AMD64 -DHOST_AMD64 -DTARGET_64BIT -DHOST_64BIT
     -DLXR_SIDE_METADATA_TEST_PLATFORM -DLXR_ENABLE_LAZY_COMPLETION_COUNTER
-    "-I$gc" "-I$gc/env" "-I$root/src/native" "-I$root/src/native/inc"
+    "-I$LXR" "-I$gc" "-I$gc/env" "-I$root/src/native" "-I$root/src/native/inc"
     "${sources[@]}" -o "$output/lxr-rc-validation"
 )
 printf '%q ' "${command[@]}" > "$output/compile-command.txt"

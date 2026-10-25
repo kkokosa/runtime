@@ -3,7 +3,7 @@
 
 #include "../../../../src/coreclr/gc/env/common.h"
 #include "../../../../src/coreclr/gc/env/gcenv.h"
-#include "../../../../src/coreclr/gc/immix_block.h"
+#include "../../../../src/coreclr/gc_lxr/immix_block.h"
 
 #include <atomic>
 #include <stdio.h>

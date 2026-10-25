@@ -13,17 +13,18 @@ case "$CFG" in
   *) echo "bad config"; exit 2;;
 esac
 GC="$REPO/src/coreclr/gc"
+LXR="$REPO/src/coreclr/gc_lxr"
 rm -f "$OUT/lxr-rc-validation"
 SOURCES=(side_metadata.cpp immix_block.cpp immix_allocation.cpp reference_count.cpp large_object_space.cpp
   lxr_work_packet.cpp lxr_work_scheduler.cpp lxr_pause_schedule.cpp lxr_pause_coordinator.cpp
   lxr_completion_counter.cpp lxr_reference_counting.cpp)
 FILES=()
-for s in "${SOURCES[@]}"; do FILES+=("$GC/$s"); done
+for s in "${SOURCES[@]}"; do FILES+=("$LXR/$s"); done
 FILES+=("$REPO/docs/design/lxr-port/P2.5/large-object-space-test-platform.cpp" "$REPO/docs/design/lxr-port/P4/lxr-rc-validation.cpp")
 clang++ -std=c++17 -pthread -Wall -Wextra -Werror -Wno-unused-parameter -Wno-invalid-offsetof "${FLAGS[@]}" \
   -DBUILD_AS_STANDALONE -DTARGET_UNIX -DHOST_UNIX -DTARGET_LINUX -DTARGET_AMD64 -DHOST_AMD64 -DTARGET_64BIT -DHOST_64BIT \
   -DLXR_SIDE_METADATA_TEST_PLATFORM -DLXR_ENABLE_LAZY_COMPLETION_COUNTER "$@" \
-  "-I$GC" "-I$GC/env" "-I$REPO/src/native" "-I$REPO/src/native/inc" "${FILES[@]}" -o "$OUT/lxr-rc-validation" > "$OUT/build.log" 2>&1
+  "-I$LXR" "-I$GC" "-I$GC/env" "-I$REPO/src/native" "-I$REPO/src/native/inc" "${FILES[@]}" -o "$OUT/lxr-rc-validation" > "$OUT/build.log" 2>&1
 echo "build exit=$?"
 [ -x "$OUT/lxr-rc-validation" ] || { tail -20 "$OUT/build.log"; exit 1; }
 failed=0

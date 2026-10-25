@@ -3,7 +3,7 @@
 
 #include "../../../../src/coreclr/gc/env/common.h"
 #include "../../../../src/coreclr/gc/env/gcenv.h"
-#include "../../../../src/coreclr/gc/large_object_space.h"
+#include "../../../../src/coreclr/gc_lxr/large_object_space.h"
 
 #include <atomic>
 #include <cstdio>

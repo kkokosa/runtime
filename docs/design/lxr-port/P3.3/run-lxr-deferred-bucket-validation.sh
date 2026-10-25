@@ -12,8 +12,8 @@ fi
 
 mkdir -p "$output"
 c++ -std=c++17 -O2 -pthread \
-    "$repo_root/src/coreclr/gc/lxr_work_packet.cpp" \
-    "$repo_root/src/coreclr/gc/lxr_work_scheduler.cpp" \
+    "$repo_root/src/coreclr/gc_lxr/lxr_work_packet.cpp" \
+    "$repo_root/src/coreclr/gc_lxr/lxr_work_scheduler.cpp" \
     "$script_root/lxr-deferred-bucket-validation.cpp" \
     -o "$output/lxr-deferred-bucket-validation" \
     >"$output/build.log" 2>&1

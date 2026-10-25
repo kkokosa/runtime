@@ -3,9 +3,9 @@
 
 #include "../../../../src/coreclr/gc/env/common.h"
 #include "../../../../src/coreclr/gc/env/gcenv.h"
-#include "../../../../src/coreclr/gc/immix_allocation.h"
+#include "../../../../src/coreclr/gc_lxr/immix_allocation.h"
 #define LXR_F10_PREFETCH_TEST_HOOK
-#include "../../../../src/coreclr/gc/lxr_prefetch.h"
+#include "../../../../src/coreclr/gc_lxr/lxr_prefetch.h"
 
 #include <atomic>
 #include <stdio.h>

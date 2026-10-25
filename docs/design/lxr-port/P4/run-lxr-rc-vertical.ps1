@@ -24,12 +24,13 @@ if (-not $OutputDirectory) {
 $OutputDirectory = $PSCmdlet.GetUnresolvedProviderPathFromPSPath($OutputDirectory)
 New-Item -ItemType Directory -Path $OutputDirectory -Force | Out-Null
 $gc = Join-Path $RepositoryRoot 'src\coreclr\gc'
+$lxr = Join-Path $RepositoryRoot 'src\coreclr\gc_lxr'
 $sources = @(
     'side_metadata.cpp', 'immix_block.cpp', 'immix_allocation.cpp', 'reference_count.cpp',
     'large_object_space.cpp', 'lxr_work_packet.cpp', 'lxr_work_scheduler.cpp',
     'lxr_pause_schedule.cpp', 'lxr_pause_coordinator.cpp', 'lxr_completion_counter.cpp',
     'lxr_reference_counting.cpp'
-) | ForEach-Object { Join-Path $gc $_ }
+) | ForEach-Object { Join-Path $lxr $_ }
 $sources += @(
     (Join-Path $RepositoryRoot 'docs\design\lxr-port\P2.5\large-object-space-test-platform.cpp'),
     (Join-Path $RepositoryRoot 'docs\design\lxr-port\P4\lxr-rc-validation.cpp')
@@ -38,9 +39,10 @@ $inputs = $sources + @(
     'side_metadata.h', 'immix_block.h', 'immix_allocation.h', 'reference_count.h',
     'large_object_space.h', 'lxr_work_packet.h', 'lxr_work_scheduler.h',
     'lxr_pause_schedule.h', 'lxr_pause_coordinator.h', 'lxr_completion_counter.h',
-    'lxr_reference_counting.h', 'lxr_virtual_array.h', 'gcref.h', 'gcdesc.h'
-    | ForEach-Object { Join-Path $gc $_ }
+    'lxr_reference_counting.h', 'lxr_virtual_array.h'
+    | ForEach-Object { Join-Path $lxr $_ }
 )
+$inputs += 'gcref.h', 'gcdesc.h' | ForEach-Object { Join-Path $gc $_ }
 $inputs | ForEach-Object {
     Get-FileHash -LiteralPath $_ -Algorithm SHA256
 } | Select-Object Path, Hash | Export-Csv (Join-Path $OutputDirectory 'source-identities.csv') -NoTypeInformation
@@ -88,7 +90,7 @@ $compile = @(
     '/DBUILD_AS_STANDALONE /DTARGET_WINDOWS /DHOST_WINDOWS /DWIN32',
     '/DTARGET_AMD64 /DHOST_AMD64 /DTARGET_64BIT /DHOST_64BIT',
     '/DLXR_SIDE_METADATA_TEST_PLATFORM /DLXR_ENABLE_LAZY_COMPLETION_COUNTER',
-    "/I`"$gc`" /I`"$gc\env`" /I`"$native`" /I`"$native\inc`"",
+    "/I`"$lxr`" /I`"$gc`" /I`"$gc\env`" /I`"$native`" /I`"$native\inc`"",
     $quoted,
     "/Fe:`"$executable`""
 ) -join ' '

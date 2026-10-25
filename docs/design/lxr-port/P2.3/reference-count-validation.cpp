@@ -3,7 +3,7 @@
 
 #include "../../../../src/coreclr/gc/env/common.h"
 #include "../../../../src/coreclr/gc/env/gcenv.h"
-#include "../../../../src/coreclr/gc/reference_count.h"
+#include "../../../../src/coreclr/gc_lxr/reference_count.h"
 
 #include <atomic>
 #include <stdio.h>

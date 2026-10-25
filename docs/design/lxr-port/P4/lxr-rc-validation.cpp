@@ -4,11 +4,11 @@
 #include "../../../../src/coreclr/gc/env/common.h"
 #include "../../../../src/coreclr/gc/env/gcenv.h"
 #include "../../../../src/coreclr/gc/gcref.h"
-#include "../../../../src/coreclr/gc/lxr_reference_counting.h"
-#include "../../../../src/coreclr/gc/lxr_finalizer_pause.h"
-#include "../../../../src/coreclr/gc/lxr_collection_policy.h"
-#include "../../../../src/coreclr/gc/lxr_worker_policy.h"
-#include "../../../../src/coreclr/gc/lxr_work_scheduler.h"
+#include "../../../../src/coreclr/gc_lxr/lxr_reference_counting.h"
+#include "../../../../src/coreclr/gc_lxr/lxr_finalizer_pause.h"
+#include "../../../../src/coreclr/gc_lxr/lxr_collection_policy.h"
+#include "../../../../src/coreclr/gc_lxr/lxr_worker_policy.h"
+#include "../../../../src/coreclr/gc_lxr/lxr_work_scheduler.h"
 
 #include <atomic>
 #include <algorithm>

@@ -8,7 +8,7 @@ param(
 $ErrorActionPreference = 'Stop'
 New-Item -ItemType Directory -Force $Output | Out-Null
 $Output = (Resolve-Path $Output).Path
-$gc = Join-Path $Repo 'src\coreclr\gc'
+$gc = Join-Path $Repo 'src\coreclr\gc_lxr'
 $vm = Join-Path $Repo 'src\coreclr\vm\amd64'
 $test = Join-Path $Repo 'docs\design\lxr-port\P21-specialized-barrier\lxr-write-barrier-test.cpp'
 $vsenv = "call `"$Repo\eng\native\init-vs-env.cmd`" x64 >nul"

@@ -3,7 +3,7 @@
 
 #include "../../../../src/coreclr/gc/env/common.h"
 #include "../../../../src/coreclr/gc/env/gcenv.h"
-#include "../../../../src/coreclr/gc/side_metadata.h"
+#include "../../../../src/coreclr/gc_lxr/side_metadata.h"
 
 #include <atomic>
 #include <stdio.h>

@@ -15,10 +15,10 @@ fi
 
 mkdir -p "$output"
 g++ -std=c++17 -pthread -Wall -Wextra -Werror -O2 \
-    "$repo_root/src/coreclr/gc/lxr_work_packet.cpp" \
-    "$repo_root/src/coreclr/gc/lxr_work_scheduler.cpp" \
-    "$repo_root/src/coreclr/gc/lxr_pause_schedule.cpp" \
-    "$repo_root/src/coreclr/gc/lxr_pause_coordinator.cpp" \
+    "$repo_root/src/coreclr/gc_lxr/lxr_work_packet.cpp" \
+    "$repo_root/src/coreclr/gc_lxr/lxr_work_scheduler.cpp" \
+    "$repo_root/src/coreclr/gc_lxr/lxr_pause_schedule.cpp" \
+    "$repo_root/src/coreclr/gc_lxr/lxr_pause_coordinator.cpp" \
     "$script_root/lxr-pause-validation.cpp" \
     -o "$output/lxr-pause-validation" \
     >"$output/build.log" 2>&1
