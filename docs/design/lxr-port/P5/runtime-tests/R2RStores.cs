@@ -120,6 +120,7 @@ internal static partial class Program
         for (int index = 0; index < array.Length; index++)
         {
             array[index].First = objects[2 * index];
+            array[index].Padding = index + 1;
             array[index].Second = objects[2 * index + 1];
         }
         return (() => Array.Clear(array), StoreObjects);
@@ -133,6 +134,7 @@ internal static partial class Program
         for (int index = 0; index < array.Length; index++)
         {
             array[index].First = objects[2 * index];
+            array[index].Padding = index + 1;
             array[index].Second = objects[2 * index + 1];
         }
         return (() => Array.Copy(empty, array, array.Length), StoreObjects);
@@ -145,6 +147,7 @@ internal static partial class Program
         for (int index = 0; index < array.Length; index++)
         {
             array[index].First = objects[2 * index];
+            array[index].Padding = index + 1;
             array[index].Second = objects[2 * index + 1];
         }
         return (() =>
@@ -189,6 +192,7 @@ internal static partial class Program
         {
             RefPair pair = default;
             pair.First = objects[2 * index];
+            pair.Padding = index + 1;
             pair.Second = objects[2 * index + 1];
             boxes[index] = pair;
         }
@@ -209,6 +213,7 @@ internal static partial class Program
         {
             RefPair pair = default;
             pair.First = new Node(index);
+            pair.Padding = index + 1;
             boxes[index] = pair;
         }
         return (() =>

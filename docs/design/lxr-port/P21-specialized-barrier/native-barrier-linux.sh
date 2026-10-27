@@ -27,7 +27,8 @@ cat "$OUT/normal.log" | grep -E '^(PASS|FAIL):' | tail -40
 control() {  # control <name> <asm defines> <cxx defines> <check that must fail>
   build "$1" "$2" "$3" || { echo "control $1: build failed"; tail -20 "$OUT/$1.build.log"; failed=1; return; }
   "$OUT/$1" > "$OUT/$1.log" 2>&1
-  if grep -q "^FAIL: $4" "$OUT/$1.log"; then echo "control $1: the check '$4' fails as required"; else echo "control $1: the check '$4' did NOT fail"; failed=1; fi
+  local code=$?
+  if [ "$code" -eq 1 ] && grep -q "^FAIL: $4" "$OUT/$1.log"; then echo "control $1: the check '$4' fails as required"; else echo "control $1: the check '$4' did NOT fail with exit 1"; failed=1; fi
 }
 control no-vector-save "-DLXR_WB_CONTROL_NO_VECTOR_SAVE" "" vector
 control misalign "-DLXR_WB_CONTROL_MISALIGN" "" alignment

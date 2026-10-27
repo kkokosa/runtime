@@ -668,10 +668,10 @@ PTR_ReadyToRunInfo ReadyToRunInfo::Initialize(Module * pModule, AllocMemTracker 
     // every reference store (also null, frozen and provably non-heap values). Fail closed for other images: the
     // methods are compiled by the JIT, which follows the collector.
     if (GCHeapUtilities::RequiresOldValueWriteBarrier() &&
-        (pHeader->CoreHeader.Flags & READYTORUN_FLAG_OLD_VALUE_WRITE_BARRIERS) == 0 &&
+        (pHeader->CoreHeader.Flags & READYTORUN_FLAG_SHARED_OLD_VALUE_WRITE_BARRIERS) == 0 &&
         !CLRConfig::GetConfigValue(CLRConfig::EXTERNAL_ReadyToRunAcceptUnmarkedImages))
     {
-        DoLog("Ready to Run disabled - image was not compiled with old-value write barriers");
+        DoLog("Ready to Run disabled - image was not compiled with shared old-value write barriers");
         return NULL;
     }
 

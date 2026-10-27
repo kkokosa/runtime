@@ -313,7 +313,7 @@ namespace ILCompiler
             }
             if (_oldValueWriteBarriers)
             {
-                flags |= ReadyToRunFlags.READYTORUN_FLAG_OldValueWriteBarriers;
+                flags |= ReadyToRunFlags.READYTORUN_FLAG_SharedOldValueWriteBarriers;
             }
             flags |= _compilationGroup.GetReadyToRunFlags();
 

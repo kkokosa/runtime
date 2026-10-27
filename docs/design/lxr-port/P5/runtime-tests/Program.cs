@@ -511,6 +511,43 @@ internal static partial class Program
     }
 
     [MethodImpl(MethodImplOptions.NoInlining)]
+    private static object CreateCollectibleHeaderObject(bool references)
+    {
+        AssemblyBuilder assembly = AssemblyBuilder.DefineDynamicAssembly(
+            new AssemblyName("LxrCollectibleHeader" + references), AssemblyBuilderAccess.RunAndCollect);
+        TypeBuilder builder = assembly.DefineDynamicModule("Header").DefineType("HeaderProbe", TypeAttributes.Public);
+        builder.DefineField("Value", references ? typeof(object) : typeof(int), FieldAttributes.Public);
+        Type type = builder.CreateType() ?? throw new InvalidOperationException("Collectible header type creation failed.");
+        FieldInfo field = type.GetField("Value") ?? throw new InvalidOperationException("Collectible header field is missing.");
+        object value = Activator.CreateInstance(type) ?? throw new InvalidOperationException("Collectible header birth failed.");
+        field.SetValue(value, references ? new Node(421) : 421);
+        return value;
+    }
+
+    [MethodImpl(MethodImplOptions.NoInlining)]
+    private static void CheckCollectibleHeaderValue(object value, bool references)
+    {
+        FieldInfo field = value.GetType().GetField("Value") ??
+            throw new InvalidOperationException("The live object's collectible field metadata was lost.");
+        object? payload = field.GetValue(value);
+        Check(references ? payload is Node { Value: 421 } : payload is int number && number == 421,
+            "The live object's collectible header edge or field value was lost.");
+    }
+
+    private static void VerifyCollectibleHeaderLifetime()
+    {
+        foreach (bool references in new[] { false, true })
+        {
+            object value = CreateCollectibleHeaderObject(references);
+            ForceFull();
+            ForceFull();
+            CheckCollectibleHeaderValue(value, references);
+            GC.KeepAlive(value);
+            Console.WriteLine($"PASS collectible header only-object-root physical_references={references}");
+        }
+    }
+
+    [MethodImpl(MethodImplOptions.NoInlining)]
     private static (nint, WeakReference<Node>) CreateExternalWeakRoot()
     {
         Node value = new(431);
@@ -1805,8 +1842,8 @@ internal static partial class Program
                 unloaded++;
             }
         }
-        Console.WriteLine($"collectible_cycles unloaded={unloaded} of 40");
-        Check(unloaded >= 30, "Dead cycles of collectible-type objects did not unload their loader allocators.");
+        Console.WriteLine($"collectible_cycles assembly_builder_weak_refs_dead={unloaded} of 40");
+        Check(unloaded >= 30, "AssemblyBuilder weak references remained alive after collectible cycle cleanup.");
         GC.KeepAlive(ballast);
     }
 
@@ -1928,6 +1965,39 @@ internal static partial class Program
                     throw new InvalidOperationException("The framework store scenario requires LXR collection controls.");
                 }
                 VerifyFrameworkOldValueStores(metric, collect);
+                break;
+            case "shared-barriers":
+                if (collect is null || metric is null)
+                {
+                    throw new InvalidOperationException("Shared-barrier qualification requires LXR collection controls.");
+                }
+                VerifySharedWriteBarriers(module, metric, collect);
+                break;
+            case "shared-barriers-invalid-range":
+                if (collect is null)
+                {
+                    throw new InvalidOperationException("The invalid-range control requires LXR collection controls.");
+                }
+                VerifyRejectedSharedBarrierRange(collect);
+                break;
+            case "shared-barriers-interpreter":
+                if (collect is null || metric is null)
+                {
+                    throw new InvalidOperationException("The interpreter store control requires LXR collection controls.");
+                }
+                VerifyInterpretedSharedStores(module, metric, collect);
+                break;
+            case "shared-barriers-collectible-header":
+                VerifyCollectibleHeaderLifetime();
+                break;
+            case "shared-barriers-copy-movement":
+            case "shared-barriers-clear-movement":
+                if (collect is null || metric is null)
+                {
+                    throw new InvalidOperationException("The chunk-movement control requires LXR collection controls.");
+                }
+                VerifySharedBarrierChunkMovement(module, metric, collect,
+                    clear: scenario == "shared-barriers-clear-movement");
                 break;
             case "young-interior":
                 if (collect is null)
@@ -2436,6 +2506,12 @@ internal static partial class Program
         if (args.Length == 3 && args[0] == "--p7-lifecycle")
         {
             return RunLifecycle(args[1], args[2]);
+        }
+        if (args.Length == 1 && args[0] == "--shared-barrier-behavior")
+        {
+            VerifySharedBarrierBehavior();
+            Console.WriteLine($"PASS: {s_checks} shared-barrier behavior checks");
+            return 0;
         }
         if (args.Length > 0 && args[0] == "--mature-study")
         {

@@ -267,7 +267,7 @@ public:
 #endif // FEATURE_SVR_GC
     }
 
-    static void InitializeFastGCFunctions(IGCHeap* gcHeap);
+    static HRESULT InitializeFastGCFunctions(IGCHeap* gcHeap);
 
 #ifdef FEATURE_USE_SOFTWARE_WRITE_WATCH_FOR_GC_HEAP
 
@@ -357,17 +357,22 @@ public:
         return (s_fastGCFunctions.flags & FASTGC_REQUIRES_OLD_VALUE) != 0;
     }
 
-    // The pre-store hook of the PR (check_escape). Call it BEFORE a store of a reference into a heap object that
-    // does not go through the JIT write barrier. The collector may read *dst, so the destination must still hold the
-    // old value. A no-op for the default collector.
+    // Call before every runtime reference store/atomic attempt, even for null/frozen proposals and failed CAS.
     inline static void PreStoreCheck(Object** dst, Object* ref)
     {
         WRAPPER_NO_CONTRACT;
-        if (g_heap_type == GC_HEAP_CUSTOM)
+        if (s_fastGCFunctions.pre_store != nullptr)
         {
-            s_fastGCFunctions.check_escape(dst, ref);
+            s_fastGCFunctions.pre_store(dst, ref);
         }
     }
+
+    // Match CoreLib Buffer's bounded callbacks. Native GC_NOTRIGGER callers do not poll between chunks.
+#ifdef _DEBUG
+    static constexpr size_t BulkWriteBarrierChunk = 0x400;
+#else
+    static constexpr size_t BulkWriteBarrierChunk = 0x4000;
+#endif
 
     // Records a change in eventing state. This ultimately will inform the GC that it needs to be aware
     // of new events being enabled.

@@ -3817,7 +3817,14 @@ CALL_INTERP_METHOD:
                 {
                     void* dst = LOCAL_VAR(ip[1], void*);
                     NULL_CHECK(dst);
-                    memset(dst, 0, ip[2]);
+                    if (GCHeapUtilities::RequiresOldValueWriteBarrier())
+                    {
+                        ZeroMemoryInGCHeap(dst, ip[2]);
+                    }
+                    else
+                    {
+                        memset(dst, 0, ip[2]);
+                    }
                     ip += 3;
                     INTOP_NEXT;
                 }
@@ -4851,20 +4858,16 @@ do                                                                      \
 
                         GCHeapMemoryBarrier();
 
-                        // A collector that needs old values logs exactly the reference fields of the continuation that
-                        // the copy overwrites; the copied locals are not whole reference ranges, so the bulk-move hook
-                        // must not see them.
-                        bool oldValuesLogged = ErectWriteBarrierObjectRangePre(
-                            OBJECTREFToObject(continuation), pContinuationDataStart, bytesTotal);
                         while (pCopyEntry->countBytes != 0)
                         {
-                            if ((g_heap_type != GC_HEAP_CUSTOM) || oldValuesLogged)
+                            if (g_heap_type != GC_HEAP_CUSTOM)
                             {
                             InlinedForwardGCSafeCopyHelper(pContinuationData, LOCAL_VAR_ADDR(pCopyEntry->startOffset, uint8_t), pCopyEntry->countBytes);
                             }
                             else
                             {
-                                GCHeapUtilities::GetFastGCFunctions().bulk_move_with_write_barrier(GCHeapUtilities::GetFastGCFunctions().context, pContinuationData, LOCAL_VAR_ADDR(pCopyEntry->startOffset, uint8_t), pCopyEntry->countBytes);
+                                InlinedMemmoveGCRefsHelper(
+                                    pContinuationData, LOCAL_VAR_ADDR(pCopyEntry->startOffset, uint8_t), pCopyEntry->countBytes);
                             }
                             pContinuationData += pCopyEntry->countBytes;
                             pCopyEntry++;

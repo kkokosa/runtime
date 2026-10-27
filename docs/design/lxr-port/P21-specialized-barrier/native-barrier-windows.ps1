@@ -40,8 +40,8 @@ Select-String -Path (Join-Path $Output 'normal.log') -Pattern '^(PASS|FAIL):' | 
 function Control([string]$name, [string]$asmDef, [string]$cxxDef, [string]$check) {
     if (-not (Build $name $asmDef $cxxDef)) { Write-Output "control ${name}: build failed"; $script:failed = 1; return }
     & (Join-Path $Output "$name.exe") *> (Join-Path $Output "$name.log")
-    if (Select-String -Path (Join-Path $Output "$name.log") -Pattern "^FAIL: $check" -Quiet) { Write-Output "control ${name}: the check '$check' fails as required" }
-    else { Write-Output "control ${name}: the check '$check' did NOT fail"; $script:failed = 1 }
+    if ($LASTEXITCODE -eq 1 -and (Select-String -Path (Join-Path $Output "$name.log") -Pattern "^FAIL: $check" -Quiet)) { Write-Output "control ${name}: the check '$check' fails as required" }
+    else { Write-Output "control ${name}: the check '$check' did NOT fail with exit 1"; $script:failed = 1 }
 }
 Control 'no-vector-save' '/DLXR_WB_CONTROL_NO_VECTOR_SAVE' '' 'vector'
 Control 'misalign' '/DLXR_WB_CONTROL_MISALIGN' '' 'alignment'

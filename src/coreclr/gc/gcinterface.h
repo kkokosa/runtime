@@ -4,6 +4,8 @@
 #ifndef _GC_INTERFACE_H_
 #define _GC_INTERFACE_H_
 
+#include <stddef.h>
+
 // The major version of the IGCHeap interface. Breaking changes to this interface
 // require bumps in the major version number.
 #define GC_INTERFACE_MAJOR_VERSION 6
@@ -11,21 +13,25 @@
 // The minor version of the IGCHeap interface. Non-breaking changes are required
 // to bump the minor version number. GCs and EEs with minor version number
 // mismatches can still interoperate correctly, with some care.
-#define GC_INTERFACE_MINOR_VERSION 3
+#define GC_INTERFACE_MINOR_VERSION 8
 
 // Minor versions above the 6.0 base (custom GC support) that the LXR port adds.
 // 6.1 adds the old-value store hooks at the end of FastGCFunctions.
 // 6.2 adds IGCHeap::GetObjectReferenceEnumerationParameters.
 // 6.3 adds IGCHeap::GetObjectHeaderBitsParameters.
+// 6.8 replaces the range hook with shared, collector-owned copy/clear processing.
+// The obsolete range slot and the flags offset remain reserved for binary safety.
 // See the comment block above the tail methods of IGCHeap for the history of these numbers.
 #define GC_OLD_VALUE_STORE_HOOKS_INTERFACE_MINOR_VERSION 1
 #define GC_OBJECT_REFERENCE_ENUMERATION_INTERFACE_MINOR_VERSION 2
 #define GC_OBJECT_HEADER_BITS_INTERFACE_MINOR_VERSION 3
 #define GC_OBJECT_HEADER_BITS_PARAMETERS_VERSION 1
+#define GC_SHARED_WRITE_BARRIERS_INTERFACE_MINOR_VERSION 8
 
 // The major version of the IGCToCLR interface. Breaking changes to this interface
 // require bumps in the major version number.
 #define EE_INTERFACE_MAJOR_VERSION 6
+#define EE_INTERFACE_MINOR_VERSION 1
 
 #ifdef TARGET_X86
 #define LOCALGC_CALLCONV __cdecl
@@ -261,20 +267,19 @@ struct WriteBarrierParameters
 using WriteBarrierFunction = void (*)(void* context, Object** dst, Object* ref);
 using IsInGCHeapFunction = bool (*)(void* context, void* address);
 using BulkMoveWithWriteBarrierFunction = void (*)(void* context, void* destination, const void* source, size_t length);
-using CheckEscapeFunction = void (*)(Object** dst, Object* ref);
-
-// LXR extension (interface 6.1). Called before `count` consecutive reference slots at `dst` are overwritten by a
-// copy (src is the first source slot), a clear or a fill (src is null). The collector may read the old values in the
-// destination slots. The runtime calls it for exact-layout struct copies, Clear and Fill, which the bulk-move hook
-// cannot express because they do not copy whole reference ranges.
-using PreStoreRangeFunction = void (*)(void* context, Object** dst, Object** src, size_t count);
+// Called before runtime reference stores and atomic attempts, including null/frozen values and failed CAS.
+// The collector may read *dst. ref is only the proposed value; it does not indicate a committed store.
+// Callbacks must not trigger GC or retain untracked references after returning.
+using PreStoreFunction = void (*)(Object** dst, Object* ref);
+using BulkClearWithWriteBarrierFunction = void (*)(void* context, void* destination, size_t byteCount);
 
 // FastGCFunctions.flags
 enum FastGCFunctionsFlags : uint32_t
 {
     // The collector needs the OLD value of every overwritten reference field, also when the new value is null, a frozen
     // object or provably not in the heap. The JIT then keeps the barrier for those stores, and CoreLib uses the
-    // old-value copy, clear and fill paths. check_escape is called before every runtime store (it may read *dst).
+    // shared copy/clear paths and ordinary typed fill stores. Requires pre/post-store, is_in_gc_heap, bulk move
+    // and bulk clear callbacks (post-store can be a no-op). No unlogged fallback is permitted.
     FASTGC_REQUIRES_OLD_VALUE = 1,
 };
 
@@ -284,15 +289,22 @@ struct FastGCFunctions
     WriteBarrierFunction write_barrier;
     // WriteBarrierFunction checked_write_barrier;
     IsInGCHeapFunction is_in_gc_heap;
-    CheckEscapeFunction check_escape;
+    PreStoreFunction pre_store;
+    // Both bulk callbacks own collector processing BEFORE writing, then write every byte of the bounded chunk.
+    // Ranges can contain mixed reference/non-reference fields. Copy must preserve overlap order and reference
+    // atomicity. GC is permitted only between completed callbacks, with the caller's byrefs tracked.
     BulkMoveWithWriteBarrierFunction bulk_move_with_write_barrier;
 
-    // The fields below exist since interface 6.1. The runtime zeroes the structure before the call and ignores
-    // them for a collector that reports a lower minor version.
-    PreStoreRangeFunction pre_store_range;
+    // Keep the 6.1-6.3 range slot and flags offset. An old function address must never be treated as bulk clear.
+    void* reserved_pre_store_range;
     uint32_t flags;
+    // Added in GC6.8 / EE6.1. A collector must verify the EE buffer version before writing this tail.
+    BulkClearWithWriteBarrierFunction bulk_clear_with_write_barrier;
 };
 
+static_assert(offsetof(FastGCFunctions, reserved_pre_store_range) == 5 * sizeof(void*));
+static_assert(offsetof(FastGCFunctions, flags) == 6 * sizeof(void*));
+static_assert(offsetof(FastGCFunctions, bulk_clear_with_write_barrier) == 7 * sizeof(void*));
 // Describes a patchable, pointer-sized data slot embedded directly in a custom assign-reference
 // helper (see GetAssignRefFunctions), used in place of a direct reference to a global variable.
 // A helper cannot take a PC-relative reference to an arbitrary (possibly far away) global and
@@ -1306,6 +1318,8 @@ public:
     // Removing the allocation-complete request moved the two methods that followed it up by one vtable slot,
     // so a collector or runtime built against the old 6.5 - 6.7 layout is NOT binary compatible with this one,
     // even though the major version is unchanged. Rebuild the runtime and the collector together.
+    // GC6.8 keeps these two slots, but requires the shared write-barrier buffer protocol. The loader rejects
+    // ambiguous 6.2-6.7 layouts and unknown later layouts before calling any getters.
     // The slot-log barrier shape negotiation (once 6.2 to 6.4) was removed earlier, when LXR moved to the
     // PR #3316 barrier mechanism.
 

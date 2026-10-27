@@ -85,6 +85,8 @@
 // R2R Version 31.2 adds READYTORUN_FLAG_OLD_VALUE_WRITE_BARRIERS (the image keeps a write barrier for every reference
 // store). A runtime with a garbage collector that needs the old value of every overwritten reference only uses images
 // that have the flag. The version number is not changed: a runtime that does not know the flag can use such an image.
+// GC6.8 shared barriers require SHARED_OLD_VALUE_WRITE_BARRIERS instead of the legacy marker. New compilers emit
+// only the shared marker, so both new and old old-value runtimes reject the other generation's images and use JIT.
 
 struct READYTORUN_CORE_HEADER
 {
@@ -128,6 +130,7 @@ enum ReadyToRunFlag
     READYTORUN_FLAG_VERIFY_GC_MODE_TRANSITIONS  = 0x00001000,   // Code in this image verifies that GC mode transitions are legal. WebAssembly only; its catch resumption points call READYTORUN_HELPER_ResumeAfterCatch.
     READYTORUN_FLAG_OLD_VALUE_WRITE_BARRIERS    = 0x00004000,   // Every reference store has a write barrier (also null, frozen and provably non-heap values); CoreLib old-value paths are used
     READYTORUN_FLAG_SINGLE_THREADED             = 0x00002000,   // The image targets a single-threaded runtime (no FEATURE_MULTITHREADING) and lays out [ThreadStatic] fields as regular statics.
+    READYTORUN_FLAG_SHARED_OLD_VALUE_WRITE_BARRIERS = 0x00008000, // Old-value store coverage with collector-owned shared copy/clear and typed fill stores
 };
 
 enum class ReadyToRunSectionType : uint32_t

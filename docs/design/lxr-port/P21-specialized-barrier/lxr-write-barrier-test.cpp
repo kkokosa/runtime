@@ -108,23 +108,7 @@ static uint8_t* g_activeStorage;
 #define FRAME_ADDRESS() (reinterpret_cast<uintptr_t>(__builtin_frame_address(0)))
 #endif
 
-#if !defined(_MSC_VER)
-__attribute__((target("avx"))) static void ClobberAllVector()
-{
-    _mm256_zeroall();
-}
-#else
-static void ClobberAllVector()
-{
-    _mm256_zeroall();
-}
-#endif
-
-static bool CpuHasAvx()
-{
-    uint64_t mask = LxrWriteBarrierComputeXsaveMask();
-    return (mask & 4) != 0;
-}
+static void ClobberAllVector();
 
 // The slow path must be entered with the stack aligned as at the entry of any C function (rsp + 8 is a multiple of
 // 16, so the frame address is). A frame pointer is forced so that the address is exact.
@@ -173,7 +157,7 @@ void TestBarrierSlowPath(void** slot)
         }
     }
 
-    if (g_clobber.load() && CpuHasAvx())
+    if (g_clobber.load())
     {
         ClobberAllVector();
     }
@@ -263,17 +247,21 @@ static uint32_t ComponentOffset(uint32_t component)
 
 static uint32_t ComponentSize(uint32_t component)
 {
-    static const uint32_t sizes[8] = {0, 0, 256, 0, 0, 64, 512, 1024};
+    static const uint32_t sizes[8] = {0, 256, 256, 0, 0, 64, 512, 1024};
     return sizes[component];
 }
 
 alignas(64) static uint8_t g_stateIn[8192];
 alignas(64) static uint8_t g_stateOut[8192];
+alignas(64) static uint8_t g_stateCaller[8192];
+alignas(64) static uint8_t g_stateSaved[8192];
+alignas(64) static uint8_t g_stateClobber[8192];
+static uint64_t g_vectorMask;
 
 // Load the prepared state into the registers, call the helper, read the registers back. Nothing in between uses a
 // vector register.
 #if !defined(_MSC_VER)
-__attribute__((target("xsave,avx"), noinline, optnone))
+__attribute__((target("xsave"), noinline, optnone))
 #else
 #pragma optimize("", off)
 __declspec(noinline)
@@ -282,48 +270,55 @@ static void CallWithVectorState(void (*barrier)(void**, void*), void** dst, void
 {
     if (mask != 0)
     {
+        _xsave64(g_stateCaller, mask);
         _xrstor64(g_stateIn, mask);
         barrier(dst, ref);
         _xsave64(g_stateOut, mask);
+        _xrstor64(g_stateCaller, mask);
     }
     else
     {
+        _fxsave64(g_stateCaller);
         _fxrstor64(g_stateIn);
         barrier(dst, ref);
         _fxsave64(g_stateOut);
+        _fxrstor64(g_stateCaller);
     }
 }
 #if defined(_MSC_VER)
 #pragma optimize("", on)
 #endif
 
-// Returns the number of differing bytes in the register areas of the state.
-static size_t VectorStateDifference(uint64_t mask)
+static size_t VectorComponentDifference(uint32_t component)
 {
     size_t differences = 0;
-    // legacy area: xmm0-15 at 160..415
-    for (size_t i = 160; i < 416; i++)
+    uint32_t offset = ComponentOffset(component);
+    for (uint32_t index = 0; index < ComponentSize(component); index++)
     {
-        differences += g_stateIn[i] != g_stateOut[i];
+        differences += g_stateIn[offset + index] != g_stateOut[offset + index];
+    }
+    return differences;
+}
+
+static size_t VectorStateDifference(uint64_t mask)
+{
+    size_t differences = VectorComponentDifference(1);
+    for (size_t index = 24; index < 28; index++)
+    {
+        differences += g_stateIn[index] != g_stateOut[index];
     }
     for (uint32_t component = 2; component < 8; component++)
     {
-        if ((mask & (1ull << component)) == 0)
+        if ((mask & (1ull << component)) != 0)
         {
-            continue;
-        }
-        uint32_t offset = ComponentOffset(component);
-        uint32_t size = ComponentSize(component);
-        for (uint32_t i = 0; i < size; i++)
-        {
-            differences += g_stateIn[offset + i] != g_stateOut[offset + i];
+            differences += VectorComponentDifference(component);
         }
     }
     return differences;
 }
 
 #if !defined(_MSC_VER)
-__attribute__((target("xsave,avx"), noinline, optnone))
+__attribute__((target("xsave"), noinline, optnone))
 #else
 __declspec(noinline)
 #endif
@@ -363,6 +358,62 @@ static void PrepareVectorState(uint64_t mask)
         // XSTATE_BV: all saved components are in use, so xrstor loads them.
         std::memcpy(g_stateIn + 512, &bits, sizeof(bits));
     }
+}
+
+#if !defined(_MSC_VER)
+__attribute__((target("xsave"), noinline, optnone))
+#else
+#pragma optimize("", off)
+__declspec(noinline)
+#endif
+static void ClobberAllVector()
+{
+    uint64_t mask = g_vectorMask;
+    if (mask != 0)
+    {
+        _xsave64(g_stateSaved, mask);
+    }
+    else
+    {
+        _fxsave64(g_stateSaved);
+    }
+    std::memcpy(g_stateClobber, g_stateSaved, sizeof(g_stateClobber));
+    std::memset(g_stateClobber + ComponentOffset(1), 0, ComponentSize(1));
+#if defined(_MSC_VER)
+    // Windows preserves the low 128 bits of xmm6-15, but their upper lanes are volatile.
+    std::memcpy(g_stateClobber + 160 + 6 * 16, g_stateSaved + 160 + 6 * 16, 10 * 16);
+#endif
+    for (uint32_t component = 2; component < 8; component++)
+    {
+        if ((mask & (1ull << component)) != 0)
+        {
+            std::memset(g_stateClobber + ComponentOffset(component), 0, ComponentSize(component));
+        }
+    }
+    uint32_t mxcsr;
+    std::memcpy(&mxcsr, g_stateClobber + 24, sizeof(mxcsr));
+    mxcsr ^= 0x3F; // Exception status bits are volatile; control bits are preserved.
+    std::memcpy(g_stateClobber + 24, &mxcsr, sizeof(mxcsr));
+    if (mask != 0)
+    {
+        uint64_t bits;
+        std::memcpy(&bits, g_stateSaved + 512, sizeof(bits));
+        bits = (bits & 1) | (mask & ~uint64_t(1));
+        std::memcpy(g_stateClobber + 512, &bits, sizeof(bits));
+        _xrstor64(g_stateClobber, mask);
+    }
+    else
+    {
+        _fxrstor64(g_stateClobber);
+    }
+}
+#if defined(_MSC_VER)
+#pragma optimize("", on)
+#endif
+
+static void ClobberVectorForProbe(void**, void*)
+{
+    ClobberAllVector();
 }
 
 // ---------------------------------------------------------------------------------------------------------------
@@ -498,10 +549,39 @@ static void TestVector(Installed& b)
     SetGlobals(g_metadataStorage, 0, HeapBytes);
     UpdatePatchableSlots(&b);
     uint64_t mask = static_cast<uint64_t>(LxrWriteBarrierComputeXsaveMask());
+    g_vectorMask = mask;
+    PrepareVectorState(mask);
+    std::memset(g_stateOut, 0, sizeof(g_stateOut));
+    CallWithVectorState(&ClobberVectorForProbe, nullptr, nullptr, mask);
+    for (uint32_t component : {1u, 2u, 5u, 6u, 7u})
+    {
+        if (component != 1 && (mask & (1ull << component)) == 0)
+        {
+            std::printf("UNTESTED: vector component %u is not enabled by the CPU/OS\n", component);
+            continue;
+        }
+        char name[64];
+        std::snprintf(name, sizeof(name), "vector-clobber-component-%u", component);
+        Check(VectorComponentDifference(component) != 0, name, "the direct clobber changed this component");
+    }
+    uint32_t beforeMxcsr;
+    uint32_t afterMxcsr;
+    std::memcpy(&beforeMxcsr, g_stateIn + 24, sizeof(beforeMxcsr));
+    std::memcpy(&afterMxcsr, g_stateOut + 24, sizeof(afterMxcsr));
+    Check((beforeMxcsr ^ afterMxcsr) == 0x3F, "vector-clobber-mxcsr",
+        "only volatile exception status bits changed");
+#if defined(_MSC_VER)
+    Check(std::memcmp(g_stateIn + 160 + 6 * 16, g_stateOut + 160 + 6 * 16, 10 * 16) == 0,
+        "vector-clobber-windows-abi", "the direct clobber preserved xmm6-15 low lanes");
+#endif
+    if (g_failures != 0)
+    {
+        return;
+    }
     bool anyDifference = false;
     for (int clobber = 0; clobber < 2; clobber++)
     {
-        g_clobber = clobber != 0 && CpuHasAvx();
+        g_clobber = clobber != 0;
         void** slot = Slot(300 + clobber);
         *slot = reinterpret_cast<void*>(0x77);
         SetUnlogged(slot, g_metadataStorage);
@@ -518,8 +598,8 @@ static void TestVector(Installed& b)
     }
     g_clobber = false;
     char detail[128];
-    std::snprintf(detail, sizeof(detail), "xsave mask 0x%llx, the slow path %s the vector registers",
-        static_cast<unsigned long long>(mask), CpuHasAvx() ? "clobbers (vzeroall)" : "does not clobber");
+    std::snprintf(detail, sizeof(detail), "xsave mask 0x%llx; the slow path changes each enabled vector component",
+        static_cast<unsigned long long>(mask));
     Check(!anyDifference, "vector", detail);
 
     // The fast path must leave the vector state alone too.
@@ -724,6 +804,10 @@ static void TestPatchAndRelocation()
     first.checkedAssignRef(slot, v2);
     bool patched = g_logCount == 1 && g_log[0].old == v1 && *slot == v2;
     Check(unpatched && patched, "patch", "slots start empty and take the values of their sources when updated");
+    if (!unpatched || !patched)
+    {
+        return;
+    }
 
     // A second copy at another address works the same (relocation).
     ResetLog();
@@ -788,11 +872,11 @@ int main()
     Install(&barrier, 0);
 
     TestBasic(barrier);
-    TestAlignment(barrier);
-    TestVector(barrier);
-    TestFault(barrier);
-    TestConcurrent(barrier);
-    TestPatchAndRelocation();
+    if (g_failures == 0) TestAlignment(barrier);
+    if (g_failures == 0) TestVector(barrier);
+    if (g_failures == 0) TestFault(barrier);
+    if (g_failures == 0) TestConcurrent(barrier);
+    if (g_failures == 0) TestPatchAndRelocation();
 
     std::printf("%s: lxr write barrier test, %d check failures\n", g_failures == 0 ? "PASS" : "FAIL", g_failures);
     return g_failures == 0 ? 0 : 1;

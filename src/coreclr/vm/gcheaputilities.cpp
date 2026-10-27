@@ -70,20 +70,36 @@ VersionInfo g_gc_version_info;
 PTR_VOID g_gc_module_base;
 
 FastGCFunctions GCHeapUtilities::s_fastGCFunctions = {};
-void GCHeapUtilities::InitializeFastGCFunctions(IGCHeap* gcHeap)
+#ifndef DACCESS_COMPILE
+HRESULT GCHeapUtilities::InitializeFastGCFunctions(IGCHeap* gcHeap)
 {
     s_fastGCFunctions = {};
     gcHeap->GetFastGCFunctions(&s_fastGCFunctions);
 
-    // The fields after bulk_move_with_write_barrier exist since interface 6.1. A collector that was built against 6.0
-    // does not know them, so they stay zero for it.
-    if ((g_gc_version_info.MajorVersion != GC_INTERFACE_MAJOR_VERSION) ||
-        (g_gc_version_info.MinorVersion < GC_OLD_VALUE_STORE_HOOKS_INTERFACE_MINOR_VERSION))
+    if (g_gc_version_info.MinorVersion < GC_OLD_VALUE_STORE_HOOKS_INTERFACE_MINOR_VERSION)
     {
-        s_fastGCFunctions.pre_store_range = nullptr;
         s_fastGCFunctions.flags = 0;
     }
+    if ((s_fastGCFunctions.flags & ~FASTGC_REQUIRES_OLD_VALUE) != 0)
+    {
+        LogErrorToHost("GC supplied unsupported fast-function flags.");
+        return E_FAIL;
+    }
+    if (RequiresOldValueWriteBarrier() &&
+        (g_gc_version_info.MinorVersion != GC_SHARED_WRITE_BARRIERS_INTERFACE_MINOR_VERSION ||
+         gcHeap->GetGCHeapType() != GC_HEAP_CUSTOM ||
+         s_fastGCFunctions.write_barrier == nullptr ||
+         s_fastGCFunctions.pre_store == nullptr ||
+         s_fastGCFunctions.is_in_gc_heap == nullptr ||
+         s_fastGCFunctions.bulk_move_with_write_barrier == nullptr ||
+         s_fastGCFunctions.bulk_clear_with_write_barrier == nullptr))
+    {
+        LogErrorToHost("GC old-value mode requires shared pre/post-store, heap-query, move and clear callbacks.");
+        return E_FAIL;
+    }
+    return S_OK;
 }
+#endif // !DACCESS_COMPILE
 
 // GC entrypoints for the linked-in GC. These symbols are invoked
 // directly if we are not using a standalone GC.
@@ -359,14 +375,19 @@ HRESULT FinalizeLoad(
         return objectHeaderBitsResult;
     }
 
-    g_pGCHeap = gcHeap;
     // Heap type and fast functions exist since interface 6.0. The loader has already rejected lower major versions.
     bool supportsFastGCFunctionsAndHeapType =
         g_gc_version_info.MajorVersion >= GC_INTERFACE_MAJOR_VERSION;
     if (supportsFastGCFunctionsAndHeapType)
     {
+        HRESULT fastFunctionsResult = GCHeapUtilities::InitializeFastGCFunctions(gcHeap);
+        if (FAILED(fastFunctionsResult))
+        {
+            return fastFunctionsResult;
+        }
         g_heap_type = gcHeap->GetGCHeapType();
     }
+    g_pGCHeap = gcHeap;
 
     {
         DangerousNonHostedSpinLockHolder lockHolder(&g_eventStashLock);
@@ -382,11 +403,6 @@ HRESULT FinalizeLoad(
     g_gcDacGlobals = &g_gc_dac_vars;
     g_gc_load_status = GC_LOAD_STATUS_LOAD_COMPLETE;
     g_gc_module_base = pGcModuleBase;
-
-    if (supportsFastGCFunctionsAndHeapType)
-    {
-        GCHeapUtilities::InitializeFastGCFunctions(gcHeap);
-    }
 
     LOG((LF_GC, LL_INFO100, "GC load successful\n"));
 
@@ -530,15 +546,16 @@ HRESULT LoadAndInitializeGC(LPCWSTR standaloneGCName, LPCWSTR standaloneGCPath)
 
     g_gc_load_status = GC_LOAD_STATUS_GET_VERSIONINFO;
     g_gc_version_info.MajorVersion = EE_INTERFACE_MAJOR_VERSION;
-    g_gc_version_info.MinorVersion = 0;
+    g_gc_version_info.MinorVersion = EE_INTERFACE_MINOR_VERSION;
     g_gc_version_info.BuildVersion = 0;
     versionInfo(&g_gc_version_info);
     g_gc_load_status = GC_LOAD_STATUS_CALL_VERSIONINFO;
 
-    if (g_gc_version_info.MajorVersion < GC_INTERFACE_MAJOR_VERSION)
+    if (g_gc_version_info.MajorVersion != GC_INTERFACE_MAJOR_VERSION ||
+        (g_gc_version_info.MinorVersion > GC_OLD_VALUE_STORE_HOOKS_INTERFACE_MINOR_VERSION &&
+         g_gc_version_info.MinorVersion != GC_SHARED_WRITE_BARRIERS_INTERFACE_MINOR_VERSION))
     {
-        LOG((LF_GC, LL_FATALERROR, "Loaded GC has incompatible major version number (expected at least %d, got %d)\n",
-            GC_INTERFACE_MAJOR_VERSION, g_gc_version_info.MajorVersion));
+        LogErrorToHost("GC interface layout is unsupported. Rebuild the collector and runtime together.");
         return E_FAIL;
     }
 

@@ -126,6 +126,9 @@ public:
         , m_repeatingSeriesIndex(0)
         , m_repeatingCursor(nullptr)
         , m_remainingComponents(0)
+        , m_componentSize(0)
+        , m_rangeStart(0)
+        , m_rangeEnd(SIZE_MAX)
     {
         _ASSERTE(object != nullptr);
 
@@ -156,6 +159,38 @@ public:
         {
             m_repeatingCursor = m_object + m_currentSeries->GetSeriesOffset();
             m_remainingComponents = objectLayout.componentCount;
+            m_componentSize = methodTable->RawGetComponentSize();
+        }
+    }
+
+    // Restrict a newly created iterator to complete reference slots in this byte range.
+    void RestrictToRange(size_t offset, size_t bytes)
+    {
+        _ASSERTE(m_seriesCount == 0 ||
+            (offset <= m_objectSize - sizeof(ObjHeader) &&
+             bytes <= m_objectSize - sizeof(ObjHeader) - offset));
+        m_rangeStart = (offset + sizeof(Object*) - 1) & ~(sizeof(Object*) - 1);
+        m_rangeEnd = (offset + bytes) & ~(sizeof(Object*) - 1);
+        if (m_rangeStart >= m_rangeEnd)
+        {
+            m_currentSeries = nullptr;
+            m_remainingComponents = 0;
+            return;
+        }
+        if (m_remainingComponents != 0)
+        {
+            _ASSERTE(m_componentSize != 0);
+            size_t first = static_cast<size_t>(m_repeatingCursor - m_object);
+            if (m_rangeStart > first)
+            {
+                size_t skip = (m_rangeStart - first) / m_componentSize;
+                if (skip > m_remainingComponents)
+                {
+                    skip = m_remainingComponents;
+                }
+                m_repeatingCursor += skip * m_componentSize;
+                m_remainingComponents -= static_cast<uint32_t>(skip);
+            }
         }
     }
 
@@ -197,7 +232,7 @@ public:
 #endif // _DEBUG
 
                 size_t count = rangeSize / sizeof(Object*);
-                if (count == 0)
+                if (!Clip(rangeStart, count))
                 {
                     continue;
                 }
@@ -235,6 +270,15 @@ public:
             _ASSERTE(rangeSize <= static_cast<size_t>(m_objectEnd - rangeStart));
 #endif // _DEBUG
 
+            if (static_cast<size_t>(rangeStart - m_object) >= m_rangeEnd)
+            {
+                m_remainingComponents = 0;
+                break;
+            }
+            if (!Clip(rangeStart, count))
+            {
+                continue;
+            }
             range->start = reinterpret_cast<Object**>(rangeStart);
             range->count = count;
             return true;
@@ -246,6 +290,30 @@ public:
     }
 
 private:
+    FORCEINLINE bool Clip(uint8_t*& start, size_t& count) const
+    {
+        if (m_rangeEnd != SIZE_MAX)
+        {
+            size_t offset = static_cast<size_t>(start - m_object);
+            size_t end = offset + count * sizeof(Object*);
+            if (offset < m_rangeStart)
+            {
+                offset = m_rangeStart;
+            }
+            if (end > m_rangeEnd)
+            {
+                end = m_rangeEnd;
+            }
+            if (offset >= end)
+            {
+                return false;
+            }
+            start = m_object + offset;
+            count = (end - offset) / sizeof(Object*);
+        }
+        return count != 0;
+    }
+
     uint8_t* m_object;
     size_t m_objectSize;
 #ifdef _DEBUG
@@ -257,6 +325,9 @@ private:
     ptrdiff_t m_repeatingSeriesIndex;
     uint8_t* m_repeatingCursor;
     uint32_t m_remainingComponents;
+    size_t m_componentSize;
+    size_t m_rangeStart;
+    size_t m_rangeEnd;
 };
 #endif // !DACCESS_COMPILE
 

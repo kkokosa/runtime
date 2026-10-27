@@ -102,21 +102,7 @@ void memmoveGCRefsWithLayout(void* dest, const void* src, size_t len, MethodTabl
         return;
     }
 
-    if (ErectWriteBarrierLayoutRangePre(dest, src, type, len, 1))
-    {
-        if (reinterpret_cast<size_t>(dest) - reinterpret_cast<size_t>(src) >= len)
-        {
-            InlinedForwardGCSafeCopyHelper(dest, src, len);
-        }
-        else
-        {
-            InlinedBackwardGCSafeCopyHelper(dest, src, len);
-        }
-    }
-    else
-    {
-        InlinedMemmoveGCRefsHelper(dest, src, len);
-    }
+    InlinedMemmoveGCRefsHelper(dest, src, len);
 }
 
 

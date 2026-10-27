@@ -26,6 +26,7 @@ namespace Internal.ReadyToRunConstants
         READYTORUN_FLAG_VerifyGCModeTransitions = 0x00001000,  // Code in this image verifies that GC mode transitions are legal. Catch resumption points call READYTORUN_HELPER_ResumeAfterCatch.
         READYTORUN_FLAG_SingleThreaded = 0x00002000,           // The image targets a single-threaded runtime and lays out [ThreadStatic] fields as regular statics.
         READYTORUN_FLAG_OldValueWriteBarriers = 0x00004000,    // Code in this image keeps a write barrier for every reference store, also for null, frozen and provably non-heap values, and uses the old-value copy, clear and fill paths of CoreLib.
+        READYTORUN_FLAG_SharedOldValueWriteBarriers = 0x00008000, // Old-value stores with shared collector-owned copy/clear and typed fill. Emitted instead of the legacy marker.
     }
 
     public enum ReadyToRunImportSectionType : byte

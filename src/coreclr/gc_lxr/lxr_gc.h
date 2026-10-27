@@ -187,16 +187,15 @@ private:
     static bool WalkHeapObject(Object* object, size_t size, void* context);
     static bool IsImmortal(Object* object, void* context);
 
-    // The hooks that LXR hands to the runtime in FastGCFunctions (PR #3316 interface plus the 6.1 extension), and the
-    // function that the assembly write barrier calls. All of them log the OLD value of a field before it is
-    // overwritten; none of them changes the field.
+    // Shared hooks and the assembly slow path. Bulk callbacks log before copying/clearing every chunk byte.
     static void LogOldValue(Object** slot);
     static void LogOldValues(Object** destination, size_t count);
-    static void CheckEscape(Object** destination, Object* newReference);
+    static void PreStore(Object** destination, Object* newReference);
     static bool IsInHeap(void* context, void* address);
     static void NoPostStoreBarrier(void* context, Object** destination, Object* newReference);
-    static void PreStoreRange(void* context, Object** destination, Object** source, size_t count);
+    void LogOldReferences(void* destination, size_t length);
     static void BulkMoveWithWriteBarrier(void* context, void* destination, const void* source, size_t length);
+    static void BulkClearWithWriteBarrier(void* context, void* destination, size_t length);
 
     void Fatal(const char* message) const;
     void Unsupported(const char* operation) const;
@@ -302,6 +301,10 @@ private:
     std::atomic<uint64_t> m_pause_reserve_pages{0};
     std::atomic<uint64_t> m_pause_free_pages{0};
     std::atomic<bool> m_storage_diagnostics_enabled{false};
+    std::atomic<uint64_t> m_bulk_move_calls{0};
+    std::atomic<uint64_t> m_bulk_clear_calls{0};
+    std::atomic<uint64_t> m_bulk_layout_lookups{0};
+    std::atomic<uint64_t> m_bulk_metadata_early_outs{0};
     std::atomic<uint64_t> m_root_capture_ticks{0};
     static constexpr size_t ScanMetricCount = 44;
     std::atomic<uint64_t> m_scan_metrics[ScanMetricCount]{};

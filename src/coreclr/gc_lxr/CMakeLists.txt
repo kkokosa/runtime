@@ -6,7 +6,7 @@ remove_definitions(-DWRITE_BARRIER_CHECK)
 
 add_definitions(-DBUILD_AS_STANDALONE)
 add_definitions(-DFEATURE_CONSERVATIVE_GC)
-add_definitions(-DFX_VER_INTERNALNAME_STR=clrgc.dll)
+add_definitions(-DFX_VER_INTERNALNAME_STR=clrlxrgc.dll)
 add_definitions(-DVERIFY_HEAP)
 add_definitions(-DGC_CONFIG_DRIVEN)
 add_definitions(-DGC_DESCRIPTOR)
@@ -54,6 +54,7 @@ set(LXR_SOURCES
   lxr_prefetch.h)
 
 if(CLR_CMAKE_TARGET_WIN32)
+  list(APPEND LXR_SOURCES ../gc/windows/Native.rc)
   set(LXR_WRITE_BARRIER_ASM amd64/lxr_writebarrier.asm)
 else()
   set(LXR_WRITE_BARRIER_ASM amd64/lxr_writebarrier.S)

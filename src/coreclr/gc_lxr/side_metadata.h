@@ -596,12 +596,12 @@ inline bool SideMetadataAccessor::CompareExchange(
     if (m_log_bits_per_value <= 3 && order == SideMetadataMemoryOrder::Relaxed)
     {
         uint32_t byteShift;
-        volatile uint8_t* byte = LocateByte(dataAddress, &byteShift);
+        volatile uint8_t* metadataByte = LocateByte(dataAddress, &byteShift);
 #ifdef _DEBUG
         {
             SideMetadataLocation checked = Locate(dataAddress);
             VerifyLocation(dataAddress, checked);
-            _ASSERTE(reinterpret_cast<volatile uint8_t*>(checked.word) + (checked.shift >> 3) == byte);
+            _ASSERTE(reinterpret_cast<volatile uint8_t*>(checked.word) + (checked.shift >> 3) == metadataByte);
             _ASSERTE((checked.shift & 7) == byteShift);
         }
 #endif // _DEBUG
@@ -610,7 +610,7 @@ inline bool SideMetadataAccessor::CompareExchange(
         _ASSERTE((comparand & ~m_value_mask) == 0);
 #endif // _DEBUG
         const uint8_t mask = static_cast<uint8_t>(m_value_mask << byteShift);
-        uint8_t oldByte = VolatileLoadWithoutBarrier(byte);
+        uint8_t oldByte = VolatileLoadWithoutBarrier(metadataByte);
         while (true)
         {
             uint8_t oldValue = static_cast<uint8_t>((oldByte & mask) >> byteShift);
@@ -620,7 +620,7 @@ inline bool SideMetadataAccessor::CompareExchange(
                 return false;
             }
             uint8_t newByte = static_cast<uint8_t>((oldByte & ~mask) | (value << byteShift));
-            uint8_t actual = Interlocked::CompareExchange(byte, newByte, oldByte);
+            uint8_t actual = Interlocked::CompareExchange(metadataByte, newByte, oldByte);
             if (actual == oldByte)
             {
                 return true;
@@ -691,17 +691,17 @@ inline SideMetadataUpdateStatus SideMetadataAccessor::IncrementSaturating(
     if (m_log_bits_per_value <= 3 && order == SideMetadataMemoryOrder::Relaxed)
     {
         uint32_t byteShift;
-        volatile uint8_t* byte = LocateByte(dataAddress, &byteShift);
+        volatile uint8_t* metadataByte = LocateByte(dataAddress, &byteShift);
 #ifdef _DEBUG
         {
             SideMetadataLocation checked = Locate(dataAddress);
             VerifyLocation(dataAddress, checked);
-            _ASSERTE(reinterpret_cast<volatile uint8_t*>(checked.word) + (checked.shift >> 3) == byte);
+            _ASSERTE(reinterpret_cast<volatile uint8_t*>(checked.word) + (checked.shift >> 3) == metadataByte);
             _ASSERTE((checked.shift & 7) == byteShift);
         }
 #endif // _DEBUG
         const uint8_t mask = static_cast<uint8_t>(m_value_mask << byteShift);
-        uint8_t oldByte = VolatileLoadWithoutBarrier(byte);
+        uint8_t oldByte = VolatileLoadWithoutBarrier(metadataByte);
         while (true)
         {
             uint8_t oldValue = static_cast<uint8_t>((oldByte & mask) >> byteShift);
@@ -718,10 +718,10 @@ inline SideMetadataUpdateStatus SideMetadataAccessor::IncrementSaturating(
 #endif // LXR_F10_NO_SATURATE_CONTROL
 #ifdef LXR_F10_BYTE_PLAIN_CONTROL
             // Control: the byte is written with a plain store, so an update of a neighbour can be lost.
-            VolatileStoreWithoutBarrier(const_cast<uint8_t*>(byte), newByte);
+            VolatileStoreWithoutBarrier(const_cast<uint8_t*>(metadataByte), newByte);
             return SideMetadataUpdateStatus::Updated;
 #else
-            uint8_t actual = Interlocked::CompareExchange(byte, newByte, oldByte);
+            uint8_t actual = Interlocked::CompareExchange(metadataByte, newByte, oldByte);
             if (actual == oldByte)
             {
                 return SideMetadataUpdateStatus::Updated;
@@ -766,17 +766,17 @@ inline SideMetadataUpdateStatus SideMetadataAccessor::DecrementNonZeroNonSaturat
     if (m_log_bits_per_value <= 3 && order == SideMetadataMemoryOrder::Relaxed)
     {
         uint32_t byteShift;
-        volatile uint8_t* byte = LocateByte(dataAddress, &byteShift);
+        volatile uint8_t* metadataByte = LocateByte(dataAddress, &byteShift);
 #ifdef _DEBUG
         {
             SideMetadataLocation checked = Locate(dataAddress);
             VerifyLocation(dataAddress, checked);
-            _ASSERTE(reinterpret_cast<volatile uint8_t*>(checked.word) + (checked.shift >> 3) == byte);
+            _ASSERTE(reinterpret_cast<volatile uint8_t*>(checked.word) + (checked.shift >> 3) == metadataByte);
             _ASSERTE((checked.shift & 7) == byteShift);
         }
 #endif // _DEBUG
         const uint8_t mask = static_cast<uint8_t>(m_value_mask << byteShift);
-        uint8_t oldByte = VolatileLoadWithoutBarrier(byte);
+        uint8_t oldByte = VolatileLoadWithoutBarrier(metadataByte);
         while (true)
         {
             uint8_t oldValue = static_cast<uint8_t>((oldByte & mask) >> byteShift);
@@ -790,7 +790,7 @@ inline SideMetadataUpdateStatus SideMetadataAccessor::DecrementNonZeroNonSaturat
                 return SideMetadataUpdateStatus::Saturated;
             }
             uint8_t newByte = static_cast<uint8_t>((oldByte & ~mask) | ((oldValue - 1) << byteShift));
-            uint8_t actual = Interlocked::CompareExchange(byte, newByte, oldByte);
+            uint8_t actual = Interlocked::CompareExchange(metadataByte, newByte, oldByte);
             if (actual == oldByte)
             {
                 return SideMetadataUpdateStatus::Updated;

@@ -737,10 +737,10 @@ DWORD SyncBlockCache::NewSyncBlockSlot(Object *obj)
 
     CardTableSetBit (indexNewEntry);
 
-    if (GCHeapUtilities::GetFastGCFunctions().check_escape != nullptr)
+    if (GCHeapUtilities::GetFastGCFunctions().pre_store != nullptr)
     {
         // TODO: I've derived this from EscapeCheckOnHandleCreation(), but it is not 100% match.
-        GCHeapUtilities::GetFastGCFunctions().check_escape(&obj, obj);
+        GCHeapUtilities::PreStoreCheck(&obj, obj);
         // make sure the object is published after we are done marking escapes
         //VolatileStoreBarrier();
         VOLATILE_MEMORY_BARRIER();

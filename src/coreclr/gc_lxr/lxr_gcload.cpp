@@ -33,6 +33,13 @@ LXR_EXPORT HRESULT LOCALGC_CALLCONV GC_Initialize(
     {
         return E_FAIL;
     }
+    // Old loaders accept higher collector minors but supply only their old FastGCFunctions buffer.
+    if (g_runtimeSupportedVersion.MajorVersion != EE_INTERFACE_MAJOR_VERSION ||
+        g_runtimeSupportedVersion.MinorVersion < EE_INTERFACE_MINOR_VERSION)
+    {
+        runtime->LogErrorToHost("LXR shared write barriers require EE interface 6.1 or later.");
+        return E_FAIL;
+    }
     g_theGCToCLR = runtime;
     GCConfig::Initialize();
     if (!GCToOSInterface::Initialize())
@@ -67,7 +74,7 @@ LXR_EXPORT uint64_t GC_LxrPrototype_GetMetric(uint32_t metric)
 
 LXR_EXPORT const char* GC_LxrPrototype_GetIdentity()
 {
-    return "LXR nursery and mature prototype; GC interface 6.3; P6 nursery+mature engine; costs-v1; lifecycle-costs-v1; log-publication-v1; full-trace-batch-v1";
+    return "LXR nursery and mature prototype; GC interface 6.8; shared-write-barriers-v1; P6 nursery+mature engine; costs-v1; lifecycle-costs-v1; log-publication-v1; full-trace-batch-v1";
 }
 
 LXR_EXPORT uintptr_t GC_LxrPrototype_GetOwnedStart()

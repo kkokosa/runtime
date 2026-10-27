@@ -815,9 +815,7 @@ bool LxrGcHeap::IsInHeap(void*, void* address)
         g_lxr_write_barrier_globals.heap_size;
 }
 
-// The pre-store hook of the PR (check_escape), used by the runtime sites that store a reference without the JIT
-// barrier. It is called BEFORE the store and reads the old value of *destination.
-void LxrGcHeap::CheckEscape(Object** destination, Object*)
+void LxrGcHeap::PreStore(Object** destination, Object*)
 {
     if (!IsInHeap(nullptr, destination))
     {
@@ -836,42 +834,167 @@ void LxrGcHeap::NoPostStoreBarrier(void*, Object**, Object*)
 {
 }
 
-void LxrGcHeap::PreStoreRange(void*, Object** destination, Object**, size_t count)
+void LxrGcHeap::LogOldReferences(void* destination, size_t length)
 {
-    if (count != 0 && IsInHeap(nullptr, destination))
+    uintptr_t address = reinterpret_cast<uintptr_t>(destination);
+    if (length == 0 || !IsInHeap(nullptr, destination))
     {
-        LogOldValues(destination, count);
+        return;
+    }
+    if (length > g_lxr_write_barrier_globals.heap_size - (address - g_lxr_write_barrier_globals.heap_low))
+    {
+        Fatal("LXR bulk write exceeds its heap reservation.");
+    }
+    uintptr_t end = address + length;
+    const uint8_t* metadata = reinterpret_cast<const uint8_t*>(g_lxr_write_barrier_globals.metadata_base);
+    uintptr_t firstSlot = address >> 3;
+    uintptr_t endSlot = ((end - 1) >> 3) + 1;
+    bool unlogged = false;
+    for (uintptr_t index = firstSlot; index < endSlot;)
+    {
+        uintptr_t byteIndex = index >> 3;
+        unsigned startBit = static_cast<unsigned>(index & 7);
+        unsigned endBit = byteIndex == ((endSlot - 1) >> 3)
+            ? static_cast<unsigned>(((endSlot - 1) & 7) + 1) : 8;
+        unsigned mask = (0xFFu << startBit) & ((1u << endBit) - 1);
+        if ((VolatileLoad(metadata + byteIndex) & mask) != 0)
+        {
+            unlogged = true;
+            break;
+        }
+        index = (byteIndex + 1) << 3;
+    }
+    bool diagnostics = m_storage_diagnostics_enabled.load(std::memory_order_relaxed);
+    if (!unlogged)
+    {
+        // Fresh allocation can have no valid MethodTable/array length yet. Do not inspect its layout.
+        if (diagnostics)
+        {
+            m_bulk_metadata_early_outs.fetch_add(1, std::memory_order_relaxed);
+        }
+        return;
+    }
+    if (diagnostics)
+    {
+        m_bulk_layout_lookups.fetch_add(1, std::memory_order_relaxed);
+    }
+    Object* object = nullptr;
+    if (m_engine.FindContainingObject(address, &object, false) != LxrRcResult::Success)
+    {
+        Fatal("LXR cannot find the old bulk destination object.");
+    }
+    uintptr_t objectAddress = reinterpret_cast<uintptr_t>(object);
+    GCReferenceObjectLayout layout = GetGCReferenceObjectLayout(object, object->GetGCSafeMethodTable());
+    if (layout.objectSize < sizeof(ObjHeader) + sizeof(Object*) ||
+        address < objectAddress + sizeof(Object*) ||
+        address - objectAddress > layout.objectSize - sizeof(ObjHeader) ||
+        length > layout.objectSize - sizeof(ObjHeader) - (address - objectAddress))
+    {
+        Fatal("LXR bulk write exceeds its destination object.");
+    }
+    GCReferenceRangeIterator iterator(object);
+    uintptr_t alignedStart = address & ~(sizeof(Object*) - 1);
+    uintptr_t alignedEnd = (end + sizeof(Object*) - 1) & ~(sizeof(Object*) - 1);
+    iterator.RestrictToRange(alignedStart - objectAddress, alignedEnd - alignedStart);
+    GCReferenceRange range;
+    while (iterator.Next(&range))
+    {
+        uintptr_t start = reinterpret_cast<uintptr_t>(range.start);
+        if (start < address || range.count > (end - start) / sizeof(Object*))
+        {
+            Fatal("LXR bulk write would partially overwrite an old reference.");
+        }
+        LogOldValues(range.start, range.count);
     }
 }
 
-// The bulk-move hook of the PR, for ranges that hold only references. Old values are logged first, then the
-// references are copied one pointer at a time (a concurrent reader never sees a torn reference).
-void LxrGcHeap::BulkMoveWithWriteBarrier(void*, void* destination, const void* source, size_t length)
+void LxrGcHeap::BulkMoveWithWriteBarrier(void* context, void* destination, const void* source, size_t length)
 {
     if (destination == source || length == 0)
     {
         return;
     }
-    if (IsInHeap(nullptr, destination))
+    LxrGcHeap* heap = static_cast<LxrGcHeap*>(context);
+    if (heap->m_storage_diagnostics_enabled.load(std::memory_order_relaxed))
     {
-        LogOldValues(static_cast<Object**>(destination), length / sizeof(Object*));
+        heap->m_bulk_move_calls.fetch_add(1, std::memory_order_relaxed);
     }
-    size_t count = length / sizeof(uintptr_t);
-    uintptr_t* to = static_cast<uintptr_t*>(destination);
-    const uintptr_t* from = static_cast<const uintptr_t*>(source);
+    heap->LogOldReferences(destination, length);
+    uint8_t* to = static_cast<uint8_t*>(destination);
+    const uint8_t* from = static_cast<const uint8_t*>(source);
     if (reinterpret_cast<uintptr_t>(destination) - reinterpret_cast<uintptr_t>(source) >= length)
     {
-        for (size_t index = 0; index < count; index++)
+        while (length != 0 && (reinterpret_cast<uintptr_t>(to) & (sizeof(uintptr_t) - 1)) != 0)
         {
-            VolatileStore(to + index, VolatileLoad(from + index));
+            *to++ = *from++;
+            length--;
+        }
+        while (length >= sizeof(uintptr_t))
+        {
+            uintptr_t value;
+            memcpy(&value, from, sizeof(value));
+            VolatileStore(reinterpret_cast<uintptr_t*>(to), value);
+            to += sizeof(uintptr_t);
+            from += sizeof(uintptr_t);
+            length -= sizeof(uintptr_t);
+        }
+        while (length-- != 0)
+        {
+            *to++ = *from++;
         }
     }
     else
     {
-        for (size_t index = count; index != 0; index--)
+        to += length;
+        from += length;
+        while (length != 0 && (reinterpret_cast<uintptr_t>(to) & (sizeof(uintptr_t) - 1)) != 0)
         {
-            VolatileStore(to + index - 1, VolatileLoad(from + index - 1));
+            *--to = *--from;
+            length--;
         }
+        while (length >= sizeof(uintptr_t))
+        {
+            to -= sizeof(uintptr_t);
+            from -= sizeof(uintptr_t);
+            uintptr_t value;
+            memcpy(&value, from, sizeof(value));
+            VolatileStore(reinterpret_cast<uintptr_t*>(to), value);
+            length -= sizeof(uintptr_t);
+        }
+        while (length-- != 0)
+        {
+            *--to = *--from;
+        }
+    }
+}
+
+void LxrGcHeap::BulkClearWithWriteBarrier(void* context, void* destination, size_t length)
+{
+    if (length == 0)
+    {
+        return;
+    }
+    LxrGcHeap* heap = static_cast<LxrGcHeap*>(context);
+    if (heap->m_storage_diagnostics_enabled.load(std::memory_order_relaxed))
+    {
+        heap->m_bulk_clear_calls.fetch_add(1, std::memory_order_relaxed);
+    }
+    heap->LogOldReferences(destination, length);
+    uint8_t* cursor = static_cast<uint8_t*>(destination);
+    while (length != 0 && (reinterpret_cast<uintptr_t>(cursor) & (sizeof(uintptr_t) - 1)) != 0)
+    {
+        *cursor++ = 0;
+        length--;
+    }
+    while (length >= sizeof(uintptr_t))
+    {
+        VolatileStore(reinterpret_cast<uintptr_t*>(cursor), static_cast<uintptr_t>(0));
+        cursor += sizeof(uintptr_t);
+        length -= sizeof(uintptr_t);
+    }
+    while (length-- != 0)
+    {
+        *cursor++ = 0;
     }
 }
 
@@ -2341,18 +2464,17 @@ uintptr_t* LxrGcHeap::GetPendingBridgeHandles(size_t* count)
 }
 
 // LXR uses the barrier mechanism of PR #3316: it is a custom collector. The runtime asks for the barrier helpers in
-// GetAssignRefFunctions and calls the hooks below. Because LXR needs the old value of every overwritten field, it
-// also sets FASTGC_REQUIRES_OLD_VALUE and provides the pre-store range hook (interface 6.1).
+// GetAssignRefFunctions and calls the shared scalar and bulk hooks below.
 void LxrGcHeap::GetFastGCFunctions(FastGCFunctions* functions)
 {
     *functions = {};
     functions->context = this;
     functions->write_barrier = &LxrGcHeap::NoPostStoreBarrier;
     functions->is_in_gc_heap = &LxrGcHeap::IsInHeap;
-    functions->check_escape = &LxrGcHeap::CheckEscape;
+    functions->pre_store = &LxrGcHeap::PreStore;
     functions->bulk_move_with_write_barrier = &LxrGcHeap::BulkMoveWithWriteBarrier;
-    functions->pre_store_range = &LxrGcHeap::PreStoreRange;
     functions->flags = FASTGC_REQUIRES_OLD_VALUE;
+    functions->bulk_clear_with_write_barrier = &LxrGcHeap::BulkClearWithWriteBarrier;
 }
 
 GCHeapType LxrGcHeap::GetGCHeapType() { return GC_HEAP_CUSTOM; }
@@ -2563,6 +2685,12 @@ uint64_t LxrGcHeap::GetPrototypeMetric(uint32_t metric) const
         case 45: return m_native_plane_limit;
         case 46: return m_engine.GetLifetimeProbeBirths();
         case 47: return m_engine.GetLifetimeProbeReclaims();
+        case 462: return rc.loggedSlots;
+        case 463: return rc.oldTargetChecks;
+        case 464: return m_bulk_move_calls.load(std::memory_order_relaxed);
+        case 465: return m_bulk_clear_calls.load(std::memory_order_relaxed);
+        case 466: return m_bulk_layout_lookups.load(std::memory_order_relaxed);
+        case 467: return m_bulk_metadata_early_outs.load(std::memory_order_relaxed);
         case 71: return 0; // The flag table of the collector (P17 S7 removed it).
         case 72: return m_engine.GetStorageMetric(23);
         case 73: return m_engine.GetStorageMetric(24);
