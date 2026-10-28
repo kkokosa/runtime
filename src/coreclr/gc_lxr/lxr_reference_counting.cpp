@@ -1757,6 +1757,15 @@ LxrRcResult LxrReferenceCounting::LogBeforeWrite(
     }
     uintptr_t observed;
     bool exchanged;
+#if !defined(_DEBUG) && !defined(LXR_SIDE_METADATA_TEST_PLATFORM)
+    uintptr_t slotAddress = reinterpret_cast<uintptr_t>(slot);
+    if (!OwnsAddress(slotAddress) || slotAddress % sizeof(uintptr_t) != 0)
+    {
+        return Fail(LxrRcResult::MetadataFailure);
+    }
+    exchanged = m_unlogged_metadata.CompareExchange(
+        slotAddress, 0, 1, SideMetadataMemoryOrder::Relaxed, &observed);
+#else
     SideMetadataResult result = m_metadata.CompareExchange(
         LxrSideMetadataKind::FieldUnlogged, reinterpret_cast<uintptr_t>(slot),
         0, 1, SideMetadataMemoryOrder::SequentiallyConsistent, &observed, &exchanged);
@@ -1764,6 +1773,7 @@ LxrRcResult LxrReferenceCounting::LogBeforeWrite(
     {
         return FromMetadata(result);
     }
+#endif // !defined(_DEBUG) && !defined(LXR_SIDE_METADATA_TEST_PLATFORM)
     if (!exchanged)
     {
         return LxrRcResult::Success;
@@ -1783,12 +1793,21 @@ LxrRcResult LxrReferenceCounting::LogBeforeWrite(
     if (oldTarget != nullptr)
     {
         uintptr_t count;
+#if !defined(_DEBUG) && !defined(LXR_SIDE_METADATA_TEST_PLATFORM)
+        uintptr_t oldStart = Start(oldTarget);
+        if (oldStart % sizeof(uintptr_t) != 0)
+        {
+            return Fail(LxrRcResult::MetadataFailure);
+        }
+        count = m_rc_metadata.Load(oldStart, SideMetadataMemoryOrder::Relaxed);
+#else
         result = m_metadata.Load(LxrSideMetadataKind::ReferenceCount, Start(oldTarget),
             SideMetadataMemoryOrder::Relaxed, &count);
         if (result != SideMetadataResult::Success)
         {
             return FromMetadata(result);
         }
+#endif // !defined(_DEBUG) && !defined(LXR_SIDE_METADATA_TEST_PLATFORM)
         m_metrics[OldTargetChecks].fetch_add(1, std::memory_order_relaxed);
         _ASSERTE(count != 0);
         if (count == 0)
@@ -2365,7 +2384,6 @@ LxrRcResult LxrReferenceCounting::FlushMutators()
         {
             return Fail(LxrRcResult::OutOfMemory);
         }
-        m_young_spans.Sort();
         m_span_metrics[2].store(m_young_spans.Size(), std::memory_order_relaxed);
 #ifdef LXR_HAS_LIFETIME_PROBE
         CheckProbeInSpans();
@@ -3243,7 +3261,9 @@ LxrRcResult LxrReferenceCounting::GetUsedPages(size_t* pages) const
 
 bool LxrReferenceCounting::IsMatureCandidate(uintptr_t address)
 {
-    if (m_evacuation_sources == nullptr || !IsImmix(address) ||
+    if (m_evacuation_sources == nullptr ||
+        (GetTracePhase() == LxrTracePhase::Inactive && m_pause_kind == LxrPauseKind::RefCount) ||
+        !IsImmix(address) ||
         m_evacuation_sources[(address - GetReservationStart()) / ImmixBlockGeometry::BlockBytes].load(
             std::memory_order_acquire) == 0)
     {
@@ -3452,12 +3472,13 @@ LxrRcResult LxrReferenceCounting::RetainPinnedMatureBlocks()
 
 LxrRcResult LxrReferenceCounting::RememberMatureSlot(Object** slot, Object* target)
 {
-    uintptr_t address = reinterpret_cast<uintptr_t>(slot);
-    if (!m_configuration.evacuateMature || !IsMatureCandidate(Start(target)) ||
-        !(m_marking.load(std::memory_order_acquire) || m_pause_kind == LxrPauseKind::FinalMark))
+    if (!m_configuration.evacuateMature ||
+        !(m_marking.load(std::memory_order_relaxed) || m_pause_kind == LxrPauseKind::FinalMark) ||
+        !IsMatureCandidate(Start(target)))
     {
         return LxrRcResult::Success;
     }
+    uintptr_t address = reinterpret_cast<uintptr_t>(slot);
     if (!OwnsAddress(address))
     {
         return Fail(LxrRcResult::UnsupportedLifetime);
@@ -4182,9 +4203,10 @@ LxrRcResult LxrReferenceCounting::ScanIncrements(
             // of an old child is not read. The block of the child must not be a source of the mature evacuation (a source can be
             // forwarded, and the slot would need the copy); large objects take the longer path.
             uintptr_t childStart = Start(child);
-            uintptr_t childCount;
-            if (IsImmix(childStart) && !IsMatureCandidate(childStart) &&
-                FromMetadata(m_counts.LoadFast(childStart, &childCount)) == LxrRcResult::Success && childCount != 0)
+            uintptr_t childCount = 0;
+            if (IsImmix(childStart) &&
+                FromMetadata(m_counts.LoadFast(childStart, &childCount)) == LxrRcResult::Success &&
+                childCount != 0 && !IsMatureCandidate(childStart))
             {
                 CountWorker(worker, IncrementEntries, 1);
 #if defined(LXR_SIDE_METADATA_TEST_PLATFORM) && defined(LXR_F10_INLINE_NO_INC_CONTROL)
@@ -4214,10 +4236,13 @@ LxrRcResult LxrReferenceCounting::ScanIncrements(
                 }
                 continue;
             }
-            result = RememberMatureSlot(first + index, child);
-            if (result != LxrRcResult::Success)
+            if (childCount != 0)
             {
-                return false;
+                result = RememberMatureSlot(first + index, child);
+                if (result != LxrRcResult::Success)
+                {
+                    return false;
+                }
             }
             result = children->Append(reinterpret_cast<uintptr_t>(first + index), trace);
             if (result != LxrRcResult::Success)
@@ -4252,11 +4277,6 @@ LxrRcResult LxrReferenceCounting::ScanDecrements(Object* object, ReferenceBatch*
             if (child == nullptr)
             {
                 continue;
-            }
-            result = RememberMatureSlot(first + index, child);
-            if (result != LxrRcResult::Success)
-            {
-                return false;
             }
             if (!queueAll && OwnsAddress(Start(child)))
             {
@@ -5302,10 +5322,10 @@ LxrRcResult LxrReferenceCounting::ProcessChildIncrements(ReferenceBatch* childre
         {
             Object** slot = reinterpret_cast<Object**>(slots[index]);
             Object* object = *slot;
-            CountWorker(worker, IncrementEntries, 1);
             LxrRcResult result = ProcessIncrement(&object, trace, children, worker);
             if (result != LxrRcResult::Success)
             {
+                CountWorker(worker, IncrementEntries, index + 1);
                 return result;
             }
             if (object != nullptr)
@@ -5313,12 +5333,14 @@ LxrRcResult LxrReferenceCounting::ProcessChildIncrements(ReferenceBatch* childre
                 result = RememberMatureSlot(slot, object);
                 if (result != LxrRcResult::Success)
                 {
+                    CountWorker(worker, IncrementEntries, index + 1);
                     return result;
                 }
             }
             *slot = object;
             LxrPrefetch::Ahead(slots, count, index, true);
         }
+        CountWorker(worker, IncrementEntries, count);
     }
     return LxrRcResult::Success;
 }
@@ -7153,6 +7175,10 @@ LxrRcResult LxrReferenceCounting::ProcessTraceObject(
             return copied;
         }
         start = Start(object);
+    }
+    if (m_mark_metadata.Load(start, SideMetadataMemoryOrder::Relaxed) != 0)
+    {
+        return LxrRcResult::Success;
     }
     size_t index = (start - GetReservationStart()) / sizeof(uintptr_t);
     EnterTraceLock(index);

@@ -223,11 +223,11 @@ public:
     static uintptr_t LoadWord(volatile uintptr_t* word, SideMetadataMemoryOrder order);
     static uintptr_t CompareExchangeWord(volatile uintptr_t* word, uintptr_t value, uintptr_t comparand);
 
-private:
-    friend class SideMetadataManager;
-
     // The byte that holds the entry, and the shift of the entry in it (little endian, entries of up to 8 bits).
     volatile uint8_t* LocateByte(uintptr_t dataAddress, uint32_t* shift) const;
+
+private:
+    friend class SideMetadataManager;
 
     static bool AreWordsZero(
         const SideMetadataLocation& first,
@@ -556,6 +556,39 @@ inline void SideMetadataAccessor::Store(
     uintptr_t value,
     SideMetadataMemoryOrder order) const
 {
+#if !BIGENDIAN && !defined(LXR_F10_PLAIN_STORE_CONTROL)
+    if (m_log_bits_per_value <= 3)
+    {
+        uint32_t byteShift;
+        volatile uint8_t* metadataByte = LocateByte(dataAddress, &byteShift);
+#ifdef _DEBUG
+        {
+            SideMetadataLocation checked = Locate(dataAddress);
+            VerifyLocation(dataAddress, checked);
+            _ASSERTE(reinterpret_cast<volatile uint8_t*>(checked.word) + (checked.shift >> 3) == metadataByte);
+            _ASSERTE((checked.shift & 7) == byteShift);
+            _ASSERTE((value & ~m_value_mask) == 0);
+        }
+#endif // _DEBUG
+        const uint8_t mask = static_cast<uint8_t>(m_value_mask << byteShift);
+        const uint8_t desired = static_cast<uint8_t>((value & m_value_mask) << byteShift);
+        uint8_t oldByte = VolatileLoadWithoutBarrier(metadataByte);
+        while (true)
+        {
+            uint8_t newByte = static_cast<uint8_t>((oldByte & ~mask) | desired);
+            if (order == SideMetadataMemoryOrder::Relaxed && newByte == oldByte)
+            {
+                return;
+            }
+            uint8_t actual = Interlocked::CompareExchange(metadataByte, newByte, oldByte);
+            if (actual == oldByte)
+            {
+                return;
+            }
+            oldByte = actual;
+        }
+    }
+#endif // !BIGENDIAN && !defined(LXR_F10_PLAIN_STORE_CONTROL)
     SideMetadataLocation location = Locate(dataAddress);
 #ifdef _DEBUG
     VerifyLocation(dataAddress, location);

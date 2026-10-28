@@ -83,6 +83,10 @@ SideMetadataResult ImmixAllocationManager::Initialize(
 
     m_metadata = metadata;
     m_reference_count = metadata->GetAccessor(LxrSideMetadataKind::ReferenceCount);
+    m_valid_object = metadata->GetAccessor(LxrSideMetadataKind::ValidObject);
+    m_field_unlogged = metadata->GetAccessor(LxrSideMetadataKind::FieldUnlogged);
+    m_object_mark = metadata->GetAccessor(LxrSideMetadataKind::ObjectMark);
+    m_line_reuse = metadata->GetAccessor(LxrSideMetadataKind::LineReuse);
     if (!m_reference_count.IsValid() ||
         (m_reference_count.GetLogBytesPerValue() != 3) ||
         (m_reference_count.GetLogBitsPerValue() < 1) ||
@@ -109,6 +113,10 @@ void ImmixAllocationManager::Shutdown()
 {
     m_metadata = nullptr;
     m_reference_count = SideMetadataAccessor();
+    m_valid_object = SideMetadataAccessor();
+    m_field_unlogged = SideMetadataAccessor();
+    m_object_mark = SideMetadataAccessor();
+    m_line_reuse = SideMetadataAccessor();
     m_rc_words_per_line = 0;
     m_arena_start = 0;
     m_arena_size = 0;
@@ -720,6 +728,15 @@ SideMetadataResult ImmixAllocationManager::InitializeFieldLogRange(
     size_t size,
     bool copy)
 {
+#if !BIGENDIAN && !defined(_DEBUG) && !defined(LXR_SIDE_METADATA_TEST_PLATFORM) && !defined(LXR_F9_TEST_HOOKS)
+    uint32_t shift;
+    if (m_valid_object.IsValid())
+    {
+        memset(const_cast<uint8_t*>(m_valid_object.LocateByte(start, &shift)), 0, size >> 6);
+    }
+    memset(const_cast<uint8_t*>(m_field_unlogged.LocateByte(start, &shift)), copy ? 0xff : 0, size >> 6);
+    return SideMetadataResult::Success;
+#else
     // The ValidObject plane exists because .NET needs the start of the object that contains an interior pointer; the Java
     // LXR has no such plane. A stale bit of a dead object must not lie in a range that new objects use, so the plane is
     // cleared here, on the same schedule as the unlog and mark tables of the Java LXR (at the refill of the range).
@@ -732,7 +749,7 @@ SideMetadataResult ImmixAllocationManager::InitializeFieldLogRange(
             return result;
         }
     }
-#endif // !LXR_SIDE_METADATA_TEST_PLATFORM || !LXR_VALID_CLEAR_CONTROL
+#endif // !LXR_SIDE_METADATA_TEST_PLATFORM || !defined(LXR_VALID_CLEAR_CONTROL)
     // P28 (F9). The Java LXR does not clear the count plane and the straddle plane at a refill: the counts and the straddle
     // marks of a dead object are cleared when the object dies (rc.rs, rc_work.rs: unmark_straddle_object), and the tables of a
     // block are cleared only when a defrag source is released. So a free block and a hole have zero counts and no straddle
@@ -784,6 +801,7 @@ SideMetadataResult ImmixAllocationManager::InitializeFieldLogRange(
     }
 #endif // (_DEBUG || LXR_F9_TEST_HOOKS) && !LXR_F9_NO_VERIFY_CONTROL
     return m_metadata->FillRangeBytes(LxrSideMetadataKind::FieldUnlogged, start, size, copy ? 0xff : 0);
+#endif
 }
 
 SideMetadataResult ImmixAllocationManager::InitializeObjectMarkRange(
@@ -791,17 +809,27 @@ SideMetadataResult ImmixAllocationManager::InitializeObjectMarkRange(
     size_t size,
     uintptr_t value)
 {
+#if !BIGENDIAN && !defined(_DEBUG) && !defined(LXR_SIDE_METADATA_TEST_PLATFORM)
+    uint32_t shift;
+    memset(const_cast<uint8_t*>(m_object_mark.LocateByte(start, &shift)), value != 0 ? 0xff : 0, size >> 6);
+    return SideMetadataResult::Success;
+#else
     return m_metadata->FillRangeBytes(
         LxrSideMetadataKind::ObjectMark,
         start,
         size,
         value != 0 ? 0xff : 0);
+#endif
 }
 
 SideMetadataResult ImmixAllocationManager::IncrementLineReuseRange(
     uintptr_t start,
     size_t size)
 {
+#if !BIGENDIAN && !defined(_DEBUG) && !defined(LXR_SIDE_METADATA_TEST_PLATFORM)
+    uint32_t shift;
+    uint8_t* counts = const_cast<uint8_t*>(m_line_reuse.LocateByte(start, &shift));
+#else
     // Line::inc_reuse_counts of the Java LXR: one byte per line, a plain load and store (no read-modify-write), wrapping at
     // 255. Only the thread that took the range changes these bytes while it is in the mutator phase.
     SideMetadataLocation first = {};
@@ -811,6 +839,7 @@ SideMetadataResult ImmixAllocationManager::IncrementLineReuseRange(
         return result;
     }
     uint8_t* counts = reinterpret_cast<uint8_t*>(const_cast<uintptr_t*>(first.word)) + (first.shift >> 3);
+#endif
     for (size_t line = 0; line < size / ImmixBlockGeometry::LineBytes; line++)
     {
         uint8_t count = VolatileLoadWithoutBarrier(counts + line);

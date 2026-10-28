@@ -1247,6 +1247,12 @@ LxrRcResult LxrGcHeap::CollectForPressure(bool emergency, bool user, bool heapFu
     LxrCollectionCause cause = GetCollectionCause(heapFull || emergency);
     if (result == LxrRcResult::Success && (emergency || user || cause != LxrCollectionCause::None))
     {
+        if (!emergency && !user && !heapFull && cause == LxrCollectionCause::HeapFull &&
+            m_engine.IsOvershootEnabled() && m_engine.GetCleanNurseryBlocks() <= 4 &&
+            m_engine.GetImmixFreePages() <= LxrCollectionPolicy::OvershootFreePages)
+        {
+            m_engine.RequestGrowth(false, ImmixBlockGeometry::BlockBytes);
+        }
         m_collection_cause.store(cause, std::memory_order_release);
         result = CollectLocked(m_policy.Select(
             m_engine.GetTracePhase() == LxrTracePhase::Concurrent,

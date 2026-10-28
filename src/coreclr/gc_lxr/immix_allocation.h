@@ -206,6 +206,10 @@ private:
     // Inline accessor for the reference-count plane (line scan).
     // The arena that this manager serves is always inside a data range that the metadata manager owns.
     SideMetadataAccessor m_reference_count;
+    SideMetadataAccessor m_valid_object;
+    SideMetadataAccessor m_field_unlogged;
+    SideMetadataAccessor m_object_mark;
+    SideMetadataAccessor m_line_reuse;
     // Words of the count plane for one line: 1, 2 or 4 for counts of 2, 4 or 8 bits.
     size_t m_rc_words_per_line = 0;
     ImmixBlockManager* m_blocks;

@@ -87,9 +87,14 @@ namespace
 
     // The scheduler that the current thread works for, the index of the worker, and whether the packet that the worker runs
     // now is a trace packet. A packet that a worker submits goes to the deque of this worker.
-    thread_local const void* tlsScheduler = nullptr;
-    thread_local size_t tlsWorkerIndex = 0;
-    thread_local bool tlsRunningTrace = false;
+#if defined(__GNUC__) || defined(__clang__)
+#define LXR_SCHEDULER_TLS __thread __attribute__((tls_model("initial-exec")))
+#else
+#define LXR_SCHEDULER_TLS thread_local
+#endif
+    LXR_SCHEDULER_TLS const void* tlsScheduler = nullptr;
+    LXR_SCHEDULER_TLS size_t tlsWorkerIndex = 0;
+    LXR_SCHEDULER_TLS bool tlsRunningTrace = false;
 
     // A small test-and-test-and-set lock for the injectors. The thread yields after a few spins, so a machine with one or two
     // processors does not burn its time slice.

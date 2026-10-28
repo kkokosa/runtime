@@ -51,7 +51,7 @@ public:
 #ifdef HOST_64BIT
         assert(mask != 0);
         assert(shift < 32);
-        uint32_t value = Interlocked::CompareExchange(&m_uGCReservedBits, 0u, 0u);
+        uint32_t value = VolatileLoad(&m_uGCReservedBits);
         return (value & mask) >> shift;
 #else
         UNREFERENCED_PARAMETER(mask);
@@ -72,7 +72,7 @@ public:
         assert((value & ~(mask >> shift)) == 0);
         assert((comparand & ~(mask >> shift)) == 0);
 
-        uint32_t oldWord = Interlocked::CompareExchange(&m_uGCReservedBits, 0u, 0u);
+        uint32_t oldWord = VolatileLoadWithoutBarrier(&m_uGCReservedBits);
         while (true)
         {
             uint32_t oldValue = (oldWord & mask) >> shift;
@@ -106,7 +106,7 @@ public:
         assert(shift < 32);
         assert((value & ~(mask >> shift)) == 0);
 
-        uint32_t oldWord = Interlocked::CompareExchange(&m_uGCReservedBits, 0u, 0u);
+        uint32_t oldWord = VolatileLoadWithoutBarrier(&m_uGCReservedBits);
         while (true)
         {
             uint32_t oldValue = (oldWord & mask) >> shift;
