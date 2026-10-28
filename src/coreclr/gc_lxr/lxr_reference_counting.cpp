@@ -116,6 +116,7 @@ struct LxrReferenceCounting::RememberedChunk
 class LxrReferenceCounting::CostScope final
 {
 public:
+#ifdef LXR_HAS_DIAGNOSTIC_PROBES
     CostScope(LxrReferenceCounting* engine, size_t metric)
         : m_engine(engine), m_metric(metric), m_start(-1)
     {
@@ -148,6 +149,15 @@ private:
     LxrReferenceCounting* m_engine;
     size_t m_metric;
     int64_t m_start;
+#else
+    CostScope(LxrReferenceCounting* engine, size_t metric)
+    {
+        (void)engine;
+        (void)metric;
+    }
+
+    ~CostScope() = default;
+#endif // LXR_HAS_DIAGNOSTIC_PROBES
 };
 
 int64_t LxrPauseTimers::Now()
@@ -301,6 +311,7 @@ namespace
     class PacketScope final
     {
     public:
+#ifdef LXR_HAS_DIAGNOSTIC_PROBES
         PacketScope(LxrPauseTimers& timers, LxrPauseTimers::Group group, bool timed)
             : m_timers(timers), m_group(group), m_start(timed && timers.Enabled() ? timers.Stamp() : 0)
         {
@@ -313,14 +324,26 @@ namespace
                 m_timers.AddPacket(m_group, m_start, m_timers.Stamp());
             }
         }
+#else
+        PacketScope(LxrPauseTimers& timers, LxrPauseTimers::Group group, bool timed)
+        {
+            (void)timers;
+            (void)group;
+            (void)timed;
+        }
+
+        ~PacketScope() = default;
+#endif // LXR_HAS_DIAGNOSTIC_PROBES
 
         PacketScope(const PacketScope&) = delete;
         PacketScope& operator=(const PacketScope&) = delete;
 
+#ifdef LXR_HAS_DIAGNOSTIC_PROBES
     private:
         LxrPauseTimers& m_timers;
         LxrPauseTimers::Group m_group;
         int64_t m_start;
+#endif // LXR_HAS_DIAGNOSTIC_PROBES
     };
 }
 
@@ -476,6 +499,7 @@ struct LxrReferenceCounting::TraceBatch
         }
         registered = true;
 #endif // !LXR_SIDE_METADATA_TEST_PLATFORM || !LXR_TRACE_BATCH_EARLY_CONTROL
+#ifdef LXR_HAS_DIAGNOSTIC_PROBES
         if (engine->m_storage_diagnostics.load(std::memory_order_relaxed))
         {
             accounted = true;
@@ -495,6 +519,7 @@ struct LxrReferenceCounting::TraceBatch
             {
             }
         }
+#endif // LXR_HAS_DIAGNOSTIC_PROBES
     }
 
     TraceBatch(const TraceBatch&) = delete;
@@ -510,11 +535,13 @@ struct LxrReferenceCounting::TraceBatch
         {
             engine->Fail(LxrRcResult::InvariantViolation);
         }
+#ifdef LXR_HAS_DIAGNOSTIC_PROBES
         if (accounted)
         {
             engine->m_trace_batch_metrics[3].fetch_sub(sizeof(TraceBatch), std::memory_order_relaxed);
             engine->m_storage_metrics[1].fetch_sub(sizeof(TraceBatch), std::memory_order_relaxed);
         }
+#endif // LXR_HAS_DIAGNOSTIC_PROBES
     }
 
     LxrRcResult Append(uintptr_t target)
@@ -523,10 +550,12 @@ struct LxrReferenceCounting::TraceBatch
         {
             return engine->Fail(LxrRcResult::InvariantViolation);
         }
+#ifdef LXR_HAS_DIAGNOSTIC_PROBES
         if (engine->m_storage_diagnostics.load(std::memory_order_relaxed))
         {
             engine->m_trace_batch_metrics[1].fetch_add(1, std::memory_order_relaxed);
         }
+#endif // LXR_HAS_DIAGNOSTIC_PROBES
 #if defined(LXR_SIDE_METADATA_TEST_PLATFORM) && defined(LXR_TRACE_BATCH_UNBATCHED_CONTROL)
         return engine->QueueTrace(&target, 1);
 #else
@@ -548,10 +577,12 @@ struct LxrReferenceCounting::TraceBatch
         if (result == LxrRcResult::Success)
         {
             count = 0;
+#ifdef LXR_HAS_DIAGNOSTIC_PROBES
             if (engine->m_storage_diagnostics.load(std::memory_order_relaxed))
             {
                 engine->m_trace_batch_metrics[2].fetch_add(1, std::memory_order_relaxed);
             }
+#endif // LXR_HAS_DIAGNOSTIC_PROBES
         }
         return result;
 #endif // LXR_SIDE_METADATA_TEST_PLATFORM && LXR_TRACE_BATCH_DROP_CONTROL
@@ -1559,6 +1590,7 @@ LxrRcResult LxrReferenceCounting::PublishReferences(
         VolatileStore(stream.references + start, references[0] | (static_cast<uintptr_t>(count) << LogCountShift));
 #endif // !LXR_SIDE_METADATA_TEST_PLATFORM || !LXR_LOG_PUBLICATION_CONTROL
     }
+#ifdef LXR_HAS_DIAGNOSTIC_PROBES
     if (m_storage_diagnostics.load(std::memory_order_relaxed))
     {
         size_t high = stream.highWater.load(std::memory_order_relaxed);
@@ -1569,6 +1601,7 @@ LxrRcResult LxrReferenceCounting::PublishReferences(
         stream.flushes.fetch_add(1, std::memory_order_relaxed);
         stream.copiedBytes.fetch_add(count * sizeof(uintptr_t), std::memory_order_relaxed);
     }
+#endif // LXR_HAS_DIAGNOSTIC_PROBES
     return LxrRcResult::Success;
 }
 
@@ -1611,11 +1644,13 @@ LxrRcResult LxrReferenceCounting::ResetBank(LogBank& bank)
             {
                 stream->references[cursor] &= LogReferenceMask;
             }
+#ifdef LXR_HAS_DIAGNOSTIC_PROBES
             if (m_storage_diagnostics.load(std::memory_order_relaxed))
             {
                 stream->resetBytes.fetch_add(stream->published != nullptr
                     ? sizeof(uint16_t) : sizeof(uintptr_t), std::memory_order_relaxed);
             }
+#endif // LXR_HAS_DIAGNOSTIC_PROBES
             cursor += count;
         }
         stream->reserved.store(0, std::memory_order_relaxed);
@@ -1951,11 +1986,13 @@ LxrRcResult LxrReferenceCounting::Allocate(
         OracleBirth(start, completeSize);
     }
 #endif // LXR_SIDE_METADATA_TEST_PLATFORM
+#ifdef LXR_HAS_LIFETIME_PROBE
     if (m_probe_start.load(std::memory_order_acquire) == start)
     {
         m_probe_retired.store(false, std::memory_order_release);
         m_probe_births.fetch_add(1, std::memory_order_release);
     }
+#endif // LXR_HAS_LIFETIME_PROBE
     m_metrics[Allocations].fetch_add(1, std::memory_order_relaxed);
     if (pinned || IsLarge(start))
     {
@@ -1992,6 +2029,7 @@ LxrReferenceCounting::Work* LxrReferenceCounting::NewWork(
         Fail(LxrRcResult::OutOfMemory);
         return nullptr;
     }
+#ifdef LXR_HAS_DIAGNOSTIC_PROBES
     uint64_t payloadBytes = borrow ? 0 : count * sizeof(uintptr_t);
     uint64_t bytes = sizeof(Work) + payloadBytes;
     if (m_storage_diagnostics.load(std::memory_order_relaxed))
@@ -2007,6 +2045,7 @@ LxrReferenceCounting::Work* LxrReferenceCounting::NewWork(
         m_storage_metrics[3].fetch_add(payloadBytes, std::memory_order_relaxed);
 #endif // !LXR_SIDE_METADATA_TEST_PLATFORM || !LXR_STORAGE_SKIP_COPY_CONTROL
     }
+#endif // LXR_HAS_DIAGNOSTIC_PROBES
     if (kind == WorkKind::TraceObjects || kind == WorkKind::TraceScan)
     {
         uint64_t pending = m_trace_pending.load(std::memory_order_relaxed);
@@ -2014,10 +2053,12 @@ LxrReferenceCounting::Work* LxrReferenceCounting::NewWork(
         {
             if (pending == UINT64_MAX)
             {
+#ifdef LXR_HAS_DIAGNOSTIC_PROBES
                 if (m_storage_diagnostics.load(std::memory_order_relaxed))
                 {
                     m_storage_metrics[1].fetch_sub(bytes, std::memory_order_relaxed);
                 }
+#endif // LXR_HAS_DIAGNOSTIC_PROBES
                 delete work;
                 Fail(LxrRcResult::CapacityExceeded);
                 return nullptr;
@@ -2117,12 +2158,14 @@ void LxrReferenceCounting::ReleaseWork(Work* work)
             Fail(LxrRcResult::InvariantViolation);
         }
     }
+#ifdef LXR_HAS_DIAGNOSTIC_PROBES
     if (m_storage_diagnostics.load(std::memory_order_relaxed))
     {
         m_storage_metrics[1].fetch_sub(sizeof(Work) +
             (work->ownedReferences == nullptr ? 0 : work->packet.GetReferenceCount() * sizeof(uintptr_t)),
             std::memory_order_relaxed);
     }
+#endif // LXR_HAS_DIAGNOSTIC_PROBES
     delete work;
 }
 
@@ -2157,10 +2200,12 @@ void LxrReferenceCounting::DeleteWork()
     {
         TraceScan* next = scan->next;
         UnlinkTraceScan(scan);
+#ifdef LXR_HAS_DIAGNOSTIC_PROBES
         if (m_storage_diagnostics.load(std::memory_order_relaxed))
         {
             m_storage_metrics[5].fetch_sub(sizeof(TraceScan), std::memory_order_relaxed);
         }
+#endif // LXR_HAS_DIAGNOSTIC_PROBES
         delete scan;
         scan = next;
     }
@@ -2213,10 +2258,12 @@ void LxrReferenceCounting::RetireCompletedWork()
         if (scan->complete && scan->users.load(std::memory_order_acquire) == 0)
         {
             UnlinkTraceScan(scan);
+#ifdef LXR_HAS_DIAGNOSTIC_PROBES
             if (m_storage_diagnostics.load(std::memory_order_relaxed))
             {
                 m_storage_metrics[5].fetch_sub(sizeof(TraceScan), std::memory_order_relaxed);
             }
+#endif // LXR_HAS_DIAGNOSTIC_PROBES
             delete scan;
         }
         else
@@ -2320,7 +2367,9 @@ LxrRcResult LxrReferenceCounting::FlushMutators()
         }
         m_young_spans.Sort();
         m_span_metrics[2].store(m_young_spans.Size(), std::memory_order_relaxed);
+#ifdef LXR_HAS_LIFETIME_PROBE
         CheckProbeInSpans();
+#endif // LXR_HAS_LIFETIME_PROBE
         // The pinned allocator belongs to no mutator. It gives its block back like a mutator allocator does.
         ImmixAllocationStatus status;
         if (m_pinned_allocator.Reset(&status) != SideMetadataResult::Success ||
@@ -2329,10 +2378,14 @@ LxrRcResult LxrReferenceCounting::FlushMutators()
             return Fail(LxrRcResult::AllocationFailure);
         }
     }
+#ifdef LXR_HAS_DIAGNOSTIC_PROBES
     if (m_storage_diagnostics.load(std::memory_order_relaxed))
     {
         m_storage_metrics[8].store(active, std::memory_order_release);
     }
+#else
+    (void)active;
+#endif // LXR_HAS_DIAGNOSTIC_PROBES
     return LxrRcResult::Success;
 }
 
@@ -2386,6 +2439,7 @@ LxrRcResult LxrReferenceCounting::FindInYoungSpans(uintptr_t address, Object** o
     return LxrRcResult::InvalidArgument;
 }
 
+#ifdef LXR_HAS_LIFETIME_PROBE
 void LxrReferenceCounting::CheckProbeInSpans()
 {
     // The probe is armed on a live object. A span that starts an object at the probed address is a birth only after
@@ -2413,6 +2467,7 @@ void LxrReferenceCounting::CheckProbeInSpans()
         m_probe_births.fetch_add(1, std::memory_order_release);
     }
 }
+#endif // LXR_HAS_LIFETIME_PROBE
 
 bool LxrReferenceCounting::IsOwnedObject(Object* object) const
 {
@@ -2426,10 +2481,12 @@ bool LxrReferenceCounting::IsOwnedObject(Object* object) const
 
 LxrRcResult LxrReferenceCounting::PrepareWork()
 {
+#ifdef LXR_HAS_DIAGNOSTIC_PROBES
     if (m_storage_diagnostics.load(std::memory_order_relaxed))
     {
         m_storage_metrics[7].store(m_root_counts[0] + m_root_counts[1], std::memory_order_release);
     }
+#endif // LXR_HAS_DIAGNOSTIC_PROBES
     LogBank& bank = m_banks[m_producer_bank.load(std::memory_order_relaxed)];
     for (bool increment : {true, false})
     {
@@ -3732,8 +3789,14 @@ LxrRcResult LxrReferenceCounting::TryCopyMature(Object** reference)
 #endif // LXR_SIDE_METADATA_TEST_PLATFORM
     }
     m_mark_metadata.Store(copyStart, 0, SideMetadataMemoryOrder::SequentiallyConsistent);
+#ifdef LXR_HAS_LIFETIME_PROBE
     uintptr_t watched = Start(source);
-    m_probe_start.compare_exchange_strong(watched, copyStart, std::memory_order_acq_rel);
+    // Arming precedes the pause; only this source's copying worker can move its watch.
+    if (m_probe_start.load(std::memory_order_acquire) == watched)
+    {
+        m_probe_start.compare_exchange_strong(watched, copyStart, std::memory_order_acq_rel);
+    }
+#endif // LXR_HAS_LIFETIME_PROBE
     CommitCopyRecord(m_configuration.workers, Start(source), size);
     Object** forwarding = reinterpret_cast<Object**>(reinterpret_cast<uint8_t*>(source) + sizeof(uintptr_t));
     Interlocked::ExchangePointer(forwarding, destination);
@@ -3872,8 +3935,13 @@ LxrRcResult LxrReferenceCounting::TryCopyNursery(
 #ifdef LXR_SIDE_METADATA_TEST_PLATFORM
     OracleBirth(copyStart, size);
 #endif // LXR_SIDE_METADATA_TEST_PLATFORM
+#ifdef LXR_HAS_LIFETIME_PROBE
     uintptr_t watched = start;
-    m_probe_start.compare_exchange_strong(watched, copyStart, std::memory_order_acq_rel);
+    if (m_probe_start.load(std::memory_order_acquire) == watched)
+    {
+        m_probe_start.compare_exchange_strong(watched, copyStart, std::memory_order_acq_rel);
+    }
+#endif // LXR_HAS_LIFETIME_PROBE
     CommitCopyRecord(worker, start, size);
     Object** forwarding = reinterpret_cast<Object**>(reinterpret_cast<uint8_t*>(source) + sizeof(uintptr_t));
     Interlocked::ExchangePointer(forwarding, copy);
@@ -5430,10 +5498,15 @@ LxrRcResult LxrReferenceCounting::Reclaim(uintptr_t start)
         return result;
     }
 #endif // LXR_SIDE_METADATA_TEST_PLATFORM
+#ifdef LXR_HAS_LIFETIME_PROBE
     NoteProbeReclaim(start);
+#else
+    (void)start;
+#endif // LXR_HAS_LIFETIME_PROBE
     return LxrRcResult::Success;
 }
 
+#ifdef LXR_HAS_LIFETIME_PROBE
 void LxrReferenceCounting::NoteProbeReclaim(uintptr_t start)
 {
     // The product has no per-object record of a young death, so the probe is also checked once per pause
@@ -5446,6 +5519,7 @@ void LxrReferenceCounting::NoteProbeReclaim(uintptr_t start)
 #endif // !LXR_SIDE_METADATA_TEST_PLATFORM || !LXR_PROBE_SKIP_RECLAIM_CONTROL
     }
 }
+#endif // LXR_HAS_LIFETIME_PROBE
 
 #ifdef LXR_SIDE_METADATA_TEST_PLATFORM
 void LxrReferenceCounting::OracleBirth(uintptr_t start, size_t size)
@@ -5525,6 +5599,7 @@ size_t LxrReferenceCounting::FindNextOracleSlot(size_t first) const
 
 LxrRcResult LxrReferenceCounting::ArmLifetimeProbe(Object* object)
 {
+#ifdef LXR_HAS_LIFETIME_PROBE
     if (GetPhase() != LxrRcPhase::Mutator || !IsOwnedObject(object))
     {
         return LxrRcResult::InvalidArgument;
@@ -5536,16 +5611,28 @@ LxrRcResult LxrReferenceCounting::ArmLifetimeProbe(Object* object)
     }
     m_probe_retired.store(false, std::memory_order_release);
     return LxrRcResult::Success;
+#else
+    (void)object;
+    return LxrRcResult::UnsupportedLifetime;
+#endif // LXR_HAS_LIFETIME_PROBE
 }
 
 uint64_t LxrReferenceCounting::GetLifetimeProbeBirths() const
 {
+#ifdef LXR_HAS_LIFETIME_PROBE
     return m_probe_births.load(std::memory_order_acquire);
+#else
+    return 0;
+#endif // LXR_HAS_LIFETIME_PROBE
 }
 
 uint64_t LxrReferenceCounting::GetLifetimeProbeReclaims() const
 {
+#ifdef LXR_HAS_LIFETIME_PROBE
     return m_probe_reclaims.load(std::memory_order_acquire);
+#else
+    return 0;
+#endif // LXR_HAS_LIFETIME_PROBE
 }
 
 uint64_t LxrReferenceCounting::GetStorageMetric(size_t metric) const
@@ -5776,6 +5863,7 @@ LxrRcResult LxrReferenceCounting::ReleaseNurseryBlocks()
         return large;
     }
 #endif // LXR_SIDE_METADATA_TEST_PLATFORM
+#ifdef LXR_HAS_LIFETIME_PROBE
     // Every live young object has its first increment by now, so a probed object with count zero is dead.
     uintptr_t probe = m_probe_start.load(std::memory_order_acquire);
     if (probe != 0 && !m_probe_retired.load(std::memory_order_acquire) && OwnsAddress(probe) &&
@@ -5783,6 +5871,7 @@ LxrRcResult LxrReferenceCounting::ReleaseNurseryBlocks()
     {
         NoteProbeReclaim(probe);
     }
+#endif // LXR_HAS_LIFETIME_PROBE
     return LxrRcResult::Success;
 }
 
@@ -6669,7 +6758,11 @@ LxrRcResult LxrReferenceCounting::QueueTrace(
     }
 #endif // LXR_SIDE_METADATA_TEST_PLATFORM
     if (GetTracePhase() != LxrTracePhase::Concurrent ||
-        GetPhase() != LxrRcPhase::Mutator || m_hold_trace.load(std::memory_order_acquire))
+        GetPhase() != LxrRcPhase::Mutator
+#ifdef LXR_HAS_DIAGNOSTIC_PROBES
+        || m_hold_trace.load(std::memory_order_acquire)
+#endif // LXR_HAS_DIAGNOSTIC_PROBES
+        )
     {
         PushTraceUnsubmitted(work);
         return LxrRcResult::Success;
@@ -6691,10 +6784,12 @@ LxrRcResult LxrReferenceCounting::QueueTrace(
 
 LxrRcResult LxrReferenceCounting::PublishTraceWork()
 {
+#ifdef LXR_HAS_DIAGNOSTIC_PROBES
     if (m_hold_trace.load(std::memory_order_acquire))
     {
         return LxrRcResult::Success;
     }
+#endif // LXR_HAS_DIAGNOSTIC_PROBES
     LxrRcResult enabled = FromScheduler(m_scheduler.EnableConcurrentStage(
         LxrWorkBucketStage::ConcurrentResumable));
     if (enabled != LxrRcResult::Success)
@@ -7093,6 +7188,7 @@ LxrRcResult LxrReferenceCounting::ProcessTraceObject(
         ExitTraceLock(index);
         return Fail(LxrRcResult::OutOfMemory);
     }
+#ifdef LXR_HAS_DIAGNOSTIC_PROBES
     if (m_storage_diagnostics.load(std::memory_order_relaxed))
     {
         m_storage_metrics[4].fetch_add(1, std::memory_order_relaxed);
@@ -7104,6 +7200,7 @@ LxrRcResult LxrReferenceCounting::ProcessTraceObject(
         {
         }
     }
+#endif // LXR_HAS_DIAGNOSTIC_PROBES
     TraceScan* head = m_scan_work.load(std::memory_order_relaxed);
     do
     {
@@ -7236,6 +7333,7 @@ LxrRcResult LxrReferenceCounting::ProcessTraceScan(TraceScan* scan, bool finish,
     if (!finish && GetPhase() == LxrRcPhase::Mutator && GetTracePhase() == LxrTracePhase::Concurrent)
     {
         m_trace_metrics[ConcurrentSlices].fetch_add(1, std::memory_order_relaxed);
+#ifdef LXR_HAS_DIAGNOSTIC_PROBES
         uintptr_t target = reinterpret_cast<uintptr_t>(scan->object);
         if (!complete && m_scan_checkpoint.load(std::memory_order_acquire) == target)
         {
@@ -7253,6 +7351,7 @@ LxrRcResult LxrReferenceCounting::ProcessTraceScan(TraceScan* scan, bool finish,
             }
             m_scan_checkpoint_active.store(false, std::memory_order_release);
         }
+#endif // LXR_HAS_DIAGNOSTIC_PROBES
     }
     if (result == LxrRcResult::Success && !complete)
     {

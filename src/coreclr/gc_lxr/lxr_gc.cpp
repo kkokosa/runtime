@@ -143,6 +143,7 @@ LxrGcHeap* LxrGcHeap::s_heap = nullptr;
 
 struct LxrGcHeap::ScanCostScope
 {
+#ifdef LXR_HAS_DIAGNOSTIC_PROBES
     LxrGcHeap* heap;
     size_t metric;
     int64_t start = 0;
@@ -187,14 +188,27 @@ struct LxrGcHeap::ScanCostScope
                 CpuNanoseconds(heap) - cpu, std::memory_order_relaxed);
         }
     }
+#else
+    ScanCostScope(LxrGcHeap* owner, size_t index)
+    {
+        (void)owner;
+        (void)index;
+    }
+
+    ~ScanCostScope() = default;
+#endif // LXR_HAS_DIAGNOSTIC_PROBES
 };
 
 void LxrGcHeap::CountScanWork(size_t metric)
 {
+#ifdef LXR_HAS_DIAGNOSTIC_PROBES
     if (m_storage_diagnostics_enabled.load(std::memory_order_relaxed))
     {
         m_scan_metrics[metric].fetch_add(1, std::memory_order_relaxed);
     }
+#else
+    (void)metric;
+#endif // LXR_HAS_DIAGNOSTIC_PROBES
 }
 
 struct LxrGcHeap::WalkContext
@@ -864,20 +878,26 @@ void LxrGcHeap::LogOldReferences(void* destination, size_t length)
         }
         index = (byteIndex + 1) << 3;
     }
+#ifdef LXR_HAS_DIAGNOSTIC_PROBES
     bool diagnostics = m_storage_diagnostics_enabled.load(std::memory_order_relaxed);
+#endif // LXR_HAS_DIAGNOSTIC_PROBES
     if (!unlogged)
     {
         // Fresh allocation can have no valid MethodTable/array length yet. Do not inspect its layout.
+#ifdef LXR_HAS_DIAGNOSTIC_PROBES
         if (diagnostics)
         {
             m_bulk_metadata_early_outs.fetch_add(1, std::memory_order_relaxed);
         }
+#endif // LXR_HAS_DIAGNOSTIC_PROBES
         return;
     }
+#ifdef LXR_HAS_DIAGNOSTIC_PROBES
     if (diagnostics)
     {
         m_bulk_layout_lookups.fetch_add(1, std::memory_order_relaxed);
     }
+#endif // LXR_HAS_DIAGNOSTIC_PROBES
     Object* object = nullptr;
     if (m_engine.FindContainingObject(address, &object, false) != LxrRcResult::Success)
     {
@@ -915,10 +935,12 @@ void LxrGcHeap::BulkMoveWithWriteBarrier(void* context, void* destination, const
         return;
     }
     LxrGcHeap* heap = static_cast<LxrGcHeap*>(context);
+#ifdef LXR_HAS_DIAGNOSTIC_PROBES
     if (heap->m_storage_diagnostics_enabled.load(std::memory_order_relaxed))
     {
         heap->m_bulk_move_calls.fetch_add(1, std::memory_order_relaxed);
     }
+#endif // LXR_HAS_DIAGNOSTIC_PROBES
     heap->LogOldReferences(destination, length);
     uint8_t* to = static_cast<uint8_t*>(destination);
     const uint8_t* from = static_cast<const uint8_t*>(source);
@@ -975,10 +997,12 @@ void LxrGcHeap::BulkClearWithWriteBarrier(void* context, void* destination, size
         return;
     }
     LxrGcHeap* heap = static_cast<LxrGcHeap*>(context);
+#ifdef LXR_HAS_DIAGNOSTIC_PROBES
     if (heap->m_storage_diagnostics_enabled.load(std::memory_order_relaxed))
     {
         heap->m_bulk_clear_calls.fetch_add(1, std::memory_order_relaxed);
     }
+#endif // LXR_HAS_DIAGNOSTIC_PROBES
     heap->LogOldReferences(destination, length);
     uint8_t* cursor = static_cast<uint8_t*>(destination);
     while (length != 0 && (reinterpret_cast<uintptr_t>(cursor) & (sizeof(uintptr_t) - 1)) != 0)

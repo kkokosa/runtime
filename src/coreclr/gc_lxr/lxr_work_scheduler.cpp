@@ -2588,7 +2588,8 @@ LxrWorkSchedulerResult LxrWorkScheduler::WaitForCycleCompletion(uint32_t timeout
     }
 
     std::unique_lock<std::mutex> guard(m_impl->lock);
-    bool completed = m_impl->WaitFor(
+    // AdvanceBucketsLocked changes this predicate and notifies under the same mutex.
+    bool completed = m_impl->condition.wait_for(
         guard,
         std::chrono::milliseconds(timeoutMilliseconds),
         [this]() { return m_impl->cycleCompleted; });

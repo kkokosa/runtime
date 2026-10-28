@@ -281,7 +281,7 @@ private:
 #else
         if (pressure.overshoot)
         {
-            return pressure.immixFreePages <= OvershootFreePages;
+            return pressure.copyReservePages != 0 && pressure.immixFreePages <= OvershootFreePages;
         }
         return pressure.copyReservePages != 0 && pressure.copyReservePages >= pressure.immixFreePages;
 #endif

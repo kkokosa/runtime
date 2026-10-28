@@ -13,6 +13,11 @@
 #include "lxr_pin_list.h"
 #include "lxr_young_spans.h"
 
+#if defined(LXR_SIDE_METADATA_TEST_PLATFORM) || defined(LXR_ENABLE_LIFETIME_PROBE) || defined(LXR_ENABLE_DIAGNOSTIC_PROBES)
+#define LXR_HAS_LIFETIME_PROBE 1
+#define LXR_HAS_DIAGNOSTIC_PROBES 1
+#endif // defined(LXR_SIDE_METADATA_TEST_PLATFORM) || defined(LXR_ENABLE_LIFETIME_PROBE) || defined(LXR_ENABLE_DIAGNOSTIC_PROBES)
+
 class Object;
 class LxrReferenceCounting;
 
@@ -282,6 +287,7 @@ private:
 class LxrPhaseScope final
 {
 public:
+#ifdef LXR_HAS_DIAGNOSTIC_PROBES
     LxrPhaseScope(LxrPauseTimers& timers, size_t phase)
         : m_timers(timers), m_phase(phase), m_start(timers.Enabled() ? timers.Stamp() : 0)
     {
@@ -294,14 +300,25 @@ public:
             m_timers.Add(m_phase, m_timers.Stamp() - m_start);
         }
     }
+#else
+    LxrPhaseScope(LxrPauseTimers& timers, size_t phase)
+    {
+        (void)timers;
+        (void)phase;
+    }
+
+    ~LxrPhaseScope() = default;
+#endif // LXR_HAS_DIAGNOSTIC_PROBES
 
     LxrPhaseScope(const LxrPhaseScope&) = delete;
     LxrPhaseScope& operator=(const LxrPhaseScope&) = delete;
 
+#ifdef LXR_HAS_DIAGNOSTIC_PROBES
 private:
     LxrPauseTimers& m_timers;
     size_t m_phase;
     int64_t m_start;
+#endif // LXR_HAS_DIAGNOSTIC_PROBES
 };
 
 class LxrRcMutator final
@@ -673,8 +690,10 @@ private:
     // Looks for the object that contains the address in the spans of the pause. Returns InvalidArgument when no span
     // contains the address.
     LxrRcResult FindInYoungSpans(uintptr_t address, Object** object, bool requireCounted) const;
+#ifdef LXR_HAS_LIFETIME_PROBE
     // Counts a birth of the lifetime probe when an object of a recorded span starts at the probed address.
     void CheckProbeInSpans();
+#endif // LXR_HAS_LIFETIME_PROBE
     // P22 (D2). The ValidObject bit of an Immix object that is about to get its first count. It must be visible before
     // the count is, because another worker that sees the count may trace the object.
     void MarkPromotedStart(uintptr_t start);
@@ -738,7 +757,9 @@ private:
     // Per-object accounting after a death or a swept cycle (the lifetime probe and, in the test platform, the
     // oracle). The product keeps no per-object record, so this costs one load.
     LxrRcResult Reclaim(uintptr_t start);
+#ifdef LXR_HAS_LIFETIME_PROBE
     void NoteProbeReclaim(uintptr_t start);
+#endif // LXR_HAS_LIFETIME_PROBE
     // The pause releases the clean blocks that mutators took since the last pause and that no object promoted.
     // It looks at those blocks only.
     LxrRcResult ReleaseNurseryBlocks();
@@ -855,10 +876,12 @@ private:
     std::atomic<size_t> m_live_bytes{0};
     std::atomic<uint64_t> m_reclaimed_bytes{0};
 #endif // LXR_SIDE_METADATA_TEST_PLATFORM
+#ifdef LXR_HAS_LIFETIME_PROBE
     std::atomic<uintptr_t> m_probe_start{0};
     std::atomic<uint64_t> m_probe_births{0};
     std::atomic<bool> m_probe_retired{false};
     std::atomic<uint64_t> m_probe_reclaims{0};
+#endif // LXR_HAS_LIFETIME_PROBE
     std::atomic<uint64_t> m_storage_metrics[9]{};
     std::atomic<uint64_t> m_trace_batch_metrics[5]{};
     // P25 (F1). Number of trace packets that a pause queued for a counted object (metric 57 of GetStorageMetric).
