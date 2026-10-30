@@ -311,7 +311,7 @@ namespace
     class PacketScope final
     {
     public:
-#ifdef LXR_HAS_DIAGNOSTIC_PROBES
+#ifdef LXR_HAS_PHASE_TIMERS
         PacketScope(LxrPauseTimers& timers, LxrPauseTimers::Group group, bool timed)
             : m_timers(timers), m_group(group), m_start(timed && timers.Enabled() ? timers.Stamp() : 0)
         {
@@ -333,17 +333,17 @@ namespace
         }
 
         ~PacketScope() = default;
-#endif // LXR_HAS_DIAGNOSTIC_PROBES
+#endif // LXR_HAS_PHASE_TIMERS
 
         PacketScope(const PacketScope&) = delete;
         PacketScope& operator=(const PacketScope&) = delete;
 
-#ifdef LXR_HAS_DIAGNOSTIC_PROBES
+#ifdef LXR_HAS_PHASE_TIMERS
     private:
         LxrPauseTimers& m_timers;
         LxrPauseTimers::Group m_group;
         int64_t m_start;
-#endif // LXR_HAS_DIAGNOSTIC_PROBES
+#endif // LXR_HAS_PHASE_TIMERS
     };
 }
 
@@ -806,9 +806,10 @@ LxrRcResult LxrReferenceCounting::Initialize(
             return Fail(LxrRcResult::AllocationFailure);
         }
     }
-    // The pinned allocator takes the owner number after every mutator and every copy allocator.
+    // The pinned allocator takes the owner number after every mutator and every copy allocator. The pause thread has copy
+    // allocators too: it runs packets itself (LxrWorkScheduler::RunStwCycle) with the execution index workers.
     if (m_pinned_allocator.Initialize(
-            &m_allocation, configuration.maximumMutators + 2 * configuration.workers + 1) !=
+            &m_allocation, configuration.maximumMutators + 2 * (configuration.workers + 1) + 1) !=
         SideMetadataResult::Success)
     {
         return Fail(LxrRcResult::AllocationFailure);
@@ -816,19 +817,19 @@ LxrRcResult LxrReferenceCounting::Initialize(
     if (configuration.evacuateNursery || configuration.evacuateMature)
     {
         size_t allocatorBytes;
-        if (configuration.workers > (SIZE_MAX - configuration.maximumMutators) / 2 ||
-            !TryMultiply(2 * configuration.workers, sizeof(ImmixBumpAllocator), &allocatorBytes) ||
+        if (configuration.workers > (SIZE_MAX - configuration.maximumMutators) / 2 - 1 ||
+            !TryMultiply(2 * (configuration.workers + 1), sizeof(ImmixBumpAllocator), &allocatorBytes) ||
             configuration.forwardingMask == 0 || configuration.forwardingShift >= 32 ||
             (configuration.forwardingMask >> configuration.forwardingShift) != 3)
         {
             return Fail(LxrRcResult::InvalidArgument);
         }
-        m_copy_allocators = new (std::nothrow) ImmixBumpAllocator[2 * configuration.workers];
+        m_copy_allocators = new (std::nothrow) ImmixBumpAllocator[2 * (configuration.workers + 1)];
         if (m_copy_allocators == nullptr)
         {
             return Fail(LxrRcResult::OutOfMemory);
         }
-        for (size_t index = 0; index < 2 * configuration.workers; index++)
+        for (size_t index = 0; index < 2 * (configuration.workers + 1); index++)
         {
             if (m_copy_allocators[index].Initialize(
                     &m_allocation, configuration.maximumMutators + index + 1) != SideMetadataResult::Success)
@@ -3540,6 +3541,13 @@ LxrRcResult LxrReferenceCounting::ReplayMatureRememberedSlots()
             }
             RememberedChunk::Entry entry = chunk->entries[index];
             uintptr_t address = reinterpret_cast<uintptr_t>(entry.slot);
+            if (!OwnsAddress(address))
+            {
+                // The slot was in a block that the give-back returned after the slot was remembered. The planes of the
+                // block are gone, so the reuse metadata cannot be read, and the block held no object.
+                m_mature_metrics[8].fetch_add(1, std::memory_order_relaxed);
+                continue;
+            }
             uintptr_t reuse = (IsImmix(address) ? m_line_reuse_metadata : m_page_reuse_metadata).Load(
                 address, SideMetadataMemoryOrder::SequentiallyConsistent);
             LxrRcResult result = LxrRcResult::Success;
@@ -3657,7 +3665,7 @@ LxrRcResult LxrReferenceCounting::ReplayMatureRememberedSlots()
 
 LxrRcResult LxrReferenceCounting::AllocateCopy(size_t size, size_t worker, uintptr_t* copyStart)
 {
-    _ASSERTE(worker < m_configuration.workers);
+    _ASSERTE(worker <= m_configuration.workers);
     *copyStart = 0;
     ImmixAllocationRequest request{size, sizeof(uintptr_t), 0};
     ImmixAllocationStatus status;
@@ -4801,7 +4809,7 @@ LxrRcResult LxrReferenceCounting::RetireForwardedSources()
     {
         return LxrRcResult::Success;
     }
-    for (size_t worker = 0; worker < 2 * m_configuration.workers; worker++)
+    for (size_t worker = 0; worker < 2 * (m_configuration.workers + 1); worker++)
     {
         ImmixAllocationStatus status;
         LxrRcResult result = FromMetadata(m_copy_allocators[worker].Reset(&status));
@@ -6118,9 +6126,41 @@ LxrRcResult LxrReferenceCounting::RequestGrowth(bool large, size_t minimumBytes)
         return LxrRcResult::AllocationFailure;
     }
     m_grow_large = large;
+    m_grow_exact = false;
     m_grow_bytes = minimumBytes;
     m_growth_result = LxrRcResult::AllocationFailure;
     return LxrRcResult::Success;
+}
+
+LxrRcResult LxrReferenceCounting::RequestImmixCapacity(size_t targetBytes)
+{
+    if (GetPhase() != LxrRcPhase::Mutator || m_grow_bytes != 0)
+    {
+        return LxrRcResult::InvalidArgument;
+    }
+    size_t current = GetImmixCapacityBytes();
+    size_t reserved = m_configuration.immixBytes;
+    size_t remaining = m_configuration.hardLimitBytes > GetAdmittedBytes()
+        ? m_configuration.hardLimitBytes - GetAdmittedBytes() : 0;
+    size_t room = reserved - current < remaining ? reserved - current : remaining;
+    size_t wanted = targetBytes > current ? targetBytes - current : 0;
+    size_t increment = (wanted < room ? wanted : room) & ~(ImmixBlockGeometry::BlockBytes - 1);
+    if (increment == 0)
+    {
+        return LxrRcResult::AllocationFailure;
+    }
+    m_grow_large = false;
+    m_grow_exact = true;
+    m_grow_bytes = increment;
+    m_growth_result = LxrRcResult::AllocationFailure;
+    return LxrRcResult::Success;
+}
+
+size_t LxrReferenceCounting::GetImmixOccupiedBytes() const
+{
+    size_t blockBytes = GetNonFreeBlocks() * ImmixBlockGeometry::BlockBytes;
+    size_t freeBytes = m_blocks.GetReusableFreeLines() * ImmixBlockGeometry::LineBytes;
+    return blockBytes > freeBytes ? blockBytes - freeBytes : 0;
 }
 
 size_t LxrReferenceCounting::GetCleanNurseryBlocks() const
@@ -6263,7 +6303,7 @@ LxrRcResult LxrReferenceCounting::GrowSuspended()
     size_t minimum = (required + granularity - 1) & ~(granularity - 1);
     // With overshoot the capacity above the floor is borrowed to-space, so the doubling starts from the kept part.
     size_t base = m_overshoot && !m_grow_large && m_immix_floor != 0 ? m_immix_floor : current;
-    size_t increment = base > minimum ? base : minimum;
+    size_t increment = m_grow_exact ? minimum : (base > minimum ? base : minimum);
     increment = increment > maximum - current ? maximum - current : increment;
     if (!FitAdmission(m_grow_large, current, minimum, &increment))
     {

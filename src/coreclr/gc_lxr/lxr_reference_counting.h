@@ -18,6 +18,11 @@
 #define LXR_HAS_DIAGNOSTIC_PROBES 1
 #endif // defined(LXR_SIDE_METADATA_TEST_PLATFORM) || defined(LXR_ENABLE_LIFETIME_PROBE) || defined(LXR_ENABLE_DIAGNOSTIC_PROBES)
 
+// Phase and packet timers only (a few timestamps per phase), without the cost probes and storage diagnostics.
+#if defined(LXR_HAS_DIAGNOSTIC_PROBES) || defined(LXR_ENABLE_PHASE_TIMERS)
+#define LXR_HAS_PHASE_TIMERS 1
+#endif // defined(LXR_HAS_DIAGNOSTIC_PROBES) || defined(LXR_ENABLE_PHASE_TIMERS)
+
 class Object;
 class LxrReferenceCounting;
 
@@ -287,7 +292,7 @@ private:
 class LxrPhaseScope final
 {
 public:
-#ifdef LXR_HAS_DIAGNOSTIC_PROBES
+#ifdef LXR_HAS_PHASE_TIMERS
     LxrPhaseScope(LxrPauseTimers& timers, size_t phase)
         : m_timers(timers), m_phase(phase), m_start(timers.Enabled() ? timers.Stamp() : 0)
     {
@@ -308,17 +313,17 @@ public:
     }
 
     ~LxrPhaseScope() = default;
-#endif // LXR_HAS_DIAGNOSTIC_PROBES
+#endif // LXR_HAS_PHASE_TIMERS
 
     LxrPhaseScope(const LxrPhaseScope&) = delete;
     LxrPhaseScope& operator=(const LxrPhaseScope&) = delete;
 
-#ifdef LXR_HAS_DIAGNOSTIC_PROBES
+#ifdef LXR_HAS_PHASE_TIMERS
 private:
     LxrPauseTimers& m_timers;
     size_t m_phase;
     int64_t m_start;
-#endif // LXR_HAS_DIAGNOSTIC_PROBES
+#endif // LXR_HAS_PHASE_TIMERS
 };
 
 class LxrRcMutator final
@@ -521,6 +526,13 @@ public:
         bool large, size_t minimumBytes, LxrRcCaptureRoots capture, void* context, uint32_t timeout);
     uint64_t GetGrowthCount() const;
     LxrRcResult RequestGrowth(bool large, size_t minimumBytes);
+    // Heap sizing: ask the next pause to raise the Immix capacity to targetBytes, clamped to the reservation and the
+    // hard limit. Unlike RequestGrowth the pause adds exactly the clamped difference and does not double.
+    // Returns AllocationFailure when there is nothing to add.
+    LxrRcResult RequestImmixCapacity(size_t targetBytes);
+    // Immix bytes that hold live data or are unavailable to the allocator: whole non-free blocks minus the free lines of
+    // reusable blocks. Use it after a lazy sweep to estimate the mature live size.
+    size_t GetImmixOccupiedBytes() const;
     LxrRcResult GetGrowthResult() const;
     size_t GetImmixReservationBytes() const;
     size_t GetImmixCapacityBytes() const;
@@ -544,6 +556,7 @@ public:
         BorrowRequestPages, BorrowFreePages, OvershootMetricCount,
     };
     uint64_t GetOvershootMetric(size_t metric) const;
+    LxrWorkSchedulerMetrics GetSchedulerMetrics() const { return m_scheduler.GetMetrics(); }
     size_t GetPauseSurvivorBytes() const;
     // P22 (D2). Span statistics: 0 = spans closed, 1 = bytes in closed spans, 2 = spans of the last pause.
     uint64_t GetSpanMetric(size_t metric) const { return m_span_metrics[metric].load(std::memory_order_relaxed); }
@@ -861,6 +874,7 @@ private:
     size_t m_initial_large = 0;
     size_t m_grow_bytes = 0;
     bool m_grow_large = false;
+    bool m_grow_exact = false;
     LxrRcResult m_growth_result = LxrRcResult::Success;
     std::atomic<uint64_t> m_growth_count{0};
     // P17 S5b. The capacity that is never given back: the initial capacity and every regular growth. The part above it

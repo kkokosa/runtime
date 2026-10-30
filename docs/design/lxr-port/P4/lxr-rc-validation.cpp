@@ -7,6 +7,7 @@
 #include "../../../../src/coreclr/gc_lxr/lxr_reference_counting.h"
 #include "../../../../src/coreclr/gc_lxr/lxr_finalizer_pause.h"
 #include "../../../../src/coreclr/gc_lxr/lxr_collection_policy.h"
+#include "../../../../src/coreclr/gc_lxr/lxr_heap_sizing.h"
 #include "../../../../src/coreclr/gc_lxr/lxr_worker_policy.h"
 #include "../../../../src/coreclr/gc_lxr/lxr_work_scheduler.h"
 
@@ -2423,6 +2424,107 @@ namespace
             "affordable minimum growth succeeds when preferred doubling exceeds the native budget");
         Check(engine.Allocate(mutator, 24, &next) == LxrRcResult::Success,
             "smaller admitted growth makes the failed allocation succeed");
+    }
+
+    void ValidateHeapSizer()
+    {
+        constexpr size_t MB = size_t{1} << 20;
+        LxrHeapSizingConfiguration configuration;
+        configuration.nurseryCapBytes = 96 * MB;
+        LxrHeapSizer sizer;
+        sizer.Configure(configuration, 8 * MB);
+        size_t reservation = 128 * MB;
+        size_t capacity = 8 * MB;
+        Check(sizer.Enabled() && sizer.BudgetBytes() == 8 * MB, "the sizer starts with the initial capacity as budget");
+        size_t expected[] = {16 * MB, 32 * MB, 64 * MB, 96 * MB, 96 * MB};
+        bool ramp = true;
+        for (size_t step : expected)
+        {
+            capacity = sizer.TargetCapacity(capacity, 0, reservation);
+            ramp = ramp && capacity == step;
+        }
+        Check(ramp && sizer.BudgetBytes() == 96 * MB, "with no live data the capacity doubles up to the cap and stays there");
+        Check(sizer.TargetCapacity(96 * MB, 40 * MB, reservation) == 96 * MB,
+            "the capacity never exceeds the share of the reservation");
+        Check(sizer.TargetCapacity(120 * MB, 0, reservation) == 120 * MB, "the target never lowers the capacity");
+        Check(sizer.TargetCapacity(8 * MB, SIZE_MAX, reservation) == 96 * MB, "a huge live size does not overflow");
+
+        LxrHeapSizer live;
+        live.Configure(configuration, 8 * MB);
+        Check(live.TargetCapacity(8 * MB, 20 * MB, reservation) == 36 * MB,
+            "the target is the live size plus the doubled budget");
+        Check(live.TargetCapacity(36 * MB, 20 * MB, reservation) == 52 * MB,
+            "the budget doubles at each heap-full collection and the live size is added again");
+
+        configuration.growthFactor = 4;
+        LxrHeapSizer fast;
+        fast.Configure(configuration, 8 * MB);
+        Check(fast.TargetCapacity(8 * MB, 0, reservation) == 32 * MB, "a growth factor of 4 quadruples the budget");
+
+        configuration.enabled = false;
+        LxrHeapSizer disabled;
+        disabled.Configure(configuration, 8 * MB);
+        Check(!disabled.Enabled() && disabled.TargetCapacity(8 * MB, 0, reservation) == 8 * MB &&
+            disabled.Requests() == 0, "a disabled sizer keeps the capacity");
+        configuration.enabled = true;
+        configuration.nurseryCapBytes = 0;
+        LxrHeapSizer none;
+        none.Configure(configuration, 8 * MB);
+        Check(!none.Enabled() && none.TargetCapacity(8 * MB, 0, reservation) == 8 * MB, "a zero cap keeps the capacity");
+        configuration.nurseryCapBytes = 4 * MB;
+        LxrHeapSizer below;
+        below.Configure(configuration, 8 * MB);
+        Check(below.TargetCapacity(8 * MB, 0, reservation) == 8 * MB && below.BudgetBytes() == 8 * MB,
+            "a cap below the initial capacity does not grow the heap");
+
+        Check(LxrHeapSizer::DefaultNurseryCap(uint64_t{32} << 30) == 96 * MB, "a large machine gets the largest nursery cap");
+        Check(LxrHeapSizer::DefaultNurseryCap(uint64_t{1} << 30) == 64 * MB, "the cap is a sixteenth of physical memory");
+        Check(LxrHeapSizer::DefaultNurseryCap(uint64_t{256} << 20) == 16 * MB && LxrHeapSizer::DefaultNurseryCap(0) == 16 * MB,
+            "a small or unknown memory limit gets the smallest cap");
+    }
+
+    void ValidateImmixCapacityRequest()
+    {
+        for (int limited = 0; limited < 2; limited++)
+        {
+            LxrReferenceCounting engine;
+            // Immix 1 MiB admitted of 4 MiB reserved; large 1 MiB. The limited fixture allows 3 MiB in total.
+            LxrRcConfiguration configuration{
+                1024 * 1024, 1024 * 1024, 4, 1024, 4, 8, 4 * 1024 * 1024, 1024 * 1024,
+                (limited != 0 ? 3u : 5u) * 1024 * 1024,
+            };
+            LxrPauseRuntimeAdapter runtime{Suspend, Resume, nullptr, false};
+            LxrRcMutator* mutator = nullptr;
+            int identity;
+            if (!Check(engine.Initialize(configuration, runtime) == LxrRcResult::Success,
+                    "capacity request fixture initializes") ||
+                !Check(engine.AttachMutator(&identity, &mutator) == LxrRcResult::Success,
+                    "capacity request mutator attaches"))
+            {
+                return;
+            }
+            size_t block = ImmixBlockGeometry::BlockBytes;
+            size_t initial = engine.GetImmixCapacityBytes();
+            std::vector<Object*> none;
+            Check(engine.GetImmixOccupiedBytes() == 0, "an empty heap occupies no Immix bytes");
+            Check(engine.RequestImmixCapacity(initial) == LxrRcResult::AllocationFailure &&
+                engine.RequestImmixCapacity(initial - 1) == LxrRcResult::AllocationFailure,
+                "a target at or below the capacity requests nothing");
+            Check(engine.RequestImmixCapacity(initial + 10 * block + block / 2) == LxrRcResult::Success,
+                "a target above the capacity is accepted");
+            Check(engine.RequestImmixCapacity(initial + 20 * block) == LxrRcResult::InvalidArgument,
+                "a second request waits until the pause has served the first");
+            Check(Epoch(engine, none) && engine.GetGrowthResult() == LxrRcResult::Success &&
+                engine.GetImmixCapacityBytes() == initial + 10 * block,
+                "the pause adds the requested whole blocks and does not double the capacity");
+            Check(engine.RequestImmixCapacity(SIZE_MAX) == LxrRcResult::Success && Epoch(engine, none),
+                "a huge target is clamped, not refused");
+            size_t expected = limited != 0 ? 2 * 1024 * 1024 : 4 * 1024 * 1024;
+            Check(engine.GetImmixCapacityBytes() == expected && engine.GetAdmittedBytes() <= (limited != 0 ? 3u : 5u) * 1024 * 1024,
+                "the capacity stops at the smaller of the reservation and the hard limit");
+            Check(engine.RequestImmixCapacity(SIZE_MAX) == LxrRcResult::AllocationFailure,
+                "a full heap has nothing to add");
+        }
     }
 
     Object* Allocate(
@@ -8906,6 +9008,7 @@ int main(int argc, char** argv)
     {
         ValidatePolicy();
         ValidatePolicyIntegration();
+        ValidateHeapSizer();
         std::printf("%s: %d/%d policy checks\n", Failures == 0 ? "PASS" : "FAIL", Checks - Failures, Checks);
         return Failures == 0 ? 0 : 1;
     }
@@ -8916,6 +9019,7 @@ int main(int argc, char** argv)
         ValidateGrowthFailure();
         ValidateCoalescedGrowth();
         ValidateMinimumGrowthBudget();
+        ValidateImmixCapacityRequest();
         std::printf("%s: %d/%d fast-span and growth checks\n",
             Failures == 0 ? "PASS" : "FAIL", Checks - Failures, Checks);
         return Failures == 0 ? 0 : 1;

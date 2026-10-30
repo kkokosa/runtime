@@ -24,6 +24,9 @@
 #include <thread>
 #include <utility>
 #include <vector>
+#if defined(_MSC_VER)
+#include <intrin.h>
+#endif
 
 #ifdef LXR_WORK_SCHEDULER_CPP_RESTORE_BYTE
 #pragma pop_macro("byte")
@@ -95,6 +98,28 @@ namespace
     LXR_SCHEDULER_TLS const void* tlsScheduler = nullptr;
     LXR_SCHEDULER_TLS size_t tlsWorkerIndex = 0;
     LXR_SCHEDULER_TLS bool tlsRunningTrace = false;
+    // True while the pause thread runs the packets of a stop-the-world cycle itself (RunStwCycle).
+    LXR_SCHEDULER_TLS bool tlsPauseThread = false;
+
+    // P29. The pause thread asks for help from the workers only when more than this many packets wait for it (it runs that
+    // many packets one after the other faster than a sleeping worker wakes up), and a stage with at most this many packets
+    // wakes nobody when the pause thread helps.
+    constexpr size_t PauseThreadQueueLimit = 2;
+    constexpr size_t InlineStagePackets = 2;
+    // The pause thread spins this long, waiting for the workers to finish a stage, before it sleeps.
+    constexpr int64_t PauseSpinMicroseconds = 150;
+    inline void CpuRelax()
+    {
+#if defined(_MSC_VER) && (defined(_M_X64) || defined(_M_IX86))
+        _mm_pause();
+#elif defined(__x86_64__) || defined(__i386__)
+        __builtin_ia32_pause();
+#elif defined(__aarch64__)
+        __asm__ __volatile__("yield");
+#else
+        std::this_thread::yield();
+#endif
+    }
 
     // A small test-and-test-and-set lock for the injectors. The thread yields after a few spins, so a machine with one or two
     // processors does not burn its time slice.
@@ -798,7 +823,10 @@ public:
         if (preferredWorker != LxrWorkScheduler::NoPreferredWorker &&
             preferredWorker != workerIndex)
         {
-            workers[workerIndex].stolen++;
+            if (workerIndex < workers.size())
+            {
+                workers[workerIndex].stolen++;
+            }
             stolen++;
         }
         if (!packet->IsDeferred())
@@ -1090,12 +1118,12 @@ public:
                 {
                     cycleActive = false;
                     cycleCompleted = true;
-                    NotifyAllLocked();
+                    NotifyCycleCompletedLocked();
                     break;
                 }
                 cycleActive = false;
                 cycleCompleted = true;
-                NotifyAllLocked();
+                NotifyCycleCompletedLocked();
                 break;
             }
 
@@ -1119,6 +1147,7 @@ public:
         if (externalWaiters.load(std::memory_order_seq_cst) != 0)
         {
             std::lock_guard<std::mutex> guard(lock);
+            externalNotifies++;
             condition.notify_all();
         }
     }
@@ -1142,7 +1171,10 @@ public:
             LxrWorkPacketState::Completed))
         {
             bucket.outstanding--;
-            workers[workerIndex].executed++;
+            if (workerIndex < workers.size())
+            {
+                workers[workerIndex].executed++;
+            }
             executed++;
             if (deferred)
             {
@@ -1209,21 +1241,8 @@ public:
             bool openedWork = !found && AdvanceBucketsLocked();
             if (!found && openedWork)
             {
-                // P25 (F4). A stage opened: wake as many workers as the stage has packets, not all of them.
-                size_t packets = static_cast<size_t>(buckets[StageIndex(currentStwStage)].outstanding);
-                if (packets >= parkedWorkers.load())
-                {
-                    NotifyAllLocked();
-                }
-                else
-                {
-                    for (size_t index = 0; index < packets; index++)
-                    {
-                        signals++;
-                        wakeupsInFlight++;
-                        workCondition.notify_one();
-                    }
-                }
+                // A stage opened. This worker runs the first packet itself; the others wake for the rest only.
+                WakeForStageLocked(static_cast<size_t>(buckets[StageIndex(currentStwStage)].outstanding), true, true);
             }
             else if (!found)
             {
@@ -1252,6 +1271,8 @@ public:
     std::atomic<size_t> queuedPackets{0};
     std::atomic<size_t> externalWaiters{0};
     std::atomic<uint64_t> signals{0};
+    std::atomic<uint64_t> externalWaits{0};
+    std::atomic<uint64_t> externalNotifies{0};
     // P25 (F4). At most this many workers run the packets of the concurrent trace while the program runs. The Java LXR
     // uses ConcGCThreads of its ParallelGCThreads workers for the concurrent trace. Default: all workers.
     std::atomic<size_t> concurrentTraceLimit{SIZE_MAX};
@@ -1268,6 +1289,187 @@ public:
         workCondition.notify_all();
     }
 
+    // The cycle is complete. Only the thread that waits for the pause needs to wake: every worker is parked, and no worker
+    // has work that this change of state makes runnable.
+    void NotifyCycleCompletedLocked()
+    {
+        signals++;
+        condition.notify_all();
+    }
+
+    // Wakes up to count workers that sleep on the work condition. callerIsParked: the caller is a worker that has counted
+    // itself as parked and does not sleep. The mutex is held.
+    void WakeWorkersLocked(size_t count, bool callerIsParked)
+    {
+        size_t parked = parkedWorkers.load();
+        size_t inFlight = wakeupsInFlight.load();
+        size_t sleeping = parked > inFlight ? parked - inFlight : 0;
+        if (callerIsParked && sleeping != 0)
+        {
+            sleeping--;
+        }
+        if (count > sleeping)
+        {
+            count = sleeping;
+        }
+        if (count == 0)
+        {
+            return;
+        }
+        signals++;
+        wakeupsInFlight += count;
+        if (count == sleeping)
+        {
+            workCondition.notify_all();
+            return;
+        }
+        for (size_t index = 0; index < count; index++)
+        {
+            workCondition.notify_one();
+        }
+    }
+
+    // The mutex is held. A stage opened with the given number of packets. callerRuns: the caller (a worker that opened the
+    // stage, or the pause thread) runs one packet itself, so the others need to wake for the rest only. A small stage wakes
+    // nobody when the pause thread helps: the caller finishes it before a sleeping worker could start.
+    void WakeForStageLocked(size_t packets, bool callerIsParkedWorker, bool callerRuns)
+    {
+        size_t wake = callerRuns ? (packets > 0 ? packets - 1 : 0) : packets;
+        if (pauseHelps && packets <= InlineStagePackets)
+        {
+            wake = 0;
+        }
+        WakeWorkersLocked(wake, callerIsParkedWorker);
+    }
+
+    // The pause thread takes one packet of the current stop-the-world stage from the injector of the stage. Packets that
+    // workers push to their own deques stay with those workers, and a worker runs them before it parks. Lazy packets of
+    // other stages are never run on this thread, so they cannot delay the pause.
+    LxrWorkPacket* PollPause(size_t executionIndex)
+    {
+        LxrWorkBucketStage stage = currentStwStage.load(std::memory_order_seq_cst);
+        if (StageIndex(stage) >= StageCount || !IsRunnable(stage))
+        {
+            return nullptr;
+        }
+        Bucket& bucket = buckets[StageIndex(stage)];
+        LxrWorkPacket* packet = nullptr;
+        while (bucket.injector.PopBatch(&packet, 1) == 1)
+        {
+            ClaimResult claim = TryClaim(packet, executionIndex);
+            if (claim == ClaimResult::Claimed)
+            {
+                return packet;
+            }
+            if (claim == ClaimResult::NotRunnable)
+            {
+                Requeue(packet);
+                return nullptr;
+            }
+        }
+        return nullptr;
+    }
+
+    bool PauseHasQueuedWork() const
+    {
+        LxrWorkBucketStage stage = currentStwStage.load(std::memory_order_seq_cst);
+        return StageIndex(stage) < StageCount && buckets[StageIndex(stage)].injector.Count() != 0;
+    }
+
+    // Spins while keepSpinning() is true, for at most the spin budget. Returns true when keepSpinning() became false.
+    template <typename Predicate>
+    bool SpinWhile(Predicate keepSpinning)
+    {
+        // A machine with one worker has one processor in the usual case. The thread that is waited for would not run.
+        if (workers.size() < 2)
+        {
+            return !keepSpinning();
+        }
+        const auto end = std::chrono::steady_clock::now() + std::chrono::microseconds(PauseSpinMicroseconds);
+        for (unsigned spins = 0;; spins++)
+        {
+            if (!keepSpinning())
+            {
+                return true;
+            }
+            if ((spins & 31) == 31 && std::chrono::steady_clock::now() >= end)
+            {
+                return false;
+            }
+            CpuRelax();
+        }
+    }
+
+    // The pause thread runs the packets of the stop-the-world cycle together with the workers, and it opens the next stage
+    // when it is the last thread that finishes one. A pause with few packets then needs no other thread at all.
+    LxrWorkSchedulerResult RunStwCycle(uint32_t timeoutMilliseconds)
+    {
+        const size_t executionIndex = workers.size();
+        const auto deadline = std::chrono::steady_clock::now() + std::chrono::milliseconds(timeoutMilliseconds);
+        struct PauseThreadScope final
+        {
+            PauseThreadScope() { tlsPauseThread = true; }
+            ~PauseThreadScope() { tlsPauseThread = false; }
+        } scope;
+        while (true)
+        {
+            if (cycleCompleted.load(std::memory_order_acquire))
+            {
+                return LxrWorkSchedulerResult::Success;
+            }
+            LxrWorkPacket* packet = PollPause(executionIndex);
+            if (packet != nullptr)
+            {
+                RunPacket(packet, executionIndex);
+                continue;
+            }
+
+            std::unique_lock<std::mutex> guard(lock);
+            if (cycleCompleted)
+            {
+                return LxrWorkSchedulerResult::Success;
+            }
+            if (shuttingDown)
+            {
+                return LxrWorkSchedulerResult::Shutdown;
+            }
+            if (!cycleActive)
+            {
+                return LxrWorkSchedulerResult::InvalidState;
+            }
+            if (PauseHasQueuedWork())
+            {
+                continue;
+            }
+            if (AllWorkersParkedLocked() && IsBucketDrainedLocked(currentStwStage))
+            {
+                if (AdvanceBucketsLocked())
+                {
+                    WakeForStageLocked(
+                        static_cast<size_t>(buckets[StageIndex(currentStwStage)].outstanding), false, true);
+                }
+                continue;
+            }
+
+            // Workers run packets of this stage. They open the next stage when the last of them parks.
+            guard.unlock();
+            if (SpinWhile([this]() { return !cycleCompleted.load(std::memory_order_acquire) && !PauseHasQueuedWork(); }))
+            {
+                continue;
+            }
+            guard.lock();
+            if (cycleCompleted)
+            {
+                return LxrWorkSchedulerResult::Success;
+            }
+            externalWaits++;
+            if (!condition.wait_until(guard, deadline, [this]() { return cycleCompleted.load() || shuttingDown.load(); }))
+            {
+                return LxrWorkSchedulerResult::Timeout;
+            }
+        }
+    }
+
     // Wakes one idle worker for one new packet, but only if the workers that are on their way (woken, not yet running) do
     // not already cover the packets that wait. This is "wake as many workers as there is work". A trace packet that cannot
     // run because of the limit wakes nobody: the worker that finishes a trace packet takes it.
@@ -1280,6 +1482,18 @@ public:
 #else
         if (IsTraceStage(stage) &&
             concurrentTraceRunning.load() >= concurrentTraceLimit.load())
+        {
+            return;
+        }
+        // A packet of a stage that no worker may run now (a stop-the-world stage before the cycle reaches it) wakes nobody:
+        // the change that opens the stage wakes the workers for it.
+        if (!IsRunnable(stage))
+        {
+            return;
+        }
+        // The pause thread runs the packets of the stage itself. It asks for help only when more packets wait than it
+        // runs one after the other without delay.
+        if (tlsPauseThread && queuedPackets.load() <= PauseThreadQueueLimit)
         {
             return;
         }
@@ -1345,13 +1559,18 @@ public:
     bool WaitFor(std::unique_lock<std::mutex>& guard, std::chrono::milliseconds timeout, Predicate predicate)
     {
         externalWaiters++;
+        externalWaits++;
         bool result = condition.wait_for(guard, timeout, predicate);
         externalWaiters--;
         return result;
     }
     std::atomic<bool> shuttingDown;
     std::atomic<bool> cycleActive;
-    bool cycleCompleted;
+    std::atomic<bool> cycleCompleted;
+    // Concurrent packets wait for workers that sleep; WakeAfterResume wakes them. Set under the mutex.
+    bool wakePending = false;
+    // The pause thread runs the packets of the current cycle together with the workers (RunStwCycle). Set by BeginStwCycle.
+    bool pauseHelps = false;
     std::atomic<bool> interruptionRequested;
     bool concurrentInterrupted;
     bool concurrentWasEnabled[2];
@@ -1612,6 +1831,7 @@ LxrWorkSchedulerResult LxrWorkScheduler::RunQueuedInline(
     *ran = packets.size();
     if (m_impl->externalWaiters != 0)
     {
+        m_impl->externalNotifies++;
         m_impl->condition.notify_all();
     }
     return LxrWorkSchedulerResult::Success;
@@ -2171,7 +2391,17 @@ LxrWorkSchedulerResult LxrWorkScheduler::InterruptConcurrentWork(uint32_t timeou
         resumable.enabled = false;
         resumable.state = BucketState::Closed;
         m_impl->interruptionRequested = true;
-        m_impl->NotifyAllLocked();
+        if (m_impl->IsBucketDrainedLocked(LxrWorkBucketStage::Unconstrained) &&
+            m_impl->IsBucketDrainedLocked(LxrWorkBucketStage::Concurrent))
+        {
+            // No worker has a packet to run or to finish, so no sleeping worker needs to learn of the interruption.
+            m_impl->signals++;
+            m_impl->condition.notify_all();
+        }
+        else
+        {
+            m_impl->NotifyAllLocked();
+        }
     }
 
     bool ready = m_impl->WaitFor(
@@ -2230,7 +2460,7 @@ LxrWorkSchedulerResult LxrWorkScheduler::CancelConcurrentInterruption()
     return LxrWorkSchedulerResult::Success;
 }
 
-LxrWorkSchedulerResult LxrWorkScheduler::BeginStwCycle()
+LxrWorkSchedulerResult LxrWorkScheduler::BeginStwCycle(bool pauseThreadRuns)
 {
     if (m_impl == nullptr)
     {
@@ -2277,7 +2507,19 @@ LxrWorkSchedulerResult LxrWorkScheduler::BeginStwCycle()
     Impl::Bucket& first = m_impl->buckets[FirstStwIndex];
     first.state = BucketState::Open;
     m_impl->RecordOpenLocked(LxrFirstStwStage);
-    m_impl->NotifyAllLocked();
+    m_impl->pauseHelps = pauseThreadRuns;
+    // Open the stages that have no packets here, without a round of wake-ups: every worker is usually parked, and then no
+    // other thread needs to run for this. A worker that is still busy opens them when it parks.
+    m_impl->AdvanceBucketsLocked();
+    if (!m_impl->cycleCompleted)
+    {
+        size_t packets = static_cast<size_t>(
+            m_impl->buckets[StageIndex(m_impl->currentStwStage)].outstanding);
+        if (packets != 0)
+        {
+            m_impl->WakeForStageLocked(packets, false, m_impl->pauseHelps);
+        }
+    }
     return LxrWorkSchedulerResult::Success;
 }
 
@@ -2385,7 +2627,8 @@ LxrWorkSchedulerResult LxrWorkScheduler::PublishDeferredConcurrentWork(
     }
     else
     {
-        m_impl->NotifyAllLocked();
+        // As many workers as packets; the packets that these workers submit wake further workers.
+        m_impl->WakeWorkersLocked(static_cast<size_t>(publishedCount), false);
     }
 #ifdef LXR_ENABLE_LAZY_COMPLETION_COUNTER
     LxrLazyCompletionRegistration completionSeed;
@@ -2408,7 +2651,9 @@ LxrWorkSchedulerResult LxrWorkScheduler::PublishDeferredConcurrentWork(
         m_impl->completionFailure = true;
         m_impl->ownershipViolations++;
     }
-    m_impl->NotifyAllLocked();
+    // The waiting threads (WaitForCompletion) learn of the completion. No worker needs to wake for it.
+    m_impl->signals++;
+    m_impl->condition.notify_all();
     if (completionResult == LxrCompletionResult::CallbackFailed)
     {
         return LxrWorkSchedulerResult::CompletionFailed;
@@ -2445,7 +2690,7 @@ LxrWorkSchedulerResult LxrWorkScheduler::RecordMutatorResume(uint64_t expectedGe
     return LxrWorkSchedulerResult::Success;
 }
 
-LxrWorkSchedulerResult LxrWorkScheduler::ResumeInterruptedConcurrentWork()
+LxrWorkSchedulerResult LxrWorkScheduler::ResumeInterruptedConcurrentWork(bool deferWake)
 {
     if (m_impl == nullptr)
     {
@@ -2460,6 +2705,7 @@ LxrWorkSchedulerResult LxrWorkScheduler::ResumeInterruptedConcurrentWork()
         return LxrWorkSchedulerResult::InvalidState;
     }
 
+    bool concurrentWork = false;
     for (LxrWorkBucketStage stage :
         {LxrWorkBucketStage::Concurrent, LxrWorkBucketStage::ConcurrentResumable})
     {
@@ -2468,10 +2714,36 @@ LxrWorkSchedulerResult LxrWorkScheduler::ResumeInterruptedConcurrentWork()
         bool hasWork = bucket.outstanding != 0;
         bucket.enabled = hasWork;
         bucket.state = hasWork ? BucketState::Open : BucketState::Closed;
+        concurrentWork |= hasWork;
     }
     m_impl->interruptionRequested = false;
     m_impl->concurrentInterrupted = false;
-    m_impl->NotifyAllLocked();
+    if (deferWake)
+    {
+        // The workers that must run the concurrent packets wake after the mutators have resumed (WakeAfterResume).
+        m_impl->wakePending = concurrentWork;
+        m_impl->signals++;
+        m_impl->condition.notify_all();
+    }
+    else
+    {
+        m_impl->NotifyAllLocked();
+    }
+    return LxrWorkSchedulerResult::Success;
+}
+
+LxrWorkSchedulerResult LxrWorkScheduler::WakeAfterResume()
+{
+    if (m_impl == nullptr)
+    {
+        return LxrWorkSchedulerResult::NotInitialized;
+    }
+    std::lock_guard<std::mutex> guard(m_impl->lock);
+    if (m_impl->wakePending)
+    {
+        m_impl->wakePending = false;
+        m_impl->NotifyAllLocked();
+    }
     return LxrWorkSchedulerResult::Success;
 }
 
@@ -2585,6 +2857,15 @@ LxrWorkSchedulerResult LxrWorkScheduler::WaitForPacket(
     return completed ? LxrWorkSchedulerResult::Success : LxrWorkSchedulerResult::Timeout;
 }
 
+LxrWorkSchedulerResult LxrWorkScheduler::RunStwCycle(uint32_t timeoutMilliseconds)
+{
+    if (m_impl == nullptr)
+    {
+        return LxrWorkSchedulerResult::NotInitialized;
+    }
+    return m_impl->RunStwCycle(timeoutMilliseconds);
+}
+
 LxrWorkSchedulerResult LxrWorkScheduler::WaitForCycleCompletion(uint32_t timeoutMilliseconds)
 {
     if (m_impl == nullptr)
@@ -2594,10 +2875,11 @@ LxrWorkSchedulerResult LxrWorkScheduler::WaitForCycleCompletion(uint32_t timeout
 
     std::unique_lock<std::mutex> guard(m_impl->lock);
     // AdvanceBucketsLocked changes this predicate and notifies under the same mutex.
+    m_impl->externalWaits++;
     bool completed = m_impl->condition.wait_for(
         guard,
         std::chrono::milliseconds(timeoutMilliseconds),
-        [this]() { return m_impl->cycleCompleted; });
+        [this]() { return m_impl->cycleCompleted.load(); });
     return completed ? LxrWorkSchedulerResult::Success : LxrWorkSchedulerResult::Timeout;
 }
 
@@ -2831,6 +3113,8 @@ LxrWorkSchedulerMetrics LxrWorkScheduler::GetMetrics() const
     metrics.deferredFlips = m_impl->deferredFlips;
     metrics.deferredEmptyFlips = m_impl->deferredEmptyFlips;
     metrics.signals = m_impl->signals;
+    metrics.externalWaits = m_impl->externalWaits;
+    metrics.externalNotifies = m_impl->externalNotifies;
 #ifdef LXR_ENABLE_LAZY_COMPLETION_COUNTER
     if (m_impl->completionEnabled)
     {

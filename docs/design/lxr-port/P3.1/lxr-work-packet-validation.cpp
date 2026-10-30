@@ -364,23 +364,25 @@ namespace
 
         bool success = Check(WaitForParks(scheduler, 4), "workers initially park");
         uint64_t parksBeforeSubmissions = scheduler.GetMetrics().parks;
+        uint64_t wakesBeforeSubmissions = scheduler.GetMetrics().wakes;
         success &= Check(
             scheduler.Submit(initial.get()) == LxrWorkSchedulerResult::Success,
             "submit blocking initial");
         success &= Check(
             scheduler.Submit(prepare.get()) == LxrWorkSchedulerResult::Success,
             "submit later prepare");
+        // A submission for a stage that is closed wakes no worker. The change that opens the stage wakes the workers.
+        std::this_thread::sleep_for(std::chrono::milliseconds(50));
         success &= Check(
-            WaitForParks(scheduler, parksBeforeSubmissions + 1),
-            "a worker wakes for a closed-stage submission and reparks (P25 F4: a submission wakes one worker, not all four)");
-        uint64_t parksBeforeCycle = scheduler.GetMetrics().parks;
+            scheduler.GetMetrics().parks == parksBeforeSubmissions &&
+                scheduler.GetMetrics().wakes == wakesBeforeSubmissions,
+            "a closed-stage submission wakes no worker (a stage opens first, then workers wake for its packets)");
         success &= Check(
             scheduler.BeginStwCycle() == LxrWorkSchedulerResult::Success,
             "begin blocking cycle");
         success &= Check(WaitUntil(state.blockingStarted), "initial packet starts");
-        success &= Check(
-            WaitForParks(scheduler, parksBeforeCycle + 3),
-            "other workers attempt stage advancement");
+        // Give a worker that advances the stages too early the time to do it.
+        std::this_thread::sleep_for(std::chrono::milliseconds(50));
         success &= Check(
             !scheduler.IsStageCompleted(LxrWorkBucketStage::Initial),
             "executing initial stage is not completed");

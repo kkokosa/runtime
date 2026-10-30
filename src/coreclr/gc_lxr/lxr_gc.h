@@ -8,6 +8,7 @@
 #include "lxr_reference_counting.h"
 #include "lxr_finalizer_pause.h"
 #include "lxr_collection_policy.h"
+#include "lxr_heap_sizing.h"
 
 class LxrGcHeap final : public IGCHeapInternal
 {
@@ -151,6 +152,8 @@ private:
     static constexpr size_t MaximumRoots = 131072;
     static constexpr size_t MaximumFrozenSegments = 256;
     static constexpr uint32_t Timeout = 30000;
+    // P29. How long the pause thread and the scan executor spin for each other before they sleep, in microseconds.
+    static constexpr uint64_t ScanSpinMicroseconds = 300;
 
     struct FrozenSegment
     {
@@ -201,6 +204,10 @@ private:
     void Unsupported(const char* operation) const;
     LxrRcMutator* FindOrAttach(gc_alloc_context* context, bool barrier);
     LxrRcResult RunScan(uint8_t kind);
+    bool WaitForScanComplete();
+    void WaitForScanRequest(bool spin);
+    // Wakes the scan executor at the start of a pause, so that it spins when the first scan is requested.
+    void PrepareScanExecutor();
     void ExecuteScan(uint8_t kind);
     void AddRoot(Object* object, uint32_t flags, bool trace);
     // P17 S6: the finalizer registry takes part in a pause at three places. CaptureFinalizers runs in the root
@@ -242,6 +249,14 @@ private:
     size_t m_native_plane_limit = 0;
     size_t m_hard_limit = 0;
     std::atomic<LxrCollectionCause> m_collection_cause{LxrCollectionCause::None};
+    // Heap sizing (lxr_heap_sizing.h). The sizer is used with the collection lock held. The live estimate is written by
+    // FinishLazy, on a worker thread.
+    LxrHeapSizer m_sizer;
+    LxrHeapSizingConfiguration m_sizing_configuration{};
+    std::atomic<size_t> m_mature_live_bytes{0};
+    std::atomic<uint64_t> m_sizing_growths{0};
+    std::atomic<uint64_t> m_cause_counts[8]{};
+    bool m_policy_trace = false;
     ObjectReferenceEnumerationParameters m_enumeration;
     ObjectHeaderBitsParameters m_header_bits{};
     FrozenSegment m_frozen[MaximumFrozenSegments];
@@ -260,6 +275,13 @@ private:
     std::atomic<uint8_t> m_scan_kind{0};
     std::atomic<bool> m_scan_busy{false};
     std::atomic<bool> m_scan_stopping{false};
+    // Hand-over between the pause thread and the scan executor. Both threads spin for a short time before they sleep on
+    // the events, so that a request and its answer do not wait for the wake-up of a sleeping thread (LXR_SCAN_SPIN_US).
+    std::atomic<uint32_t> m_scan_request{0};
+    std::atomic<uint32_t> m_scan_complete{0};
+    std::atomic<bool> m_scan_executor_sleeping{false};
+    std::atomic<bool> m_scan_requester_sleeping{false};
+    int64_t m_scan_spin_ticks = 0;
     std::atomic<bool> m_initialized;
     std::atomic<bool> m_in_gc;
     std::atomic<bool> m_shutdown;

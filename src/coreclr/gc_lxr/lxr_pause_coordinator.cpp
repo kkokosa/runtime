@@ -124,7 +124,7 @@ LxrPauseCoordinatorResult LxrPauseCoordinator::StartPause(uint32_t timeoutMillis
     m_pause_start = std::chrono::steady_clock::now();
     m_adapter.suspend(m_adapter.context);
 
-    LxrWorkSchedulerResult started = m_scheduler->BeginStwCycle();
+    LxrWorkSchedulerResult started = m_scheduler->BeginStwCycle(true);
     if (started != LxrWorkSchedulerResult::Success)
     {
         m_adapter.resume(false, m_adapter.context);
@@ -148,7 +148,7 @@ LxrPauseCoordinatorResult LxrPauseCoordinator::CompletePause(uint32_t timeoutMil
     }
 
     LxrWorkSchedulerResult completed =
-        m_scheduler->WaitForCycleCompletion(timeoutMilliseconds);
+        m_scheduler->RunStwCycle(timeoutMilliseconds);
     if (completed != LxrWorkSchedulerResult::Success)
     {
         return FromSchedulerResult(completed);
@@ -165,7 +165,7 @@ LxrPauseCoordinatorResult LxrPauseCoordinator::CompletePause(uint32_t timeoutMil
             return FromSchedulerResult(reset);
         }
     }
-    LxrWorkSchedulerResult resumed = m_scheduler->ResumeInterruptedConcurrentWork();
+    LxrWorkSchedulerResult resumed = m_scheduler->ResumeInterruptedConcurrentWork(true);
     if (resumed != LxrWorkSchedulerResult::Success)
     {
         m_adapter.resume(false, m_adapter.context);
@@ -174,6 +174,7 @@ LxrPauseCoordinatorResult LxrPauseCoordinator::CompletePause(uint32_t timeoutMil
     }
 
     m_adapter.resume(m_adapter.finishedGc, m_adapter.context);
+    m_scheduler->WakeAfterResume();
     uint64_t elapsed = static_cast<uint64_t>(
         std::chrono::duration_cast<std::chrono::nanoseconds>(
             std::chrono::steady_clock::now() - m_pause_start).count());

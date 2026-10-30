@@ -67,6 +67,9 @@ struct LxrWorkSchedulerMetrics
     uint64_t deferredEmptyFlips;
     // P25 (F4). Number of times the scheduler woke sleeping threads (one per notify call).
     uint64_t signals;
+    // Waits and wake-ups of the threads that wait for the scheduler (the pause thread and the allocating threads).
+    uint64_t externalWaits;
+    uint64_t externalNotifies;
 #ifdef LXR_ENABLE_LAZY_COMPLETION_COUNTER
     uint64_t completionRegistrations;
     uint64_t completionCompletions;
@@ -158,17 +161,26 @@ public:
     LxrWorkSchedulerResult EnableConcurrentStage(LxrWorkBucketStage stage);
     LxrWorkSchedulerResult InterruptConcurrentWork(uint32_t timeoutMilliseconds);
     LxrWorkSchedulerResult CancelConcurrentInterruption();
-    LxrWorkSchedulerResult BeginStwCycle();
+    // pauseThreadRuns: the caller will call RunStwCycle, so it runs packets itself and workers need not wake for a small stage.
+    LxrWorkSchedulerResult BeginStwCycle(bool pauseThreadRuns = false);
     LxrWorkSchedulerResult ResumeConcurrentWork();
     LxrWorkSchedulerResult RecordMutatorResume(uint64_t expectedGeneration);
     LxrWorkSchedulerResult PublishDeferredConcurrentWork(uint64_t expectedGeneration);
-    LxrWorkSchedulerResult ResumeInterruptedConcurrentWork();
+    // Wakes the workers for the concurrent packets that ResumeInterruptedConcurrentWork(true) found. The pause coordinator
+    // calls it after the mutators have resumed, so that the wake-ups are not part of the pause.
+    LxrWorkSchedulerResult WakeAfterResume();
+    // deferWake: do not wake the workers now; the caller calls WakeAfterResume.
+    LxrWorkSchedulerResult ResumeInterruptedConcurrentWork(bool deferWake = false);
     LxrWorkSchedulerResult ResetCompletedCycle();
 
     LxrWorkSchedulerResult WaitForPacket(
         const LxrWorkPacket* packet,
         uint32_t timeoutMilliseconds);
     LxrWorkSchedulerResult WaitForCycleCompletion(uint32_t timeoutMilliseconds);
+    // Waits for the end of the stop-the-world cycle like WaitForCycleCompletion, but the calling thread (the pause thread)
+    // also runs the packets of the current stage and opens the next stage when it finishes the last packet of a stage. It
+    // runs them with the execution index GetWorkerCount().
+    LxrWorkSchedulerResult RunStwCycle(uint32_t timeoutMilliseconds);
     LxrWorkSchedulerResult WaitForIdle(uint32_t timeoutMilliseconds);
     LxrWorkSchedulerResult WaitForBucketIdle(LxrWorkBucketStage stage, uint32_t timeoutMilliseconds);
 #ifdef LXR_ENABLE_LAZY_COMPLETION_COUNTER

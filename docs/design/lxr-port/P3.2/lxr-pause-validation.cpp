@@ -259,7 +259,7 @@ namespace
                 LxrPauseCoordinatorResult::Success,
             "pause starts");
         success &= Check(
-            scheduler.WaitForCycleCompletion(TimeoutMilliseconds) ==
+            scheduler.RunStwCycle(TimeoutMilliseconds) ==
                 LxrWorkSchedulerResult::Success,
             "pause schedule completes");
 
@@ -720,6 +720,68 @@ namespace
         scheduler.Shutdown();
         return success;
     }
+
+    std::atomic<size_t> LastExecutionIndex{SIZE_MAX};
+
+    void ExecuteRecordingIndex(LxrWorkPacket* packet, size_t workerIndex, void* context)
+    {
+        LastExecutionIndex.store(workerIndex, std::memory_order_relaxed);
+        Execute(packet, workerIndex, context);
+    }
+
+    // P29. A pause whose stages have one packet each runs on the pause thread alone: no worker wakes, and the packets see the
+    // execution index GetWorkerCount().
+    bool ValidatePauseThreadRunsSmallStages()
+    {
+        LxrWorkScheduler scheduler;
+        AdapterState adapter{};
+        LxrPauseCoordinator coordinator;
+        ExecutionState execution{};
+        bool success = Check(
+            scheduler.Initialize(3) == LxrWorkSchedulerResult::Success &&
+                coordinator.Initialize(&scheduler, NewAdapter(&adapter)) == LxrPauseCoordinatorResult::Success,
+            "small pause initializes");
+        // Let the workers park.
+        std::this_thread::sleep_for(std::chrono::milliseconds(100));
+        uint64_t wakesBefore = scheduler.GetMetrics().wakes;
+        success &= Check(
+            coordinator.PreparePause(LxrPauseKind::RefCount) == LxrPauseCoordinatorResult::Success,
+            "small pause prepares");
+        std::vector<std::unique_ptr<LxrWorkPacket>> packets;
+        uint64_t id = 1;
+        for (LxrWorkBucketStage stage : {LxrWorkBucketStage::FinishConcurrentWork, LxrRCProcessIncs,
+                LxrWorkBucketStage::Release, LxrWorkBucketStage::Final})
+        {
+            packets.push_back(NewPacket(id++, stage, ExecuteRecordingIndex, &execution));
+            success &= Check(
+                scheduler.Submit(packets.back().get()) == LxrWorkSchedulerResult::Success,
+                "small pause submits");
+        }
+        std::this_thread::sleep_for(std::chrono::milliseconds(50));
+        success &= Check(
+            scheduler.GetMetrics().wakes == wakesBefore,
+            "a submission for a closed stop-the-world stage wakes no worker");
+        success &= Check(
+            coordinator.StartPause(TimeoutMilliseconds) == LxrPauseCoordinatorResult::Success,
+            "small pause starts");
+        success &= Check(
+            coordinator.CompletePause(TimeoutMilliseconds) == LxrPauseCoordinatorResult::Success,
+            "small pause completes");
+        for (const std::unique_ptr<LxrWorkPacket>& packet : packets)
+        {
+            success &= Check(
+                execution.executions[static_cast<size_t>(packet->GetStage())].load(std::memory_order_relaxed) == 1,
+                "small pause packet executes once");
+        }
+        success &= Check(
+            LastExecutionIndex.load(std::memory_order_relaxed) == scheduler.GetWorkerCount(),
+            "the pause thread runs the packets of a small pause");
+        success &= Check(
+            scheduler.GetMetrics().wakes == wakesBefore,
+            "a small pause wakes no worker");
+        scheduler.Shutdown();
+        return success;
+    }
 }
 
 int main()
@@ -733,6 +795,7 @@ int main()
     success &= ValidateInterruptionAndResume();
     success &= ValidateDrainAndRollback();
     success &= ValidateDeferredPause();
+    success &= ValidatePauseThreadRunsSmallStages();
 
     if (!success || Failures != 0)
     {

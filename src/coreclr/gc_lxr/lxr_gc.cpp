@@ -294,6 +294,10 @@ HRESULT LxrGcHeap::Initialize()
     {
         return E_OUTOFMEMORY;
     }
+    // P29. The scan hand-over spins for ScanSpinMicroseconds before a thread sleeps, if there is a second processor to
+    // run the thread that is waited for.
+    m_scan_spin_ticks = GCToEEInterface::GetCurrentProcessCpuCount() < 2 ? 0 : static_cast<int64_t>(
+        ScanSpinMicroseconds * static_cast<uint64_t>(minipal_hires_tick_frequency()) / 1000000);
     // P28 (F10). The default is 2 bits, as in the Java LXR (util/rc.rs: LOG_REF_COUNT_BITS = 1). The setting takes 2, 4 or 8.
     size_t bits = 2;
     if (!ReadSetting("LXRRCBits", &bits, 10, 8))
@@ -325,6 +329,7 @@ HRESULT LxrGcHeap::Initialize()
     bool noMutatorRecycling = false;
     bool overshoot = true;
     bool phaseTimers = true;
+    size_t nurseryCapMB = 0;
     bool immixReserveSpecified = false;
     bool largeReserveSpecified = false;
     if (!ReadBooleanSetting("LXRLegacyCapacity", &legacy) ||
@@ -359,7 +364,10 @@ HRESULT LxrGcHeap::Initialize()
         !ReadSetting("LXRMaxYoungEvacSize", &configuration.maximumYoungCopyBytes) ||
         !ReadBooleanSetting("LXRSurvivalPredictorWeighted", &m_policy_configuration.weighted) ||
         !ReadBooleanSetting("LXRSurvivalPredictorHarmonicMean", &m_policy_configuration.harmonic) ||
-        !ReadBooleanSetting("LXRPhaseTimers", &phaseTimers))
+        !ReadBooleanSetting("LXRPhaseTimers", &phaseTimers) ||
+        !ReadBooleanSetting("LXRHeapSizing", &m_sizing_configuration.enabled) ||
+        !ReadSetting("LXRNurseryCapMB", &nurseryCapMB, 10, SIZE_MAX >> 20) ||
+        !ReadBooleanSetting("LXRPolicyTrace", &m_policy_trace))
     {
         return E_FAIL;
     }
@@ -451,6 +459,9 @@ HRESULT LxrGcHeap::Initialize()
         }
     }
     m_policy.Configure(m_policy_configuration);
+    m_sizing_configuration.nurseryCapBytes = nurseryCapMB != 0
+        ? nurseryCapMB << 20 : LxrHeapSizer::DefaultNurseryCap(GCToOSInterface::GetPhysicalMemoryLimit());
+    m_sizer.Configure(m_sizing_configuration, configuration.immixBytes);
     m_heap_configuration = configuration;
     LxrPauseRuntimeAdapter runtime{Suspend, Resume, this, true};
     LxrRcObjectModel model{
@@ -1222,6 +1233,13 @@ LxrRcResult LxrGcHeap::FinishLazy(LxrReferenceCounting* engine, void* context)
     {
         return result;
     }
+    {
+        // The mature live size for the heap sizer: what the sweep left occupied, without the young data that the program
+        // has allocated since the pause.
+        size_t occupied = engine->GetImmixOccupiedBytes();
+        size_t young = engine->GetYoungAllocationBytes();
+        heap->m_mature_live_bytes.store(occupied > young ? occupied - young : 0, std::memory_order_relaxed);
+    }
     if (!heap->m_policy.FinishLazySweep(
             heap->m_current_pause_kind, engine->GetAdmittedBytes() / LxrLargeObjectSpace::PageBytes, mature,
             engine->GetTracePhase() == LxrTracePhase::Concurrent, heap->m_concurrent_enabled.load(), true))
@@ -1247,11 +1265,33 @@ LxrRcResult LxrGcHeap::CollectForPressure(bool emergency, bool user, bool heapFu
     LxrCollectionCause cause = GetCollectionCause(heapFull || emergency);
     if (result == LxrRcResult::Success && (emergency || user || cause != LxrCollectionCause::None))
     {
-        if (!emergency && !user && !heapFull && cause == LxrCollectionCause::HeapFull &&
-            m_engine.IsOvershootEnabled() && m_engine.GetCleanNurseryBlocks() <= 4 &&
-            m_engine.GetImmixFreePages() <= LxrCollectionPolicy::OvershootFreePages)
+        size_t capacity = m_engine.GetImmixCapacityBytes();
+        size_t target = capacity;
+        if (!emergency && !user && cause == LxrCollectionCause::HeapFull)
         {
-            m_engine.RequestGrowth(false, ImmixBlockGeometry::BlockBytes);
+            // The nursery is as large as the free capacity, so a small capacity means many collections. Let the heap
+            // sizer raise the capacity in this pause (lxr_heap_sizing.h).
+            target = m_sizer.TargetCapacity(
+                capacity, m_mature_live_bytes.load(std::memory_order_relaxed), m_engine.GetImmixReservationBytes());
+            if (target > capacity && m_engine.RequestImmixCapacity(target) == LxrRcResult::Success)
+            {
+                m_sizing_growths.fetch_add(1, std::memory_order_relaxed);
+            }
+        }
+        m_cause_counts[static_cast<size_t>(cause)].fetch_add(1, std::memory_order_relaxed);
+        if (m_policy_trace)
+        {
+            size_t used = 0;
+            m_engine.GetUsedPages(&used);
+            fprintf(stderr,
+                "LXRPOLICY gc=%u cause=%u emergency=%d user=%d heapFull=%d capK=%zu admittedK=%zu usedK=%zu "
+                "freeK=%zu reserveK=%zu occupiedK=%zu nonFreeBlocks=%zu youngK=%zu cleanBlocks=%zu liveK=%zu "
+                "budgetK=%zu targetK=%zu\n",
+                m_collections.load() + 1, static_cast<unsigned>(cause), emergency, user, heapFull, capacity >> 10,
+                m_engine.GetAdmittedBytes() >> 10, used << 2, m_engine.GetImmixFreePages() << 2,
+                GetCollectionReservedPages(0) << 2, m_engine.GetImmixOccupiedBytes() >> 10, m_engine.GetNonFreeBlocks(),
+                m_engine.GetYoungAllocationBytes() >> 10, m_engine.GetCleanNurseryBlocks(),
+                m_mature_live_bytes.load() >> 10, m_sizer.BudgetBytes() >> 10, target >> 10);
         }
         m_collection_cause.store(cause, std::memory_order_release);
         result = CollectLocked(m_policy.Select(
@@ -1267,6 +1307,7 @@ void LxrGcHeap::Suspend(void* context)
 {
     LxrGcHeap* heap = static_cast<LxrGcHeap*>(context);
     LxrPhaseScope suspend(heap->m_engine.GetPauseTimers(), LxrPauseTimers::SuspendRuntime);
+    heap->PrepareScanExecutor();
     heap->m_in_gc.store(true, std::memory_order_release);
     heap->m_gc_done.Reset();
     heap->m_pause_start = minipal_hires_ticks();
@@ -1406,10 +1447,17 @@ LxrRcResult LxrGcHeap::RunScan(uint8_t kind)
     }
     m_scan_failure.store(LxrRcResult::Success);
     m_scan_kind.store(kind, std::memory_order_release);
-    m_scan_signal.Set();
+    m_scan_complete.store(0, std::memory_order_relaxed);
+    m_scan_request.store(1, std::memory_order_seq_cst);
+    // The executor sleeps only after it has raised this flag and has looked at the request once more, so one of the two
+    // threads sees the other.
+    if (m_scan_executor_sleeping.load(std::memory_order_seq_cst))
+    {
+        m_scan_signal.Set();
+    }
     {
         ScanCostScope wait(this, 9);
-        if (m_scan_done.Wait(Timeout, false) != WAIT_OBJECT_0)
+        if (!WaitForScanComplete())
         {
             // Returning would let the caller resume/reclaim while the scan might still access its epoch.
             Fatal("LXR scan executor did not complete its operation.");
@@ -1418,6 +1466,88 @@ LxrRcResult LxrGcHeap::RunScan(uint8_t kind)
     LxrRcResult result = m_scan_failure.load(std::memory_order_acquire);
     m_scan_busy.store(false, std::memory_order_release);
     return result;
+}
+
+bool LxrGcHeap::WaitForScanComplete()
+{
+    int64_t end = m_scan_spin_ticks != 0 ? minipal_hires_ticks() + m_scan_spin_ticks : 0;
+    while (end != 0)
+    {
+        if (m_scan_complete.load(std::memory_order_acquire) != 0)
+        {
+            return true;
+        }
+        YieldProcessor();
+        if (minipal_hires_ticks() >= end)
+        {
+            break;
+        }
+    }
+    for (;;)
+    {
+        m_scan_requester_sleeping.store(true, std::memory_order_seq_cst);
+        if (m_scan_complete.load(std::memory_order_seq_cst) != 0)
+        {
+            m_scan_requester_sleeping.store(false, std::memory_order_relaxed);
+            return true;
+        }
+        uint32_t waited = m_scan_done.Wait(Timeout, false);
+        m_scan_requester_sleeping.store(false, std::memory_order_relaxed);
+        if (m_scan_complete.load(std::memory_order_acquire) != 0)
+        {
+            return true;
+        }
+        if (waited != WAIT_OBJECT_0)
+        {
+            return false;
+        }
+        // A signal that an earlier request left behind: the executor had seen the flag, but the request had seen the answer.
+    }
+}
+
+void LxrGcHeap::WaitForScanRequest(bool spin)
+{
+    for (;;)
+    {
+        int64_t end = spin && m_scan_spin_ticks != 0 ? minipal_hires_ticks() + m_scan_spin_ticks : 0;
+        while (end != 0)
+        {
+            if (m_scan_request.load(std::memory_order_acquire) != 0 || m_scan_stopping.load(std::memory_order_acquire))
+            {
+                return;
+            }
+            YieldProcessor();
+            if (minipal_hires_ticks() >= end)
+            {
+                break;
+            }
+        }
+        m_scan_executor_sleeping.store(true, std::memory_order_seq_cst);
+        if (m_scan_request.load(std::memory_order_seq_cst) != 0 || m_scan_stopping.load(std::memory_order_seq_cst))
+        {
+            m_scan_executor_sleeping.store(false, std::memory_order_relaxed);
+            return;
+        }
+        if (m_scan_signal.Wait(INFINITE, false) != WAIT_OBJECT_0)
+        {
+            Fatal("LXR scan executor could not wait for work.");
+        }
+        m_scan_executor_sleeping.store(false, std::memory_order_relaxed);
+        if (m_scan_request.load(std::memory_order_acquire) != 0 || m_scan_stopping.load(std::memory_order_acquire))
+        {
+            return;
+        }
+        // Woken without a request: a pause has started (PrepareScanExecutor), and its first scan comes soon.
+        spin = true;
+    }
+}
+
+void LxrGcHeap::PrepareScanExecutor()
+{
+    if (m_scan_executor_sleeping.load(std::memory_order_seq_cst))
+    {
+        m_scan_signal.Set();
+    }
 }
 
 LxrRcResult LxrGcHeap::CaptureRoots(LxrReferenceCounting*, void* context)
@@ -1445,18 +1575,24 @@ void LxrGcHeap::ScanOnGcThread(void* context)
     LxrGcHeap* heap = static_cast<LxrGcHeap*>(context);
     // The executor remains alive for the EE's post-start utility-thread naming and readiness handoff.
     heap->m_scan_ready.Set();
+    bool spin = false;
     for (;;)
     {
-        if (heap->m_scan_signal.Wait(INFINITE, false) != WAIT_OBJECT_0)
-        {
-            heap->Fatal("LXR scan executor could not wait for work.");
-        }
+        heap->WaitForScanRequest(spin);
         if (heap->m_scan_stopping.load(std::memory_order_acquire))
         {
             break;
         }
-        heap->ExecuteScan(heap->m_scan_kind.load(std::memory_order_acquire));
-        heap->m_scan_done.Set();
+        uint8_t kind = heap->m_scan_kind.load(std::memory_order_acquire);
+        heap->m_scan_request.store(0, std::memory_order_relaxed);
+        heap->ExecuteScan(kind);
+        // The last scan of a pause (the epoch closure) is not followed by another one soon.
+        spin = kind != 2;
+        heap->m_scan_complete.store(1, std::memory_order_seq_cst);
+        if (heap->m_scan_requester_sleeping.load(std::memory_order_seq_cst))
+        {
+            heap->m_scan_done.Set();
+        }
     }
     heap->m_scan_exited.Set();
 }
@@ -2126,6 +2262,10 @@ void LxrGcHeap::EnumerateConfigurationValues(void* context, ConfigurationValueFu
     callback(context, "LXRFastAllocation", "System.GC.LXRFastAllocation", GCConfigurationType::Boolean, m_fast_enabled);
     callback(context, "LXROvershootToSpace", "System.GC.LXROvershootToSpace", GCConfigurationType::Boolean,
         m_engine.IsOvershootEnabled());
+    callback(context, "LXRHeapSizing", "System.GC.LXRHeapSizing", GCConfigurationType::Boolean,
+        m_sizing_configuration.enabled);
+    callback(context, "LXRNurseryCapMB", "System.GC.LXRNurseryCapMB", GCConfigurationType::Int64,
+        static_cast<int64_t>(m_sizing_configuration.nurseryCapBytes >> 20));
     callback(context, "LXRMaxMutators", "System.GC.LXRMaxMutators", GCConfigurationType::Int64, MaximumMutators);
     callback(context, "LXRGCThreads", "System.GC.LXRGCThreads", GCConfigurationType::Int64,
         static_cast<int64_t>(m_heap_configuration.workers));
@@ -2790,6 +2930,27 @@ uint64_t LxrGcHeap::GetPrototypeMetric(uint32_t metric) const
                 case 458: return m_engine.GetPinnedRootCount();
                 case 459: return m_registry.GetCountedCapacity() * sizeof(uintptr_t);
                 case 460: return m_registry.GetPendingCount();
+                case 500: return m_engine.GetSchedulerMetrics().parks;
+                case 501: return m_engine.GetSchedulerMetrics().wakes;
+                case 502: return m_engine.GetSchedulerMetrics().signals;
+                case 503: return m_engine.GetSchedulerMetrics().externalWaits;
+                case 504: return m_engine.GetSchedulerMetrics().externalNotifies;
+                case 505: return m_engine.GetSchedulerMetrics().executed;
+                case 506: return m_engine.GetSchedulerMetrics().stolen;
+                default: break;
+            }
+            if (metric >= 520 && metric < 528)
+            {
+                return m_cause_counts[metric - 520].load(std::memory_order_relaxed);
+            }
+            switch (metric)
+            {
+                case 528: return m_sizer.BudgetBytes();
+                case 529: return m_sizing_growths.load(std::memory_order_relaxed);
+                case 530: return m_mature_live_bytes.load(std::memory_order_relaxed);
+                case 531: return m_sizing_configuration.nurseryCapBytes;
+                case 532: return m_engine.GetImmixFloorBytes();
+                case 533: return m_engine.GetImmixCapacityBytes();
                 default: break;
             }
             if (metric >= 410 && metric < 410 + LxrReferenceCounting::OvershootMetricCount)
