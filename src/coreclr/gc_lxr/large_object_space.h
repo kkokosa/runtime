@@ -88,10 +88,13 @@ public:
         size_t alignmentOffset,
         uintptr_t owner,
         LxrLargeObjectAllocation* allocation);
+    // unlogFields is false for an object that has no reference fields (a primitive array): nothing can log such an object,
+    // so its unlog bits stay clear, as in the Java LXR (rc.rs: scan_nursery_object skips value arrays).
     LxrLargeObjectResult TryMarkAndPromote(
         uintptr_t object,
         uintptr_t owner,
-        bool* updated);
+        bool* updated,
+        bool unlogFields = true);
     LxrLargeObjectResult TryRelease(uintptr_t object, uintptr_t owner);
     LxrLargeObjectResult GetAllocation(
         uintptr_t object,

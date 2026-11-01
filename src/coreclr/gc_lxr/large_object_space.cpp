@@ -683,7 +683,8 @@ LxrLargeObjectResult LxrLargeObjectSpace::Allocate(
 LxrLargeObjectResult LxrLargeObjectSpace::TryMarkAndPromote(
     uintptr_t object,
     uintptr_t owner,
-    bool* updated)
+    bool* updated,
+    bool unlogFields)
 {
     if (updated == nullptr)
     {
@@ -725,18 +726,21 @@ LxrLargeObjectResult LxrLargeObjectSpace::TryMarkAndPromote(
         return LxrLargeObjectResult::AddressOverflow;
     }
 
-    SideMetadataResult metadataResult = m_metadata->ResetRangeQuiescent(
-        LxrSideMetadataKind::FieldUnlogged,
-        span->object,
-        fieldMetadataBytes,
-        1);
-    if (metadataResult != SideMetadataResult::Success)
+    if (unlogFields)
     {
-        return FromMetadataResult(metadataResult);
+        SideMetadataResult metadataResult = m_metadata->ResetRangeQuiescent(
+            LxrSideMetadataKind::FieldUnlogged,
+            span->object,
+            fieldMetadataBytes,
+            1);
+        if (metadataResult != SideMetadataResult::Success)
+        {
+            return FromMetadataResult(metadataResult);
+        }
     }
 
     uintptr_t oldState;
-    metadataResult = m_metadata->Load(
+    SideMetadataResult metadataResult = m_metadata->Load(
         LxrSideMetadataKind::LargeObjectMarkNursery,
         object,
         SideMetadataMemoryOrder::SequentiallyConsistent,

@@ -71,7 +71,25 @@ struct LxrRcConfiguration
     // P25 (F4). Workers that may run the packets of the concurrent trace while the program runs. 0 means all workers.
     size_t concurrentTraceWorkers = 0;
     bool lazyDecrements = true;
+    // The lazy mature sweep and the dead-cycle sweep run as packets on all workers, in chunk batches (Java LXR:
+    // mature_sweeping.rs, plan/lxr/global.rs). False keeps one sweep packet that runs after the decrements.
+    bool parallelSweep = true;
+    // FinalMark and Full pauses trace, replay the remembered slots and copy mature objects on all workers (the pause thread
+    // helps). False runs them on the pause thread alone, as before.
+    bool parallelPauseTrace = true;
+    // The children that a trace packet of a parallel pause collects before it makes a new packet (1 to 8192).
+    size_t pauseTraceBatch = 512;
+    // When the policy hint says that a trace is next, packets clear the ObjectMark plane while the program runs, and the
+    // pause that starts the trace does not clear it (Java LXR: schedule_mark_table_zeroing_tasks).
+    bool eagerMarkClear = true;
     bool lineRecycling = true;
+    // Item 4. A mutator request larger than a line that does not fit the current hole goes to a second bump allocator
+    // over clean blocks (the Java LXR overflow_alloc), and a hole refill passes over holes that are too small.
+    bool mediumOverflow = true;
+    // Item 4. How a request larger than a line that does not fit the hole is served: 1 = a refill of the allocator of
+    // the thread passes over the holes that are too small; 2 = a second allocator takes clean blocks; 3 = a second
+    // allocator takes the holes that fit and then clean blocks.
+    size_t mediumOverflowMode = 3;
     bool copyLineRecycling = true;
     bool evacuateNursery = false;
     size_t maximumYoungCopyBytes = SIZE_MAX;
@@ -223,6 +241,12 @@ public:
         // Added in P17 S5b: admission of blocks beyond the capacity at the start of a pause, and the give-back of a free
         // tail at its end (including the decommit of the memory and of the planes).
         Borrow, GiveBack,
+        // Added for the parallel release stage: the serial set-up of the first packet (allocator reset, list of copy-log
+        // chunks) and the serial tail that the last packet runs (ReleaseEpoch, without the wait for the other packets).
+        ReleaseSetup, ReleaseTail,
+        // The parts of the PrepareTrace packet: the work that precedes the trace, the trace of the roots, the replay of the
+        // remembered slots (FinalMark) and the work that follows.
+        TraceSetup, TraceRoots, TraceReplay, TraceFixup,
         ScalarCount,
     };
 
@@ -231,7 +255,7 @@ public:
     // packet cost a measurable share of the run (see P17). Satb packets are the only trace-related group.
     enum Group : size_t
     {
-        Increments, Decrements, Satb, PrepareTrace, WeakClosure, EpochClosure, NurserySweep, MatureSweep,
+        Increments, Decrements, Satb, PrepareTrace, WeakClosure, EpochClosure, NurserySweep, MatureSweep, TracePackets,
         GroupCount,
     };
 
@@ -263,6 +287,9 @@ public:
     uint64_t GetMeta(size_t index) const;
     uint64_t GetLast(size_t index) const;
     uint64_t GetTotal(size_t index) const;
+    // The totals of the pauses of one kind (LxrPauseKind). Index PublishedCount is the number of such pauses.
+    static constexpr size_t KindCount = 4;
+    uint64_t GetKindTotal(size_t kind, size_t index) const;
 
 private:
     struct GroupState
@@ -285,6 +312,7 @@ private:
     std::atomic<uint64_t> m_published_timestamps{0};
     std::atomic<uint64_t> m_last[PublishedCount];
     std::atomic<uint64_t> m_total[PublishedCount];
+    std::atomic<uint64_t> m_kind_total[KindCount][PublishedCount + 1];
     int64_t m_begin = 0;
     uint64_t m_begin_timestamps = 0;
 };
@@ -348,8 +376,19 @@ private:
     // Start of the span that is open now: the first object that the engine allocated in the current hole. Zero when no
     // span is open. The span closes when the buffer is retired, when the hole is replaced, or at a pause.
     uintptr_t spanStart;
+    // Item 4. The second bump allocator of the thread: it takes clean blocks only and serves the requests that are larger
+    // than a line and do not fit the current hole. Its objects lie in its own block, so it has its own open span. It uses
+    // the owner number of the thread (it holds a different block than the allocator above).
+    ImmixBumpAllocator overflowAllocator;
+    uintptr_t overflowSpanStart;
+    std::atomic<uint64_t> overflowObjects;
+    std::atomic<uint64_t> overflowBytes;
     // The closed spans of this thread since the last pause. A pause merges them into the list of the engine.
     LxrSpanList spans;
+    // Statistics of the barrier slow path. Only the thread that holds the mutator writes them (a plain load and store, no
+    // locked instruction); GetMetrics sums them over all mutators.
+    std::atomic<uint64_t> loggedSlots;
+    std::atomic<uint64_t> oldTargetChecks;
 #ifdef LXR_SIDE_METADATA_TEST_PLATFORM
     uintptr_t lastPublishedLimit = 0;
 #endif // LXR_SIDE_METADATA_TEST_PLATFORM
@@ -521,7 +560,7 @@ public:
     size_t GetNativePlaneCommittedBytes() const;
     // Next slot at or after first whose ValidObject bit is set, or the reservation size in slots when there is none.
     // Stale bits of dead promoted objects are included.
-    size_t FindNextValidSlot(size_t first) const;
+    size_t FindNextValidSlot(size_t first, size_t limit = SIZE_MAX) const;
     LxrRcResult Grow(
         bool large, size_t minimumBytes, LxrRcCaptureRoots capture, void* context, uint32_t timeout);
     uint64_t GetGrowthCount() const;
@@ -557,9 +596,18 @@ public:
     };
     uint64_t GetOvershootMetric(size_t metric) const;
     LxrWorkSchedulerMetrics GetSchedulerMetrics() const { return m_scheduler.GetMetrics(); }
+    // 0: pauses that traced in parallel, 1: replay packets that ran, 2: remembered slots that a replay packet copied.
+    uint64_t GetPauseTraceMetric(size_t index) const
+    {
+        return index < 4 ? m_pause_trace_metrics[index].load(std::memory_order_relaxed) : UINT64_MAX;
+    }
     size_t GetPauseSurvivorBytes() const;
     // P22 (D2). Span statistics: 0 = spans closed, 1 = bytes in closed spans, 2 = spans of the last pause.
     uint64_t GetSpanMetric(size_t metric) const { return m_span_metrics[metric].load(std::memory_order_relaxed); }
+    // Item 4. 0 = objects from the overflow allocator, 1 = their bytes, 2 = clean blocks it took, 3 = holes that a refill
+    // passed over, 4 = recycled lines consumed, 5 = clean blocks acquired, 6 = recycled blocks acquired,
+    // 7 = the overflow allocator is enabled.
+    uint64_t GetMediumOverflowMetric(size_t metric) const;
     // Number of spans of the pause that runs now (0 outside a pause) and the span at an index. For tests.
     size_t GetYoungSpanCount() const { return m_young_spans.Size(); }
     bool GetYoungSpan(size_t index, uintptr_t* start, uintptr_t* end) const
@@ -576,6 +624,17 @@ public:
     // block, and only the lines tell how much data the heap holds. The two figures are equal for dense blocks.
     LxrRcResult GetOccupiedPages(size_t* pages) const;
     LxrRcResult DrainLazySweep(uint32_t timeout);
+    // Starts packets that clear the ObjectMark plane. The caller says that the next collection starts a trace. Only the
+    // first call after a clear or a trace does work. The next pause that starts a trace finds the plane clear and skips
+    // its own serial clear, and it waits for these packets in its pre-drain.
+    void ScheduleMarkClear();
+    // Timers of the lazy window, in nanoseconds (all zero unless the phase timers are on).
+    enum LazyMetric : size_t
+    {
+        LazyWindows, LazyWindowNs, LazyWindowMaxNs, LazySweepNs, LazySweepMaxNs, LazyCycleSweeps, LazyCycleSweepNs,
+        MarkClearEager, MarkClearEagerNs, MarkClearPause, MarkClearPauseNs, LazySweepPackets, LazyMetricCount,
+    };
+    uint64_t GetLazyMetric(size_t metric) const;
     // Block counts and the estimate that the .NET memory APIs report. All of them are read from counters that block
     // state transitions maintain, so the call neither walks the heap nor touches a block.
     //   heapBytes: mature Immix blocks (state other than Unallocated) times the block size, plus the large-object
@@ -605,6 +664,8 @@ public:
     LxrRcResult GetBlockStateForTest(
         size_t block, ImmixBlockState* state, uint8_t* unavailableLines, bool* nursery) const;
     size_t GetFreshBlocksReleasedInPauseForTest() const;
+    // The number of packets that the release stage of the last pause had.
+    size_t GetReleasePacketsForTest() const { return m_release.packets.load(std::memory_order_acquire); }
     // Whether the side metadata manager owns the data address (CommitDataRange has admitted it and nothing has given it back).
     bool IsDataOwnedForTest(uintptr_t address) const;
     LxrRcResult ProcessQueuedTraceReferenceForTest(uintptr_t address);
@@ -621,6 +682,16 @@ public:
     LxrRcResult HoldTracePacketsForTest(bool hold);
     size_t GetCompletedScanUsers(Object* object) const;
     LxrRcResult ValidateTraceBatchForTest(Object* object, size_t count);
+    // Pause trace test. The hook runs in the replay of a remembered slot, phase 0 before and phase 1 after the store of the
+    // slot. It lets a test copy the owner of the slot between the check of the owner and the store, as another worker does.
+    using ReplayStoreHook = void (*)(void* context, Object** slot, int phase);
+    void SetReplayStoreHookForTest(ReplayStoreHook hook, void* context)
+    {
+        m_replay_store_context = context;
+        m_replay_store_hook = hook;
+    }
+    // Copies a mature source as the pause does and queues the copy for the trace. Only inside a pause trace.
+    LxrRcResult CopyMatureForTest(Object* source, Object** copy);
     // P26 (F2) tests. The gate blocks the worker of the concurrent trace after it has processed `packets` packets. It lets
     // a test keep a large trace backlog queued in the scheduler (with one trace worker). A pause opens the gate.
     void ArmTraceGateForTest(uint64_t packets);
@@ -663,6 +734,7 @@ private:
     LxrRcResult Fail(LxrRcResult result);
     void CountWorker(size_t worker, size_t counter, uint64_t amount);
     uint64_t SumWorker(size_t counter) const;
+    uint64_t SumMutatorCounter(std::atomic<uint64_t> LxrRcMutator::* counter) const;
     LxrRcResult InitializeBuffers(size_t slots);
     bool CommitPlanes(size_t first, size_t count, bool initialize = true);
     bool DecommitPlanes(size_t first, size_t count, bool tailIsLast);
@@ -700,6 +772,12 @@ private:
     LxrRcResult FlushMutators();
     // P22 (D2). Closes the open span of a mutator at end (an object start). An empty span is not recorded.
     LxrRcResult CloseSpan(LxrRcMutator* mutator, uintptr_t end);
+    // Item 4. Closes the open span of the overflow allocator of the thread at end (its used point).
+    LxrRcResult CloseOverflowSpan(LxrRcMutator* mutator, uintptr_t end);
+    // Item 4. Allocates a request that is larger than a line from the clean block of the thread. *allocated is false
+    // (and the result is Success) when no clean block is left, and the caller then uses the holes.
+    LxrRcResult AllocateMediumOverflow(
+        LxrRcMutator* mutator, const ImmixAllocationRequest& request, uintptr_t* start, bool* allocated);
     // Looks for the object that contains the address in the spans of the pause. Returns InvalidArgument when no span
     // contains the address.
     LxrRcResult FindInYoungSpans(uintptr_t address, Object** object, bool requireCounted) const;
@@ -752,7 +830,11 @@ private:
     void DeleteRememberedChunks();
     LxrRcResult FixForwardingReaders();
     void FixPacketReferences(Work* work);
-    LxrRcResult RetireForwardedSources();
+    LxrRcResult ReleaseSetup();
+    LxrRcResult SubmitReleasePackets();
+    LxrRcResult RetireSourceChunks();
+    LxrRcResult RetireSourceChunk(void* chunk);
+    void DeleteReleaseChunks();
     LxrRcResult ReserveCopyRecord(size_t slot);
     void CommitCopyRecord(size_t slot, uintptr_t start, size_t size);
     void DeleteCopyLogs();
@@ -761,12 +843,28 @@ private:
     LxrRcResult ProcessDecrements(Work* work, LxrWorkPacket* packet, size_t worker);
     LxrRcResult ScanDecrements(Object* object, ReferenceBatch* children, size_t worker);
     LxrRcResult Sweep(const LxrBlockReleaseGuard& guard);
+    // The parallel lazy sweep (parallelSweep). BeginParallelSweep runs when the decrements have drained. It clears the root
+    // leases of dead cycles and submits the first batch: the dead-cycle chunks if a cycle sweep is pending, else the block
+    // chunks. The batch is SweepPackets packets that take units from m_sweep_cursor until it is exhausted. The packet that
+    // finishes last submits the block batch after the cycle batch. Every packet is a MatureSweep child of the lazy counter.
+    enum class SweepPhase : uint8_t { Cycles, Blocks };
+    LxrRcResult BeginParallelSweep(LxrMatureSweepContinuation* continuation);
+    LxrRcResult SubmitSweepBatch(SweepPhase phase, LxrMatureSweepContinuation* continuation, const LxrWorkPacket* parent);
+    void RunSweepPacket(LxrWorkPacket* packet, const LxrBlockReleaseGuard& guard);
+    LxrRcResult SweepCycleUnit(size_t unit);
+    LxrRcResult SweepBlockUnit(size_t unit, const LxrBlockReleaseGuard& guard, bool* held);
+    LxrRcResult SweepBlockRange(size_t first, size_t limit, const LxrBlockReleaseGuard& guard, bool* held);
+    LxrRcResult ReleaseDeadLargeRange(size_t first, size_t limit, const LxrBlockReleaseGuard& guard);
+    LxrRcResult ClearDeadRootLeases();
+    LxrRcResult SweepCycleRange(size_t first, size_t limit);
+    void RunMarkClearPacket();
     LxrRcResult RefreshBlock(uintptr_t block, size_t index, const LxrBlockReleaseGuard& guard);
     // Releases the block when no count is left in it. Updates the release counters and the evacuation flag.
     // With a null guard it runs in a pause.
     LxrRcResult ReleaseBlockIfDead(
         uintptr_t block, size_t index, const LxrBlockReleaseGuard* guard, ImmixBlockOperationStatus* status);
     LxrRcResult ReleaseEpoch();
+    void RunReleasePacket();
     // Per-object accounting after a death or a swept cycle (the lifetime probe and, in the test platform, the
     // oracle). The product keeps no per-object record, so this costs one load.
     LxrRcResult Reclaim(uintptr_t start);
@@ -774,8 +872,10 @@ private:
     void NoteProbeReclaim(uintptr_t start);
 #endif // LXR_HAS_LIFETIME_PROBE
     // The pause releases the clean blocks that mutators took since the last pause and that no object promoted.
-    // It looks at those blocks only.
-    LxrRcResult ReleaseNurseryBlocks();
+    // It looks at those blocks only. The packets of the release stage take ranges of the list (ReleaseNurseryRange);
+    // the last one runs FinishNurseryRelease.
+    LxrRcResult ReleaseNurseryRange(size_t begin, size_t end);
+    LxrRcResult FinishNurseryRelease();
     LxrRcResult SweepLargeNursery();
 #ifdef LXR_SIDE_METADATA_TEST_PLATFORM
     LxrRcResult ReclaimLargeNursery();
@@ -786,16 +886,30 @@ private:
     LxrRcResult DrainEpoch(uint32_t timeoutMilliseconds);
     LxrRcResult QueueTrace(
         const uintptr_t* objects, size_t count, TraceScan* scan = nullptr, bool logged = false);
+    LxrRcResult DispatchTraceWork(Work* work);
+    LxrRcResult ProcessUnsubmittedTrace(bool* progressed);
+    bool OpenPauseTrace(LxrRcResult* result);
+    void ClosePauseTrace();
     LxrRcResult PublishTraceWork();
     LxrRcResult ProcessTraceWork(Work* work);
     LxrRcResult ProcessFullTraceWork(Work* work);
     bool ShouldStopTraceLoop() const;
     LxrRcResult ProcessTraceWork(Work* work, TraceBatch* targets);
     LxrRcResult ProcessTraceObject(Object* object, size_t* directBudget, TraceBatch* targets);
+    LxrRcResult ProcessPauseTraceObject(Object* object, uintptr_t start, size_t* directBudget, TraceBatch* targets);
     LxrRcResult ProcessTraceScan(TraceScan* scan, bool finish, TraceBatch* targets = nullptr);
     LxrRcResult ScanTraceLocked(TraceScan* scan, bool finish, TraceBatch* targets = nullptr);
     LxrRcResult FinishDyingTraceObject(Object* object);
     LxrRcResult DrainTraceInsidePause();
+    // The same on all workers. The calling thread is a packet of a pause stage; it opens the trace stage, makes the pending
+    // trace packets runnable, helps, and closes the stage when the trace is done. Falls back to the serial drain.
+    LxrRcResult DrainTraceParallel();
+    bool CanTraceInParallel() const;
+    LxrRcResult SubmitUnsubmittedTrace();
+    LxrRcResult ProcessReplayWork(Work* work);
+    LxrRcResult ReplayRememberedChunk(RememberedChunk* chunk, bool batched);
+    size_t GetExecutionWorker() const;
+    static bool PauseTraceDone(void* context);
     LxrRcResult PrepareTrace();
     LxrRcResult SweepCycles();
     void EnterTraceLock(size_t index);
@@ -929,6 +1043,33 @@ private:
     std::atomic<uint64_t> m_trace_metrics[14];
     LxrPauseKind m_pause_kind;
     std::atomic<bool> m_cycle_sweep;
+    // The parallel lazy sweep. The fields below SweepUnits are written before a batch is submitted and only read while the
+    // batch runs, so the scheduler's lock orders them. At most one lazy generation runs at a time.
+    std::atomic<size_t> m_sweep_cursor{0};
+    std::atomic<size_t> m_sweep_remaining{0};
+    std::atomic<SweepPhase> m_sweep_phase{SweepPhase::Blocks};
+    size_t m_sweep_units = 0;
+    size_t m_sweep_immix_units = 0;
+    size_t m_sweep_immix_slots = 0;
+    size_t m_sweep_large_first_slot = 0;
+    size_t m_sweep_large_slots = 0;
+    size_t m_sweep_blocks = 0;
+    size_t m_sweep_block_units = 0;
+    // The ObjectMark plane. Clean: eager packets cleared it and nothing marked since. Clearing: packets are running.
+    // A pause that starts a trace clears a Dirty plane itself and then sets Dirty.
+    enum class MarkPlane : uint8_t { Dirty, Clearing, Clean };
+    std::atomic<MarkPlane> m_mark_plane{MarkPlane::Dirty};
+    std::atomic<size_t> m_mark_clear_cursor{0};
+    std::atomic<size_t> m_mark_clear_remaining{0};
+    size_t m_mark_clear_units = 0;
+    size_t m_mark_clear_immix_units = 0;
+    uintptr_t m_mark_clear_large_start = 0;
+    size_t m_mark_clear_large_bytes = 0;
+    std::atomic<int64_t> m_lazy_start_stamp{0};
+    std::atomic<int64_t> m_lazy_sweep_stamp{0};
+    std::atomic<int64_t> m_lazy_cycle_stamp{0};
+    std::atomic<int64_t> m_mark_clear_stamp{0};
+    mutable std::atomic<uint64_t> m_lazy_metrics[LazyMetricCount]{};
     LxrRcMutator* m_mutators;
     // P22 (D2). The spans that mutators filled since the last pause, merged and sorted at the start of the pause and
     // dropped when the pause ends. Only a pause reads it.
@@ -937,19 +1078,52 @@ private:
     LxrSpanList m_detached_spans;
     std::atomic_flag m_detached_lock = ATOMIC_FLAG_INIT;
     std::atomic<uint64_t> m_span_metrics[4]{};
+    std::atomic<uint64_t> m_overflow_blocks{0};
     ImmixBumpAllocator* m_copy_allocators = nullptr;
     // One list of copied sources per worker, plus one shared slot for the mature copy. A source loses its first
-    // field to the forwarding pointer, so the pause keeps its size here until RetireForwardedSources.
+    // field to the forwarding pointer, so the pause keeps its size here until RetireSourceChunk.
     CopyLog* m_copy_logs = nullptr;
+    // The release stage of a pause (RunReleasePacket). `active` counts the packets that have not finished. The chunks of the
+    // copy logs and the list of allocated blocks are shared by the packets through cursors.
+    static constexpr size_t ReleaseBlockRange = 256;
+    static constexpr size_t ReleaseBlocksPerPacket = 512;
+    struct ReleaseStage
+    {
+        std::atomic<bool> started{false};
+        std::atomic<bool> ready{false};
+        std::atomic<size_t> active{0};
+        std::atomic<size_t> packets{0};
+        int64_t startStamp = 0;
+        size_t blocks = 0;
+        std::atomic<size_t> blockCursor{0};
+        void** chunks = nullptr;
+        size_t chunkCount = 0;
+        std::atomic<size_t> chunkCursor{0};
+    };
+    ReleaseStage m_release;
     WorkerCounters* m_worker_counters = nullptr;
     std::atomic<bool> m_copy_exhausted{false};
     std::atomic<bool> m_mature_copy_exhausted{false};
+#ifdef LXR_SIDE_METADATA_TEST_PLATFORM
+    ReplayStoreHook m_replay_store_hook = nullptr;
+    void* m_replay_store_context = nullptr;
+#endif // LXR_SIDE_METADATA_TEST_PLATFORM
     mutable std::atomic<uint64_t> m_nursery_metrics[6]{};
     // P26 (F2). Walk counters of the last pause (see LxrPauseWalkMetrics).
     std::atomic<uint64_t> m_walk[5]{};
     std::atomic<size_t> m_pause_copied_bytes{0};
     std::atomic<uint8_t>* m_evacuation_sources = nullptr;
     std::atomic<RememberedChunk*> m_remembered_chunks{nullptr};
+    // The chunks that a replay works through. The replay takes them from m_remembered_chunks, so that the entries that the
+    // trace of the replay adds are not replayed. A chunk is deleted when the replay has ended.
+    RememberedChunk* m_replay_chunks = nullptr;
+    // The trace of the pause runs on all workers (the scheduler's pause trace is open). QueueTrace submits packets then.
+    std::atomic<bool> m_pause_trace_open{false};
+    // The number of children that a trace packet collects before it hands them to the scheduler as a new packet. A pause that
+    // traces on all workers uses a smaller number, so that the work spreads to the idle workers soon.
+    std::atomic<size_t> m_trace_batch_limit{FullTraceBatchCapacity};
+    // 0: parallel drains, 1: replay chunk packets, 2: remembered entries that were copied by the replay packets.
+    std::atomic<uint64_t> m_pause_trace_metrics[4]{};
     std::atomic<uint64_t> m_mature_metrics[13]{};
     std::atomic<uint64_t> m_cost_ticks[9]{};
     LxrPauseTimers m_pause_timers;

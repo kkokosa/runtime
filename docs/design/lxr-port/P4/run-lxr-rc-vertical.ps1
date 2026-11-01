@@ -10,7 +10,7 @@ param(
         'PredictorUpdate', 'TriggerOrder', 'Lifetime', 'StorageDiagnostics', 'ObjectInterior', 'PendingRetirement',
         'MatureStale', 'MatureReplay', 'MatureShape', 'MatureScan', 'MatureReaderCompletion', 'MatureDeadScan', 'MatureEarlyRelease', 'MatureCount', 'MaturePredictor', 'ReserveUnits',
         'LogPublication', 'LogDecode', 'LogCapacity', 'LogReuse', 'LogDrop',
-        'TraceBatchDrop', 'TraceBatchUnbatched', 'TraceBatchEarly')][string]$Control = 'None'
+        'TraceBatchDrop', 'TraceBatchUnbatched', 'TraceBatchEarly', 'PauseTraceMark', 'PauseTraceLimit', 'PauseTraceStore')][string]$Control = 'None'
 )
 
 $ErrorActionPreference = 'Stop'
@@ -80,6 +80,9 @@ $controlFlag = switch ($Control) {
     'TraceBatchDrop' { '/DLXR_TRACE_BATCH_DROP_CONTROL' }
     'TraceBatchUnbatched' { '/DLXR_TRACE_BATCH_UNBATCHED_CONTROL' }
     'TraceBatchEarly' { '/DLXR_TRACE_BATCH_EARLY_CONTROL' }
+    'PauseTraceMark' { '/DLXR_PAUSE_TRACE_MARK_CONTROL' }
+    'PauseTraceLimit' { '/DLXR_PAUSE_TRACE_LIMIT_CONTROL' }
+    'PauseTraceStore' { '/DLXR_PAUSE_TRACE_REPLAY_STORE_CONTROL' }
     default { '' }
 }
 $executable = Join-Path $OutputDirectory 'lxr-rc-validation.exe'
@@ -118,6 +121,8 @@ if ($Control -in @('MatureStale', 'MatureReplay')) {
     $selectors = @('--log-storage')
 } elseif ($Control -like 'TraceBatch*') {
     $selectors = @('--trace-batching')
+} elseif ($Control -like 'PauseTrace*') {
+    $selectors = @('--pause-trace')
 }
 & $executable @selectors *> (Join-Path $OutputDirectory 'run.log')
 $exitCode = $LASTEXITCODE

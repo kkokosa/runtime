@@ -128,6 +128,17 @@ public:
     // for a pause) and none of its packets may be running. A pause uses it to finish the trace backlog without a list
     // of the packets. executionIndex is the worker index that the packets see. ran gets the number of packets.
     LxrWorkSchedulerResult RunQueuedInline(LxrWorkBucketStage stage, size_t executionIndex, uint64_t* ran);
+    // The trace of a pause on all workers. A packet of a pause stage (it runs in a stage that is open) calls OpenPauseTrace. The
+    // resumable trace stage is then runnable for every worker, without the limit of concurrent trace workers, and the packets
+    // that the trace stage holds (the backlog of the concurrent trace) and the packets that the pause submits to it are run by
+    // the workers. The calling thread helps with HelpPauseTrace until done() returns true, and ends the trace with
+    // ClosePauseTrace, which waits for every packet of the stage and closes the stage again. The stop-the-world stage that is
+    // current does not complete while the trace is open. executionIndex is the worker index of the calling thread, or
+    // GetWorkerCount() for the pause thread.
+    LxrWorkSchedulerResult OpenPauseTrace();
+    LxrWorkSchedulerResult HelpPauseTrace(size_t executionIndex, bool (*done)(void*), void* context);
+    LxrWorkSchedulerResult ClosePauseTrace(size_t executionIndex);
+    bool IsPauseTraceOpen() const;
 
     LxrWorkSchedulerResult Submit(
         LxrWorkPacket* packet,

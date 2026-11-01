@@ -752,10 +752,14 @@ SideMetadataResult ReferenceCountTable::MarkStraddleLinesUnchecked(
     uintptr_t first;
     uintptr_t end;
     GetContinuationRange(object, size, &first, &end);
+    // The continuation lines lie wholly inside the object (GetContinuationRange excludes the first and the partly covered
+    // last line), and nothing else writes the straddle byte or the count byte of such a line while the pause counts the
+    // object: another object cannot start in the line, the lazy decrements and the sweep have drained before the pause
+    // (UpdatePolicyHints), and the mutators are stopped. The Java LXR uses plain stores here (util/rc.rs: promote_with_size).
     for (uintptr_t line = first; line < end; line += ImmixBlockGeometry::LineBytes)
     {
-        m_straddle.Store(line, 1, SideMetadataMemoryOrder::Relaxed);
-        m_rc.Store(line, 1, SideMetadataMemoryOrder::Relaxed);
+        m_straddle.StoreExclusive(line, 1);
+        m_rc.StoreExclusive(line, 1);
     }
     return SideMetadataResult::Success;
 }

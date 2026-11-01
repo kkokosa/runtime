@@ -688,6 +688,102 @@ namespace
         scheduler.Shutdown();
         return success;
     }
+
+    // P27 (item 2). The decrements-drained callback may register several sweep packets, and a sweep packet may register
+    // the next batch before it completes. The overall callback runs once, after the last of them.
+    struct BatchContext
+    {
+        LxrLazyCompletionRegistration first[3];
+        std::atomic<uint32_t> overallCallbacks{0};
+    };
+
+    LxrCompletionCallbackResult BatchDecrementsDrained(
+        LxrMatureSweepContinuation* continuation,
+        void* context)
+    {
+        BatchContext* state = static_cast<BatchContext*>(context);
+        for (LxrLazyCompletionRegistration& sweep : state->first)
+        {
+            if (continuation->RegisterSweep(&sweep) != LxrCompletionResult::Success)
+            {
+                return LxrCompletionCallbackResult::Failure;
+            }
+        }
+        return LxrCompletionCallbackResult::Success;
+    }
+
+    LxrCompletionCallbackResult BatchOverallDrained(uint64_t, void* context)
+    {
+        static_cast<BatchContext*>(context)->overallCallbacks.fetch_add(1, std::memory_order_seq_cst);
+        return LxrCompletionCallbackResult::Success;
+    }
+
+    bool ValidateBatchedSweep()
+    {
+        BatchContext context;
+        LxrLazyCompletionGenerationState state;
+        LxrLazyCompletionRegistration seed;
+        bool success = Check(
+            state.Initialize(
+                21,
+                BatchDecrementsDrained,
+                BatchOverallDrained,
+                &context,
+                &seed) == LxrCompletionResult::Success &&
+                state.Seal(21) == LxrCompletionResult::Success,
+            "batched sweep generation initializes");
+        success &= Check(
+            seed.Complete() == LxrCompletionResult::Success,
+            "seed completion runs the decrements-drained callback");
+        LxrCompletionSnapshot batch = state.GetSnapshot();
+        success &= Check(
+            batch.decrementOutstanding == 0 && batch.overallOutstanding == 3 &&
+                batch.overallCallbacks == 0 && batch.lifecycle == LxrCompletionLifecycle::Draining,
+            "the callback registered three sweep packets that keep the generation open");
+        LxrBlockReleaseGuard guards[3];
+        for (size_t index = 0; index < 3; index++)
+        {
+            success &= Check(
+                context.first[index].CreateReleaseGuard(&guards[index]) == LxrCompletionResult::Success &&
+                    guards[index].IsValid(),
+                "every sweep packet of the batch owns a valid release guard");
+        }
+        LxrLazyCompletionRegistration next[2];
+        LxrLazyCompletionRegistration forged;
+        success &= Check(
+            context.first[0].RegisterChild(LxrCompletionWorkKind::Decrement, &forged) ==
+                LxrCompletionResult::InvalidArgument,
+            "a sweep packet cannot register decrement work");
+        success &= Check(
+            context.first[0].RegisterChild(LxrCompletionWorkKind::MatureSweep, &next[0]) ==
+                    LxrCompletionResult::Success &&
+                context.first[0].RegisterChild(LxrCompletionWorkKind::MatureSweep, &next[1]) ==
+                    LxrCompletionResult::Success &&
+                state.GetSnapshot().overallOutstanding == 5,
+            "the last packet of a batch registers the packets of the next batch");
+        success &= Check(
+            context.first[0].Complete() == LxrCompletionResult::Success &&
+                context.first[1].Complete() == LxrCompletionResult::Success &&
+                context.first[2].Complete() == LxrCompletionResult::Success,
+            "the first batch completes");
+        LxrCompletionSnapshot between = state.GetSnapshot();
+        success &= Check(
+            between.overallOutstanding == 2 && between.overallCallbacks == 0 &&
+                between.lifecycle == LxrCompletionLifecycle::Draining && guards[0].IsValid(),
+            "the next batch keeps the generation open and the release guard valid");
+        success &= Check(
+            next[0].Complete() == LxrCompletionResult::Success &&
+                context.overallCallbacks.load(std::memory_order_seq_cst) == 0 &&
+                next[1].Complete() == LxrCompletionResult::Success,
+            "the overall callback waits for the last packet");
+        LxrCompletionSnapshot drained = state.GetSnapshot();
+        success &= Check(
+            drained.overallOutstanding == 0 && drained.overallCallbacks == 1 &&
+                context.overallCallbacks.load(std::memory_order_seq_cst) == 1 &&
+                drained.lifecycle == LxrCompletionLifecycle::Drained,
+            "the generation drains exactly once after the last sweep packet");
+        return success;
+    }
 }
 
 int main()
@@ -698,6 +794,7 @@ int main()
     success &= ValidateSchedulerIntegration();
     success &= ValidateDisabledAndShutdown();
     success &= ValidateTrackedEagerSeam();
+    success &= ValidateBatchedSweep();
 
     if (!success || s_passed != s_checks)
     {

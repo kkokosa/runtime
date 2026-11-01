@@ -314,6 +314,11 @@ size_t ImmixAllocationManager::GetRecycledLinesConsumed() const
     return m_recycled_lines_consumed.load(std::memory_order_relaxed);
 }
 
+size_t ImmixAllocationManager::GetHolesSkipped() const
+{
+    return m_holes_skipped.load(std::memory_order_relaxed);
+}
+
 size_t ImmixAllocationManager::GetBlocksInUse() const
 {
     return m_blocks_in_use.load(std::memory_order_acquire);
@@ -325,6 +330,19 @@ SideMetadataResult ImmixAllocationManager::NotifyBlockReleased()
     while (current != 0)
     {
         if (m_blocks_in_use.compare_exchange_weak(current, current - 1, std::memory_order_acq_rel))
+        {
+            return SideMetadataResult::Success;
+        }
+    }
+    return SideMetadataResult::InconsistentState;
+}
+
+SideMetadataResult ImmixAllocationManager::NotifyBlocksReleased(size_t count)
+{
+    size_t current = m_blocks_in_use.load(std::memory_order_relaxed);
+    while (current >= count)
+    {
+        if (m_blocks_in_use.compare_exchange_weak(current, current - count, std::memory_order_acq_rel))
         {
             return SideMetadataResult::Success;
         }
@@ -879,7 +897,8 @@ SideMetadataResult ImmixBumpAllocator::Initialize(
 SideMetadataResult ImmixBumpAllocator::TryRefill(
     ImmixAllocationSource source,
     ImmixMarkingContext markingContext,
-    ImmixAllocationStatus* status)
+    ImmixAllocationStatus* status,
+    size_t minimumHoleBytes)
 {
     if ((status == nullptr) ||
         (m_manager == nullptr) ||
@@ -895,11 +914,11 @@ SideMetadataResult ImmixBumpAllocator::TryRefill(
         !ImmixAllocationManager::IsFreshSource(m_source))
     {
         ImmixHole hole;
-        SideMetadataResult result = m_manager->TryFindNextHole(
+        SideMetadataResult result = FindHole(
             m_block,
             m_next_search_line,
+            minimumHoleBytes,
             &hole,
-            &m_next_search_line,
             status);
         if (result != SideMetadataResult::Success)
         {
@@ -972,11 +991,11 @@ SideMetadataResult ImmixBumpAllocator::TryRefill(
         }
 
         ImmixHole hole;
-        result = m_manager->TryFindNextHole(
+        result = FindHole(
             block,
             0,
+            minimumHoleBytes,
             &hole,
-            &m_next_search_line,
             status);
         if (result != SideMetadataResult::Success)
         {
@@ -1081,6 +1100,11 @@ uintptr_t ImmixBumpAllocator::GetBlock() const
     return m_block;
 }
 
+bool ImmixBumpAllocator::HoldsFreshBlock() const
+{
+    return (m_block != 0) && ImmixAllocationManager::IsFreshSource(m_source);
+}
+
 uintptr_t ImmixBumpAllocator::GetCursor() const
 {
     return m_cursor;
@@ -1132,6 +1156,33 @@ bool ImmixBumpAllocator::TryAlignWithOffset(
 
     *aligned = rounded - alignmentOffset;
     return true;
+}
+
+SideMetadataResult ImmixBumpAllocator::FindHole(
+    uintptr_t block,
+    size_t searchLine,
+    size_t minimumHoleBytes,
+    ImmixHole* hole,
+    ImmixAllocationStatus* status)
+{
+    for (;;)
+    {
+        SideMetadataResult result = m_manager->TryFindNextHole(
+            block,
+            searchLine,
+            hole,
+            &m_next_search_line,
+            status);
+        if ((result != SideMetadataResult::Success) ||
+            (*status != ImmixAllocationStatus::Ready) ||
+            (static_cast<size_t>(hole->end - hole->start) >= minimumHoleBytes))
+        {
+            return result;
+        }
+        // The hole cannot hold the pending request. It stays as it is, with its lines free, for a smaller request.
+        m_manager->m_holes_skipped.fetch_add(1, std::memory_order_relaxed);
+        searchLine = m_next_search_line;
+    }
 }
 
 SideMetadataResult ImmixBumpAllocator::ReleaseAfterFailure(

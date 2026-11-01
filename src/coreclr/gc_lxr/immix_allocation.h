@@ -97,6 +97,8 @@ public:
     size_t GetFreshBlocksAcquired() const;
     size_t GetRecycledBlocksAcquired() const;
     size_t GetRecycledLinesConsumed() const;
+    // Holes that a refill left alone because they were smaller than the pending request (see TryRefill).
+    size_t GetHolesSkipped() const;
     size_t GetBlocksInUse() const;
 #ifdef LXR_F9_TEST_HOOKS
     // Test only. The number of lines whose counts the hole search has read since the manager was initialized.
@@ -106,6 +108,8 @@ public:
     }
 #endif // LXR_F9_TEST_HOOKS
     SideMetadataResult NotifyBlockReleased();
+    // The same for `count` blocks. It fails, and changes nothing, when fewer than `count` blocks are in use.
+    SideMetadataResult NotifyBlocksReleased(size_t count);
 
     // Storage that the owner of the manager provides, one byte per block unless noted. Every successful block
     // acquisition is noted here, so that no pause has to walk all blocks to find the blocks that allocators touched.
@@ -230,6 +234,7 @@ private:
     std::atomic<size_t> m_fresh_blocks_acquired;
     std::atomic<size_t> m_recycled_blocks_acquired;
     std::atomic<size_t> m_recycled_lines_consumed;
+    std::atomic<size_t> m_holes_skipped{0};
     std::atomic<size_t> m_blocks_in_use{0};
 #ifdef LXR_F9_TEST_HOOKS
     mutable std::atomic<uint64_t> m_line_probes{0};
@@ -250,10 +255,13 @@ public:
     SideMetadataResult Initialize(
         ImmixAllocationManager* manager,
         uintptr_t owner);
+    // minimumHoleBytes: a recycled refill passes over holes smaller than this without preparing them (no zeroing, no
+    // count of consumed lines), so a request that does not fit them does not burn them. Zero takes every hole.
     SideMetadataResult TryRefill(
         ImmixAllocationSource source,
         ImmixMarkingContext markingContext,
-        ImmixAllocationStatus* status);
+        ImmixAllocationStatus* status,
+        size_t minimumHoleBytes = 0);
     SideMetadataResult TryAllocate(
         const ImmixAllocationRequest& request,
         uintptr_t* address,
@@ -261,6 +269,8 @@ public:
     SideMetadataResult Reset(ImmixAllocationStatus* status);
 
     uintptr_t GetBlock() const;
+    // Whether the block that the allocator holds was taken as a clean block.
+    bool HoldsFreshBlock() const;
     uintptr_t GetCursor() const;
     uintptr_t GetLimit() const;
     SideMetadataResult SetCursor(uintptr_t cursor);
@@ -271,6 +281,12 @@ private:
         size_t alignment,
         size_t alignmentOffset,
         uintptr_t* aligned);
+    SideMetadataResult FindHole(
+        uintptr_t block,
+        size_t searchLine,
+        size_t minimumHoleBytes,
+        ImmixHole* hole,
+        ImmixAllocationStatus* status);
     SideMetadataResult ReleaseAfterFailure(
         SideMetadataResult failure,
         ImmixAllocationStatus* status);

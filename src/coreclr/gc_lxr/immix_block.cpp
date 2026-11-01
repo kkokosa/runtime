@@ -941,6 +941,131 @@ SideMetadataResult ImmixBlockManager::TryReleaseNursery(
     return result;
 }
 
+SideMetadataResult ImmixBlockManager::IsReleasableNurseryQuiescent(uintptr_t block, bool* releasable) const
+{
+    if (releasable == nullptr)
+    {
+        return SideMetadataResult::InvalidArgument;
+    }
+    *releasable = false;
+    uintptr_t owner = NoOwner;
+    ImmixBlockState state = ImmixBlockState::Unallocated;
+    uint8_t unavailable = 0;
+    bool nurseryOrReusing = false;
+    SideMetadataResult result = LoadOwner(block, &owner);
+    if (result == SideMetadataResult::Success)
+    {
+        result = GetState(block, &state, &unavailable);
+    }
+    if (result == SideMetadataResult::Success)
+    {
+        result = IsNurseryOrReusing(block, &nurseryOrReusing);
+    }
+    if (result == SideMetadataResult::Success)
+    {
+        *releasable = owner == NoOwner && state == ImmixBlockState::Unallocated && nurseryOrReusing &&
+            (GetGlobalPhaseEpoch() & 1) == 0;
+    }
+    return result;
+}
+
+SideMetadataResult ImmixBlockManager::ReleaseNurseryBatchQuiescent(
+    uintptr_t arena,
+    const uint32_t* blocks,
+    size_t count,
+    size_t* released)
+{
+    if (released == nullptr || (count != 0 && blocks == nullptr))
+    {
+        return SideMetadataResult::InvalidArgument;
+    }
+    *released = 0;
+    BlockOperationScope operation(this);
+    if ((GetGlobalPhaseEpoch() & 1) != 0)
+    {
+        return SideMetadataResult::InconsistentState;
+    }
+    size_t updated = 0;
+    for (size_t entry = 0; entry < count; entry++)
+    {
+        uintptr_t block = arena + static_cast<uintptr_t>(blocks[entry]) * ImmixBlockGeometry::BlockBytes;
+        bool releasable = false;
+        SideMetadataResult result = IsReleasableNurseryQuiescent(block, &releasable);
+        if (result != SideMetadataResult::Success)
+        {
+            return result;
+        }
+        if (!releasable)
+        {
+            continue;
+        }
+        uint8_t promotion = 0;
+        uint8_t defrag = 0;
+        result = LoadByte(LxrSideMetadataKind::NurseryPromotion, block, &promotion);
+        if (result == SideMetadataResult::Success)
+        {
+            result = LoadByte(LxrSideMetadataKind::BlockDefrag, block, &defrag);
+        }
+        if (result != SideMetadataResult::Success)
+        {
+            return result;
+        }
+        bool clean = promotion == 0 && defrag == 0;
+#if defined(_DEBUG) || defined(LXR_SIDE_METADATA_TEST_PLATFORM)
+        const LxrSideMetadataKind planes[] = {
+            LxrSideMetadataKind::FieldUnlogged,
+            LxrSideMetadataKind::ReferenceCountStraddle,
+        };
+        for (LxrSideMetadataKind kind : planes)
+        {
+            bool zero = false;
+            result = m_metadata->IsRangeZero(
+                kind, block, ImmixBlockGeometry::BlockBytes, MetadataOrder, &zero);
+            if (result != SideMetadataResult::Success)
+            {
+                return result;
+            }
+            clean = clean && zero;
+        }
+#endif // _DEBUG || LXR_SIDE_METADATA_TEST_PLATFORM
+#ifdef _DEBUG
+        if (m_reference_count.IsValid())
+        {
+            _ASSERTE(m_reference_count.IsRangeZero(block, ImmixBlockGeometry::BlockBytes, MetadataOrder));
+        }
+#endif // _DEBUG
+        if (!clean)
+        {
+            ImmixBlockOperationStatus status;
+            result = TryReleaseNursery(block, &status);
+            if (result != SideMetadataResult::Success)
+            {
+                return result;
+            }
+            if (status == ImmixBlockOperationStatus::Updated)
+            {
+                updated++;
+            }
+            else if (status != ImmixBlockOperationStatus::Unchanged)
+            {
+                return SideMetadataResult::InconsistentState;
+            }
+            continue;
+        }
+        // The valid bits of the sources that the pause copied out of this block were not cleared one by one (the retiring
+        // of a source skips a block that this function releases), and the block can hold bits of dead objects that were
+        // never sources. One fill of the plane covers all of them.
+        result = m_metadata->FillRangeBytes(LxrSideMetadataKind::ValidObject, block, ImmixBlockGeometry::BlockBytes, 0);
+        if (result != SideMetadataResult::Success)
+        {
+            return result;
+        }
+        updated++;
+    }
+    *released = updated;
+    return SideMetadataResult::Success;
+}
+
 #ifdef LXR_ENABLE_LAZY_COMPLETION_COUNTER
 SideMetadataResult ImmixBlockManager::TryReleaseIfRcDead(
     uintptr_t block,

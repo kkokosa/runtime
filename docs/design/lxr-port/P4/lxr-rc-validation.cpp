@@ -17,9 +17,11 @@
 #include <chrono>
 #include <cstdio>
 #include <memory>
+#include <mutex>
 #include <random>
 #include <set>
 #include <thread>
+#include <unordered_map>
 #include <vector>
 #if defined(__linux__)
 #include <sys/mman.h>
@@ -152,6 +154,8 @@ namespace
         size_t probeBlocks = SIZE_MAX;
         bool probePinned = false;
         bool probeNeighbourPinned = true;
+        // How many times the pause asked the roots to relocate.
+        size_t relocations = 0;
     };
 
     LxrRcResult CaptureMoving(LxrReferenceCounting* engine, void* context)
@@ -245,6 +249,7 @@ namespace
     LxrRcResult RelocateMoving(LxrReferenceCounting* engine, void* context)
     {
         MovingRoots* roots = static_cast<MovingRoots*>(context);
+        roots->relocations++;
         if (roots->probe)
         {
             roots->probeBlocks = engine->CountPausePinnedBlocks();
@@ -3235,6 +3240,184 @@ namespace
         Check(Count(engine, shared) == 0 && !engine.IsObjectStart(shared),
             "the trace reclaims a stuck object that is not reachable");
         Check(engine.DetachMutator(mutator) == LxrRcResult::Success, "overflow owner detaches");
+    }
+
+    // Item 3. The continuation lines of an object of several lines carry a count of one (the line is live) when the pause
+    // promotes the object in place and when it copies it, and the death of the object clears them again. The marks are
+    // written with plain stores, so this checks every continuation line of both kinds of survivor.
+    bool ContinuationLinesCounted(
+        LxrReferenceCounting& engine, Object* object, size_t size, uintptr_t expected, size_t* lines)
+    {
+        uintptr_t start = reinterpret_cast<uintptr_t>(object) - sizeof(ObjHeader);
+        uintptr_t first = (start & ~ImmixBlockGeometry::LineMask) + ImmixBlockGeometry::LineBytes;
+        uintptr_t end = (start + size) & ~ImmixBlockGeometry::LineMask;
+        bool all = true;
+        *lines = 0;
+        for (uintptr_t line = first; line < end; line += ImmixBlockGeometry::LineBytes)
+        {
+            uintptr_t count = UINTPTR_MAX;
+            all = all &&
+                engine.LoadCount(reinterpret_cast<Object*>(line + sizeof(ObjHeader)), &count) == LxrRcResult::Success &&
+                count == expected;
+            (*lines)++;
+        }
+        return all;
+    }
+
+    void ValidateItem3Straddle(uint8_t bits)
+    {
+        LxrReferenceCounting engine;
+        LxrRcMutator* mutator = nullptr;
+        MovingRoots roots;
+        int identity;
+        if (!InitializeMoving(engine, &roots, 16, &mutator, &identity, bits))
+        {
+            return;
+        }
+        Type big(4096, 0);
+        Object* pinned = Allocate(engine, mutator, big);
+        Object* movable = Allocate(engine, mutator, big);
+        if (pinned == nullptr || movable == nullptr)
+        {
+            return;
+        }
+        roots.objects = {movable, pinned};
+        roots.pinned = pinned;
+        Check(engine.Collect(CaptureMoving, &roots, Timeout) == LxrRcResult::Success &&
+                engine.Drain(Timeout) == LxrRcResult::Success,
+            "item 3: a pause with a pinned and a movable multi-line object completes");
+        Object* stayed = roots.objects[1];
+        Object* moved = roots.objects[0];
+        Check(stayed == pinned && moved != movable, "item 3: the pinned object stays and the other object moves");
+        size_t stayedLines = 0;
+        size_t movedLines = 0;
+        size_t stayedSize = engine.GetObjectExtent(stayed);
+        size_t movedSize = engine.GetObjectExtent(moved);
+        Check(stayedSize == 4096 && movedSize == 4096, "item 3: the survivors keep their extent");
+        Check(ContinuationLinesCounted(engine, stayed, stayedSize, 1, &stayedLines) && stayedLines >= 14,
+            "item 3: the continuation lines of the in-place survivor are live");
+        Check(ContinuationLinesCounted(engine, moved, movedSize, 1, &movedLines) && movedLines >= 14,
+            "item 3: the continuation lines of the copied survivor are live");
+        Check(stayed->GetHeader()->GetGCReservedBits(3, 0) == 0,
+            "item 3: the in-place survivor has no forwarding state");
+        Check(Count(engine, stayed) == 1 && Count(engine, moved) == 1,
+            "item 3: both survivors have one count");
+        roots.objects.clear();
+        roots.pinned = nullptr;
+        Check(engine.Collect(CaptureMoving, &roots, Timeout) == LxrRcResult::Success &&
+                engine.Drain(Timeout) == LxrRcResult::Success,
+            "item 3: the pause that drops the roots completes");
+        Check(Count(engine, stayed) == 0 && Count(engine, moved) == 0,
+            "item 3: the dead survivors have no count");
+        Check(ContinuationLinesCounted(engine, stayed, stayedSize, 0, &stayedLines) &&
+                ContinuationLinesCounted(engine, moved, movedSize, 0, &movedLines),
+            "item 3: the death clears the continuation lines");
+        Check(engine.DetachMutator(mutator) == LxrRcResult::Success, "item 3: straddle mutator detaches");
+    }
+
+    // Item 3. A large object without reference fields has no unlog bits after it is promoted, so a first write to a
+    // field of the other kind of large object is logged and nothing is logged for the first kind.
+    void ValidateItem3LargeUnlog(uint8_t bits)
+    {
+        Type primitive(32768, 0);
+        Type references(32768, 4);
+        LxrReferenceCounting engine;
+        int identity;
+        LxrRcMutator* mutator;
+        if (!Initialize(engine, bits, &mutator, &identity))
+        {
+            return;
+        }
+        Object* plain = Allocate(engine, mutator, primitive);
+        Object* holder = Allocate(engine, mutator, references);
+        if (plain == nullptr || holder == nullptr || !Epoch(engine, {plain, holder}))
+        {
+            return;
+        }
+        Check(Count(engine, plain) == 1 && Count(engine, holder) == 1,
+            "item 3: both large objects are promoted");
+        uint64_t before = engine.GetMetrics().loggedSlots;
+        Check(engine.LogBeforeWrite(mutator, Field(plain), nullptr) == LxrRcResult::Success &&
+                engine.GetMetrics().loggedSlots == before,
+            "item 3: a large object without references has no unlogged field");
+        Check(engine.LogBeforeWrite(mutator, Field(holder), nullptr) == LxrRcResult::Success &&
+                engine.GetMetrics().loggedSlots == before + 1,
+            "item 3: a large object with references has its fields unlogged");
+        Check(engine.DetachMutator(mutator) == LxrRcResult::Success, "item 3: large object mutator detaches");
+    }
+
+    // Item 3. Roots that name the same objects many times, with a copy that can run out of space in the middle of the
+    // pause: every reference to an object must resolve to the same address, and the count must be the number of
+    // references. A worker that keeps an object in place and a worker that copies it would show as two live objects.
+    void ValidateItem3DuplicateRoots(uint8_t bits, size_t objects, size_t copies)
+    {
+        LxrReferenceCounting engine;
+        LxrRcMutator* mutator = nullptr;
+        MovingRoots roots;
+        int identity;
+        if (!InitializeMoving(engine, &roots, 12, &mutator, &identity, bits))
+        {
+            return;
+        }
+        Type type(2048, 0);
+        std::vector<Object*> originals;
+        for (size_t index = 0; index < objects; index++)
+        {
+            Object* object = Allocate(engine, mutator, type);
+            if (object == nullptr)
+            {
+                return;
+            }
+            originals.push_back(object);
+        }
+        for (size_t copy = 0; copy < copies; copy++)
+        {
+            for (size_t index = 0; index < objects; index++)
+            {
+                roots.objects.push_back(originals[(index + copy * 7) % objects]);
+            }
+        }
+        roots.pinned = originals[objects / 2];
+        if (!Check(engine.Collect(CaptureMoving, &roots, Timeout) == LxrRcResult::Success &&
+                engine.Drain(Timeout) == LxrRcResult::Success,
+            "item 3: a pause with duplicate roots completes"))
+        {
+            return;
+        }
+        std::vector<Object*> resolved(objects, nullptr);
+        bool consistent = true;
+        for (size_t copy = 0; copy < copies; copy++)
+        {
+            for (size_t index = 0; index < objects; index++)
+            {
+                size_t original = (index + copy * 7) % objects;
+                Object* now = roots.objects[copy * objects + index];
+                if (resolved[original] == nullptr)
+                {
+                    resolved[original] = now;
+                }
+                consistent = consistent && resolved[original] == now;
+            }
+        }
+        Check(consistent, "item 3: every reference to an object resolves to one address");
+        bool counted = true;
+        for (size_t index = 0; index < objects; index++)
+        {
+            counted = counted && Count(engine, resolved[index]) == copies;
+        }
+        Check(counted, "item 3: the count of every survivor is the number of its references");
+        Check(resolved[objects / 2] == originals[objects / 2], "item 3: the pinned object stays");
+        Check(engine.DetachMutator(mutator) == LxrRcResult::Success, "item 3: duplicate root mutator detaches");
+    }
+
+    void ValidateItem3(uint8_t bits)
+    {
+        ValidateItem3Straddle(bits);
+        ValidateItem3LargeUnlog(bits);
+        for (size_t objects : {8, 20, 40})
+        {
+            ValidateItem3DuplicateRoots(bits, objects, 3);
+        }
     }
 
     void ValidateCycleReclamation(uint8_t bits)
@@ -8098,6 +8281,175 @@ namespace
         Check(intact, "the refill of a hole leaves the counts and start bits of its neighbours alone");
     }
 
+    // Item 4. A request larger than a line that does not fit the hole is served without zeroing, counting or abandoning
+    // the holes that are too small for it. Mode 0 is the old path. Mode 1: the refill of the allocator of the thread passes
+    // over the holes that are too small. Mode 2: a second allocator takes clean blocks (the overflow allocator of the Java
+    // LXR). Mode 3: the second allocator takes the holes that fit, then clean blocks. The objects of the second allocator
+    // are counted at the pause like any others. gapBytes is the size of the dead objects between the survivors: 1024
+    // leaves holes of 2 or 3 lines (too small for the requests of 1024 bytes), 4096 leaves holes that fit them.
+    void ValidateMediumOverflow(size_t mode, size_t gapBytes)
+    {
+        LxrReferenceCounting engine;
+        LxrRcConfiguration configuration{
+            16 * ImmixBlockGeometry::BlockBytes, 8 * LxrLargeObjectSpace::MinimumObjectBytes, 16, 1024, 4, 8,
+        };
+        configuration.mediumOverflow = mode != 0;
+        configuration.mediumOverflowMode = mode;
+        LxrPauseRuntimeAdapter adapter{Suspend, Resume, nullptr, false};
+        int identity;
+        LxrRcMutator* mutator;
+        if (!Check(engine.Initialize(configuration, adapter) == LxrRcResult::Success &&
+                engine.AttachMutator(&identity, &mutator) == LxrRcResult::Success,
+                "medium overflow engine initializes"))
+        {
+            return;
+        }
+        Check(engine.GetMediumOverflowMetric(7) == mode, "the setting is reported");
+        bool fits = gapBytes >= 4096;
+        uintptr_t arena = engine.GetReservationStart();
+        size_t blocks = engine.GetImmixCapacityBytes() / ImmixBlockGeometry::BlockBytes;
+        Check(engine.PoisonRangeForTest(arena, blocks * ImmixBlockGeometry::BlockBytes, false) == LxrRcResult::Success,
+            "the planes of every block are poisoned");
+        Type leaf(24, 0);
+        Type gap(256, 0);
+        Type medium(1024, 0);
+        Helper helper{&engine, mutator};
+        // Survivors of 24 bytes with dead objects between them: gapBytes of them in objects of one line, which go to the
+        // holes in every mode.
+        std::vector<Object*> keep;
+        for (size_t index = 0; index < (fits ? 48 : 96); index++)
+        {
+            Object* survivor = helper.NewObject(leaf);
+            if (survivor == nullptr)
+            {
+                return;
+            }
+            for (size_t part = 0; part < gapBytes / 256; part++)
+            {
+                if (helper.NewObject(gap) == nullptr)
+                {
+                    return;
+                }
+            }
+            keep.push_back(survivor);
+        }
+        helper.Retire();
+        if (!Epoch(engine, keep))
+        {
+            return;
+        }
+        std::set<uintptr_t> survivorBlocks;
+        for (Object* object : keep)
+        {
+            survivorBlocks.insert(BlockOf(StartOf(object)));
+        }
+        uint64_t objects = engine.GetMediumOverflowMetric(0);
+        uint64_t overflowBlocks = engine.GetMediumOverflowMetric(2);
+        uint64_t skipped = engine.GetMediumOverflowMetric(3);
+        uint64_t lines = engine.GetMediumOverflowMetric(4);
+        uint64_t fresh = engine.GetMediumOverflowMetric(5);
+
+        helper = Helper{&engine, mutator};
+        std::vector<Object*> mediums;
+        std::vector<Object*> kept = keep;
+        for (size_t index = 0; index < 40; index++)
+        {
+            Object* object = helper.New(medium.table, 1024);
+            if (object == nullptr)
+            {
+                return;
+            }
+            mediums.push_back(object);
+            if (index % 2 == 0)
+            {
+                kept.push_back(object);
+            }
+        }
+        size_t inSurvivorBlocks = 0;
+        for (Object* object : mediums)
+        {
+            inSurvivorBlocks += survivorBlocks.count(BlockOf(StartOf(object)));
+        }
+        uint64_t newObjects = engine.GetMediumOverflowMetric(0) - objects;
+        uint64_t newBlocks = engine.GetMediumOverflowMetric(2) - overflowBlocks;
+        uint64_t newSkipped = engine.GetMediumOverflowMetric(3) - skipped;
+        uint64_t newLines = engine.GetMediumOverflowMetric(4) - lines;
+        uint64_t newFresh = engine.GetMediumOverflowMetric(5) - fresh;
+        // A hole that is used is prepared whole, so the lines of a hole count for what it holds, and a little more.
+        size_t holeLines = static_cast<size_t>(newLines);
+        size_t usedLines = inSurvivorBlocks * (1024 / ImmixBlockGeometry::LineBytes);
+        Check(newObjects == (mode >= 2 ? 40u : 0u),
+            mode >= 2 ? "every medium object comes from the second allocator" : "the second allocator is not used");
+        if (mode == 0)
+        {
+            Check(newSkipped == 0 && (fits || holeLines > 2 * usedLines + 8),
+                "the old path takes and counts holes that are too small");
+        }
+        else if (mode == 2)
+        {
+            Check(newSkipped == 0 && holeLines == 0 && inSurvivorBlocks == 0 && newFresh == 2 && newBlocks == 2,
+                "40 objects of 1024 bytes take 2 clean blocks, and no hole is zeroed, counted or skipped");
+        }
+        else
+        {
+            Check(holeLines <= 2 * usedLines + 8,
+                "only the holes that hold an object are zeroed and counted");
+            Check(newFresh == (40 - inSurvivorBlocks + 31) / 32,
+                "the objects that fit no hole take clean blocks");
+            Check(fits ? inSurvivorBlocks == 40 : (newSkipped > 0 && inSurvivorBlocks < 40),
+                fits ? "the objects lie in the holes that fit them" : "the holes that are too small are skipped");
+        }
+        if (mode != 0)
+        {
+            LxrReferenceCounting::RangeStateForTest state;
+            Check(engine.GetRangeStateForTest(StartOf(mediums[0]), 1024, &state) == LxrRcResult::Success &&
+                    state.validSlots == 0 && state.countedSlots == 0 && state.unloggedSlots == 0 &&
+                    state.straddleLines == 0,
+                "the range of the first medium object is clean");
+        }
+        if (mode == 2)
+        {
+            // Small objects still use the holes, because the first allocator keeps its place.
+            std::vector<Object*> small;
+            for (size_t index = 0; index < 30; index++)
+            {
+                Object* object = helper.NewObject(leaf);
+                if (object == nullptr)
+                {
+                    return;
+                }
+                small.push_back(object);
+            }
+            size_t inHoles = 0;
+            for (Object* object : small)
+            {
+                inHoles += survivorBlocks.count(BlockOf(StartOf(object)));
+            }
+            Check(inHoles == small.size() && engine.GetMediumOverflowMetric(4) > lines,
+                "small objects go to the holes of the reusable blocks");
+            kept.insert(kept.end(), small.begin(), small.end());
+        }
+        helper.Retire();
+        if (!Epoch(engine, kept))
+        {
+            return;
+        }
+        bool promoted = true;
+        for (size_t index = 0; index < mediums.size(); index += 2)
+        {
+            promoted = promoted && Count(engine, mediums[index]) == 1 && engine.IsObjectStart(mediums[index]);
+        }
+        Check(promoted, "the retained medium objects are counted and promoted");
+        bool survivorsIntact = true;
+        for (Object* object : keep)
+        {
+            survivorsIntact = survivorsIntact && Count(engine, object) == 1 && engine.IsObjectStart(object);
+        }
+        Check(survivorsIntact && engine.GetFailure() == LxrRcResult::Success,
+            "the survivors of the reusable blocks are intact");
+        Check(engine.DetachMutator(mutator) == LxrRcResult::Success, "the overflow owner detaches");
+    }
+
     struct SpanProbe
     {
         std::vector<std::pair<uintptr_t, uintptr_t>> spans;
@@ -8566,6 +8918,125 @@ namespace
             "the young objects behind the walk and the interior target are copied");
     }
 
+    // The release stage of a pause has one packet per 512 allocated blocks, at most one per worker and the pause thread
+    // (SubmitReleasePackets). The packets share the copy-log chunks and the list of allocated blocks, so the result must not
+    // depend on their number: every copied source loses its valid bit, every clean nursery block is released once, and the
+    // block counters equal a walk.
+    void ValidateParallelRelease(
+        size_t workers, size_t allocatedBlocks, size_t rootStep, size_t expectedPackets, size_t maxCopyBytes = SIZE_MAX)
+    {
+        LxrReferenceCounting engine;
+        LxrRcMutator* mutator = nullptr;
+        MovingRoots roots;
+        int identity;
+        LxrRcConfiguration configuration{
+            (allocatedBlocks + allocatedBlocks / 4 + 64) * ImmixBlockGeometry::BlockBytes,
+            2 * LxrLargeObjectSpace::MinimumObjectBytes, 4, 65536, workers, 8,
+        };
+        configuration.evacuateNursery = true;
+        configuration.lineRecycling = false;
+        // A root of at least this size is promoted in place, so its block stays and holds copied sources next to it.
+        configuration.maximumYoungCopyBytes = maxCopyBytes;
+        LxrPauseRuntimeAdapter adapter{Suspend, Resume, nullptr, false};
+        LxrRcObjectModel model{};
+        model.context = &roots;
+        model.finishRelocation = RelocateMoving;
+        if (!Check(engine.Initialize(configuration, adapter, &model) == LxrRcResult::Success,
+                "the engine of the release stage test initializes") ||
+            !Check(engine.AttachMutator(&identity, &mutator) == LxrRcResult::Success,
+                "the allocator of the release stage test attaches"))
+        {
+            return;
+        }
+        ArrayType pointers;
+        std::mt19937_64 random(9);
+        Helper helper{&engine, mutator};
+        std::vector<size_t> nurseryBlocks;
+        std::set<size_t> stayingBlocks;
+        std::vector<uintptr_t> sources;
+        std::vector<size_t> sourceBlocks;
+        std::vector<uint32_t> payloads;
+        size_t objectCount = 0;
+        while (nurseryBlocks.size() < allocatedBlocks)
+        {
+            uint32_t length = 1 + static_cast<uint32_t>(random() % 60);
+            Object* object = helper.New(pointers.table, 24 + length * 8u, length);
+            if (object == nullptr)
+            {
+                Check(false, "the nursery of the release stage test fills");
+                return;
+            }
+            uintptr_t* payload = reinterpret_cast<uintptr_t*>(reinterpret_cast<uint8_t*>(object) + 16);
+            for (uint32_t element = 0; element < length; element++)
+            {
+                payload[element] = objectCount * 1000u + element;
+            }
+            size_t block = BlockOfObject(engine, object);
+            if (nurseryBlocks.empty() || nurseryBlocks.back() != block)
+            {
+                nurseryBlocks.push_back(block);
+            }
+            if (objectCount % rootStep == 0)
+            {
+                roots.objects.push_back(object);
+                sources.push_back(reinterpret_cast<uintptr_t>(object));
+                payloads.push_back(static_cast<uint32_t>(objectCount));
+                sourceBlocks.push_back(block);
+            }
+            objectCount++;
+        }
+        helper.Retire();
+        Check(engine.Collect(CaptureMoving, &roots, Timeout) == LxrRcResult::Success &&
+                engine.Drain(Timeout) == LxrRcResult::Success,
+            "the copying pause with a large nursery completes");
+        // A root that is too large to copy is promoted in place, and so is a root in a block that holds a promoted object
+        // by the time the pause reaches it. Which roots those are depends on the order of the workers, so the test reads the
+        // outcome from the roots.
+        bool moved = true;
+        bool retired = true;
+        bool intact = true;
+        size_t copied = 0;
+        for (size_t index = 0; index < roots.objects.size(); index++)
+        {
+            Object* copy = roots.objects[index];
+            Object* source = reinterpret_cast<Object*>(sources[index]);
+            uint32_t length = ArrayLength(copy);
+            bool copies = copy != source;
+            copied += copies ? 1 : 0;
+            if (!copies)
+            {
+                stayingBlocks.insert(sourceBlocks[index]);
+            }
+            moved = moved && engine.IsObjectStart(copy);
+            retired = retired && (copies ? !engine.IsObjectStart(source) : true);
+            intact = intact && length > 0 &&
+                reinterpret_cast<uintptr_t*>(reinterpret_cast<uint8_t*>(copy) + 16)[length - 1] ==
+                    payloads[index] * 1000u + length - 1;
+        }
+        Check(moved && intact, "every root is copied or promoted in place, and keeps its payload");
+        Check(maxCopyBytes == SIZE_MAX ? stayingBlocks.empty() : (!stayingBlocks.empty() && copied > 1000),
+            "the pause copies the roots that can move and promotes the others in place");
+        Check(roots.relocations == 1, "a RefCount pause relocates the roots once");
+        Check(retired, "no copied source keeps its valid bit, in a released block or next to a promoted object");
+        bool released = true;
+        for (size_t block : nurseryBlocks)
+        {
+            released = released &&
+                (BlockStateOf(engine, block) == ImmixBlockState::Unallocated) == (stayingBlocks.count(block) == 0);
+        }
+        Check(released, "every nursery block without a promoted object is free after the pause, and the others are not");
+        size_t releasedBlocks = nurseryBlocks.size() - stayingBlocks.size();
+        Check(engine.GetFreshBlocksReleasedInPauseForTest() == releasedBlocks &&
+                engine.GetMetrics().blocksReleased == releasedBlocks,
+            "each clean nursery block is counted as released once");
+        size_t nonFree = 0;
+        Check(engine.BlockCountersMatchWalk(&nonFree, nullptr), "the block counters equal a walk after the release");
+        Check(engine.GetReleasePacketsForTest() == expectedPackets,
+            "the release stage has a packet for each 512 allocated blocks, up to the number of threads");
+        Check(engine.GetNurseryMetrics().copiedObjects == copied, "the copy counter equals the number of moved roots");
+        Check(engine.DetachMutator(mutator) == LxrRcResult::Success, "the release stage test allocator detaches");
+    }
+
     struct StressContext
     {
         std::vector<Object*> exact;
@@ -8768,15 +9239,621 @@ namespace
         Check(pauses == 300 && failures == 0 && interiorChecks > 300,
             "every object that a root named in a pause survives, and every interior address finds its object");
     }
+
+    // P27 (item 2). The lazy mature and dead-cycle sweep as packets on all workers.
+    struct SweepOutcome
+    {
+        bool ran = false;
+        uint64_t cycleObjects = 0;
+        uint64_t cycleBytes = 0;
+        uint64_t blocksReleased = 0;
+        uint64_t largeBytesReleased = 0;
+        uint64_t liveBytes = 0;
+        uint64_t reclaimedBytes = 0;
+        uint64_t sweepPackets = 0;
+        bool survivorsIntact = false;
+    };
+
+    SweepOutcome RunLazySweepScenario(bool parallel)
+    {
+        constexpr size_t DeadPairs = 400;
+        constexpr size_t LivePairs = 100;
+        constexpr size_t Promoted = 300;
+        SweepOutcome outcome;
+        Type node(1000, 1);
+        Type bigNode(32768, 1);
+        Type bigLeaf(32768, 0);
+        LxrRcConfiguration configuration{
+            256 * ImmixBlockGeometry::BlockBytes, 8 * LxrLargeObjectSpace::MinimumObjectBytes, 16, 1024, 4, 8,
+        };
+        configuration.parallelSweep = parallel;
+        LxrPauseRuntimeAdapter adapter{Suspend, Resume, nullptr, false};
+        LxrReferenceCounting engine;
+        LxrRcMutator* mutator;
+        int identity;
+        if (!Check(engine.Initialize(configuration, adapter) == LxrRcResult::Success &&
+                engine.AttachMutator(&identity, &mutator) == LxrRcResult::Success,
+                "lazy sweep scenario engine initializes"))
+        {
+            return outcome;
+        }
+        std::vector<Object*> first;
+        std::vector<Object*> live;
+        std::vector<std::pair<Object*, Object*>> livePairs;
+        bool allocated = true;
+        auto pair = [&](Type& type, bool keep)
+        {
+            Object* left = Allocate(engine, mutator, type);
+            Object* right = Allocate(engine, mutator, type);
+            allocated = allocated && left != nullptr && right != nullptr;
+            if (left == nullptr || right == nullptr)
+            {
+                return;
+            }
+            allocated = allocated && Store(engine, mutator, Field(left), right) &&
+                Store(engine, mutator, Field(right), left);
+            first.push_back(left);
+            if (keep)
+            {
+                live.push_back(left);
+                livePairs.push_back({left, right});
+            }
+        };
+        for (size_t index = 0; index < DeadPairs; index++)
+        {
+            pair(node, false);
+        }
+        for (size_t index = 0; index < LivePairs; index++)
+        {
+            pair(node, true);
+        }
+        pair(bigNode, false);
+        pair(bigNode, false);
+        for (size_t index = 0; index < Promoted; index++)
+        {
+            Object* single = Allocate(engine, mutator, node);
+            allocated = allocated && single != nullptr;
+            first.push_back(single);
+        }
+        Object* largeDying = Allocate(engine, mutator, bigLeaf);
+        allocated = allocated && largeDying != nullptr;
+        first.push_back(largeDying);
+        if (!Check(allocated, "lazy sweep scenario graph builds") || !Epoch(engine, first) || !Epoch(engine, live) ||
+            !TracePause(engine, live, LxrPauseKind::Full))
+        {
+            return outcome;
+        }
+        LxrTraceMetrics trace = engine.GetTraceMetrics();
+        LxrRcMetrics metrics = engine.GetMetrics();
+        outcome.ran = true;
+        outcome.cycleObjects = trace.cycleObjects;
+        outcome.cycleBytes = trace.cycleBytes;
+        outcome.blocksReleased = metrics.blocksReleased;
+        outcome.largeBytesReleased = metrics.largeObjectBytesReleased;
+        outcome.liveBytes = engine.GetLiveBytes();
+        outcome.reclaimedBytes = engine.GetReclaimedBytes();
+        outcome.sweepPackets = engine.GetLazyMetric(LxrReferenceCounting::LazySweepPackets);
+        outcome.survivorsIntact = true;
+        for (auto& survivor : livePairs)
+        {
+            outcome.survivorsIntact = outcome.survivorsIntact && Count(engine, survivor.first) != 0 &&
+                Count(engine, survivor.second) != 0 && *Field(survivor.first) == survivor.second &&
+                *Field(survivor.second) == survivor.first && engine.IsObjectStart(survivor.first);
+        }
+        Check(engine.DetachMutator(mutator) == LxrRcResult::Success, "lazy sweep scenario owner detaches");
+        return outcome;
+    }
+
+    void ValidateParallelLazySweep()
+    {
+        SweepOutcome serial = RunLazySweepScenario(false);
+        SweepOutcome parallel = RunLazySweepScenario(true);
+        if (!serial.ran || !parallel.ran)
+        {
+            return;
+        }
+        constexpr uint64_t DeadObjects = 2 * 400 + 2 + 2;
+        Check(serial.cycleObjects == DeadObjects && parallel.cycleObjects == DeadObjects,
+            "serial and parallel sweeps reclaim every object of every dead cycle, small and large");
+        Check(serial.cycleBytes == parallel.cycleBytes,
+            "the parallel dead-cycle sweep reclaims the same bytes");
+        Check(parallel.blocksReleased > 0 && serial.blocksReleased == parallel.blocksReleased,
+            "the parallel block sweep releases the same blocks");
+        Check(parallel.largeBytesReleased >= 5 * 32768 && serial.largeBytesReleased == parallel.largeBytesReleased,
+            "the parallel sweep releases the same dead large objects, from decrements and from the cycle sweep");
+        Check(serial.liveBytes == parallel.liveBytes && serial.reclaimedBytes == parallel.reclaimedBytes,
+            "live and reclaimed bytes agree between the serial and the parallel sweep");
+        Check(serial.survivorsIntact && parallel.survivorsIntact,
+            "live cycles keep their counts and fields through both sweeps");
+        Check(serial.sweepPackets == 0 && parallel.sweepPackets > 2,
+            "the parallel sweep splits a batch over several packets and runs a cycle batch and a block batch");
+    }
+
+    void ValidateEagerMarkClear(bool eager)
+    {
+        Type link(24, 1);
+        LxrReferenceCounting engine;
+        LxrRcMutator* mutator;
+        int identity;
+        if (!Initialize(engine, 8, &mutator, &identity))
+        {
+            return;
+        }
+        Object* live = Allocate(engine, mutator, link);
+        Object* liveOther = Allocate(engine, mutator, link);
+        Object* deadLeft = Allocate(engine, mutator, link);
+        Object* deadRight = Allocate(engine, mutator, link);
+        if (live == nullptr || liveOther == nullptr || deadLeft == nullptr || deadRight == nullptr)
+        {
+            return;
+        }
+        Check(Store(engine, mutator, Field(live), liveOther) && Store(engine, mutator, Field(liveOther), live) &&
+                Store(engine, mutator, Field(deadLeft), deadRight) &&
+                Store(engine, mutator, Field(deadRight), deadLeft),
+            "mark clear graph initializes");
+        if (!Epoch(engine, {live, deadLeft}) || !Epoch(engine, {live}) ||
+            !TracePause(engine, {live}, LxrPauseKind::Full))
+        {
+            return;
+        }
+        Check(engine.IsMarked(live) && engine.GetMarkedBytes() != 0, "the full trace leaves marks on the live cycle");
+        uint64_t serialClears = engine.GetLazyMetric(LxrReferenceCounting::MarkClearPause);
+        if (eager)
+        {
+            engine.ScheduleMarkClear();
+            Check(engine.DrainLazySweep(Timeout) == LxrRcResult::Success &&
+                    engine.GetLazyMetric(LxrReferenceCounting::MarkClearEager) == 1,
+                "the eager mark clear packets finish before the next pause");
+            Check(!engine.IsMarked(live) && engine.GetMarkedBytes() == 0,
+                "the eager clear removes every mark while the program runs");
+            engine.ScheduleMarkClear();
+            Check(engine.DrainLazySweep(Timeout) == LxrRcResult::Success &&
+                    engine.GetLazyMetric(LxrReferenceCounting::MarkClearEager) == 1,
+                "a clear plane is not cleared again");
+        }
+        Object* newLeft = Allocate(engine, mutator, link);
+        Object* newRight = Allocate(engine, mutator, link);
+        if (newLeft == nullptr || newRight == nullptr)
+        {
+            return;
+        }
+        Check(Store(engine, mutator, Field(newLeft), newRight) && Store(engine, mutator, Field(newRight), newLeft),
+            "second dead cycle initializes");
+        if (!Epoch(engine, {live, newLeft}) || !Epoch(engine, {live}) ||
+            !Check(engine.HoldTrace(true) == LxrRcResult::Success, "trace gate arms") ||
+            !TracePause(engine, {live}, LxrPauseKind::InitialMark))
+        {
+            return;
+        }
+        Check(!engine.IsMarked(live), "no mark of the earlier trace is left when the next trace starts");
+        Check(engine.GetLazyMetric(LxrReferenceCounting::MarkClearPause) == serialClears + (eager ? 0 : 1),
+            eager ? "the pause that starts the trace skips the clear that the packets did"
+                  : "without the eager clear the pause clears the plane itself");
+        if (!Check(engine.HoldTrace(false) == LxrRcResult::Success, "trace gate opens") ||
+            !TracePause(engine, {live}, LxrPauseKind::FinalMark))
+        {
+            return;
+        }
+        Check(engine.IsMarked(live) && engine.GetTraceMetrics().cycleObjects == 4,
+            "the second trace marks the live cycle and reclaims both dead cycles");
+        Check(engine.DetachMutator(mutator) == LxrRcResult::Success, "mark clear owner detaches");
+    }
+
+    // Pause trace. A FinalMark or Full pause traces, replays the remembered slots and copies mature objects on all workers
+    // (the stage of the resumable trace is open for the pause). The graph has shared children that are reached from
+    // packets that run at the same time, so a source that two workers both copy, or an object that two workers both trace,
+    // shows in the counts. Every run is made twice, serial and parallel, and the counts must be equal. Controls:
+    // LXR_PAUSE_TRACE_MARK_CONTROL (the claim of an object is a load and a store: two workers trace it),
+    // LXR_PAUSE_TRACE_LIMIT_CONTROL (the limit of concurrent trace workers also holds in a pause),
+    // LXR_PAUSE_TRACE_REPLAY_STORE_CONTROL (the replay stores the slot with a plain store, see ValidatePauseTraceOwnerCopy).
+    struct PauseTraceResult
+    {
+        bool ok = false;
+        uint64_t traced = 0;
+        uint64_t copied = 0;
+        uint64_t copiedBytes = 0;
+        uint64_t replayed = 0;
+        uint64_t parallelPauses = 0;
+        uint64_t replayPackets = 0;
+        uint64_t replayCopies = 0;
+        size_t moved = 0;
+        size_t distinctChildren = 0;
+        size_t hookHits = 0;
+        size_t hookViolations = 0;
+    };
+
+    struct ReplayOwnerHookState
+    {
+        LxrReferenceCounting* engine = nullptr;
+        std::unordered_map<Object**, Object*> owners;
+        std::unordered_map<Object*, Object*> copies;
+        size_t hits = 0;
+        size_t violations = 0;
+    };
+
+    static void ReplayOwnerHook(void* context, Object** slot, int phase)
+    {
+        ReplayOwnerHookState* state = static_cast<ReplayOwnerHookState*>(context);
+        auto owner = state->owners.find(slot);
+        if (owner == state->owners.end())
+        {
+            return;
+        }
+        if (phase == 0)
+        {
+            if (state->copies.size() < 64 && state->copies.find(owner->second) == state->copies.end())
+            {
+                Object* copy = nullptr;
+                if (state->engine->CopyMatureForTest(owner->second, &copy) == LxrRcResult::Success && copy != owner->second)
+                {
+                    state->copies[owner->second] = copy;
+                    state->hits++;
+                }
+            }
+            return;
+        }
+        auto copy = state->copies.find(owner->second);
+        if (copy != state->copies.end() && state->engine->ResolveForwarded(owner->second) != copy->second)
+        {
+            state->violations++;
+        }
+    }
+
+    PauseTraceResult RunPauseTraceScenario(bool parallel, bool finalMark, uint8_t bits, size_t workers, bool ownerCopy = false)
+    {
+        ReplayOwnerHookState hook;
+        constexpr size_t NodeBytes = 256;
+        constexpr size_t Nodes = 14400;
+        constexpr size_t Lists = Nodes / 4;
+        constexpr size_t Children = Nodes / 16;
+        constexpr size_t ComponentLength = 8;
+        PauseTraceResult out;
+        LxrReferenceCounting engine;
+        LxrRcMutator* mutator = nullptr;
+        MovingRoots roots;
+        int identity;
+        LxrRcConfiguration configuration{
+            256 * ImmixBlockGeometry::BlockBytes, 8 * LxrLargeObjectSpace::MinimumObjectBytes,
+            4, 8192, workers, bits,
+        };
+        configuration.evacuateMature = true;
+        configuration.defragHeadroomPercent = 50;
+        configuration.chunkDefragPercent = 0;
+        configuration.parallelPauseTrace = parallel;
+        LxrPauseRuntimeAdapter adapter{Suspend, Resume, nullptr, false};
+        LxrRcObjectModel model{};
+        model.context = &roots;
+        model.finishRelocation = RelocateMoving;
+        if (!Check(engine.Initialize(configuration, adapter, &model) == LxrRcResult::Success &&
+                engine.AttachMutator(&identity, &mutator) == LxrRcResult::Success,
+                "pause trace engine initializes"))
+        {
+            return out;
+        }
+        Type node(NodeBytes, 2);
+        std::vector<Object*> lists;
+        std::vector<Object*> children;
+        for (size_t index = 0; index < Nodes; index++)
+        {
+            Object* object = Allocate(engine, mutator, node);
+            if (object == nullptr)
+            {
+                return out;
+            }
+            if (index % 4 == 0)
+            {
+                lists.push_back(object);
+            }
+            else if (index % 16 == 1)
+            {
+                children.push_back(object);
+            }
+        }
+        for (size_t index = 0; index < Children; index++)
+        {
+            *reinterpret_cast<uint32_t*>(reinterpret_cast<uint8_t*>(children[index]) + 128) =
+                static_cast<uint32_t>(0x20000 + index);
+        }
+        for (size_t index = 0; index < Lists; index++)
+        {
+            Object* list = lists[index];
+            *reinterpret_cast<uint32_t*>(reinterpret_cast<uint8_t*>(list) + 128) = static_cast<uint32_t>(0x10000 + index);
+            *Field(list, 0) = children[index % Children];
+            *Field(list, 1) = index % ComponentLength == ComponentLength - 1 ? nullptr : lists[index + 1];
+        }
+        roots.objects = lists;
+        bool promoted = Check(engine.Collect(CaptureMoving, &roots, Timeout) == LxrRcResult::Success &&
+            engine.Drain(Timeout) == LxrRcResult::Success, "pause trace graph promotes");
+        if (!promoted)
+        {
+            return out;
+        }
+        size_t live = Lists;
+        if (finalMark)
+        {
+            if (!Check(engine.HoldTrace(true) == LxrRcResult::Success &&
+                    engine.BeginTrace(CaptureMoving, &roots, Timeout) == LxrRcResult::Success &&
+                    engine.HoldTrace(false) == LxrRcResult::Success &&
+                    engine.Drain(Timeout) == LxrRcResult::Success, "concurrent trace remembers the mature slots"))
+            {
+                return out;
+            }
+            // Only the first lists stay roots. The others are marked and counted, so the replay has to copy their targets.
+            live = 100;
+            if (ownerCopy)
+            {
+                // Lists past the first components are not reached from the roots. The replay of the first field of such a list
+                // finds the list as its owner, and the hook copies the owner right then, as another worker could.
+                for (size_t index = 104; index < Lists; index++)
+                {
+                    hook.owners[Field(roots.objects[index], 0)] = roots.objects[index];
+                }
+                hook.engine = &engine;
+                engine.SetReplayStoreHookForTest(ReplayOwnerHook, &hook);
+            }
+            roots.objects.resize(live);
+            if (!Check(engine.FinishTrace(CaptureMoving, &roots, Timeout) == LxrRcResult::Success &&
+                    engine.Drain(Timeout) == LxrRcResult::Success, "final mark with replay completes"))
+            {
+                return out;
+            }
+        }
+        else if (!Check(engine.CollectFull(CaptureMoving, &roots, Timeout) == LxrRcResult::Success &&
+                engine.Drain(Timeout) == LxrRcResult::Success, "full trace with mature copy completes"))
+        {
+            return out;
+        }
+        bool structure = true;
+        std::vector<Object*> firstChild(Children, nullptr);
+        for (size_t index = 0; index < live; index++)
+        {
+            Object* list = roots.objects[index];
+            structure &= *reinterpret_cast<uint32_t*>(reinterpret_cast<uint8_t*>(list) + 128) == 0x10000 + index;
+            out.moved += list != lists[index] ? 1 : 0;
+            Object* child = *Field(list, 0);
+            size_t slot = index % Children;
+            structure &= child != nullptr && engine.GetObjectExtent(child) == NodeBytes &&
+                *reinterpret_cast<uint32_t*>(reinterpret_cast<uint8_t*>(child) + 128) == 0x20000 + slot;
+            if (firstChild[slot] == nullptr)
+            {
+                firstChild[slot] = child;
+                out.distinctChildren++;
+            }
+            structure &= firstChild[slot] == child;
+            Object* next = index % ComponentLength == ComponentLength - 1 || index + 1 == live ? nullptr
+                : roots.objects[index + 1];
+            structure &= index + 1 == live ? true : *Field(list, 1) == next;
+        }
+        Check(structure, "every list keeps its payload and edges, and every shared child has one copy");
+        LxrMatureMetrics mature = engine.GetMatureMetrics();
+        out.traced = engine.GetTraceMetrics().objects;
+        out.copied = mature.copiedObjects;
+        out.copiedBytes = mature.copiedBytes;
+        out.replayed = mature.replayedEntries;
+        out.parallelPauses = engine.GetPauseTraceMetric(0);
+        out.replayPackets = engine.GetPauseTraceMetric(1);
+        out.replayCopies = engine.GetPauseTraceMetric(2);
+        Check(engine.GetFailure() == LxrRcResult::Success, "the pause trace leaves the engine healthy");
+        Check(engine.DetachMutator(mutator) == LxrRcResult::Success, "pause trace mutator detaches");
+        out.ok = structure;
+        out.hookHits = hook.hits;
+        out.hookViolations = hook.violations;
+        return out;
+    }
+
+    // A replay entry whose owner is copied between the check of the owner and the store of the slot (another worker copies
+    // the owner). The slot is the first field of the owner, the word that holds the forwarding pointer of the copy. The
+    // store of the replay must not replace the pointer. Control: LXR_PAUSE_TRACE_REPLAY_STORE_CONTROL (plain store).
+    void ValidatePauseTraceOwnerCopy(uint8_t bits)
+    {
+        PauseTraceResult result = RunPauseTraceScenario(false, true, bits, 4, true);
+        if (!Check(result.ok, "owner copy scenario finishes"))
+        {
+            return;
+        }
+        Check(result.hookHits >= 8, "the replay finds owners that the hook copies");
+        Check(result.hookViolations == 0, "the replay store never replaces the forwarding pointer of a copied owner");
+    }
+
+    void ValidatePauseTrace(bool finalMark, uint8_t bits, size_t workers)
+    {
+        PauseTraceResult serial = RunPauseTraceScenario(false, finalMark, bits, workers);
+        PauseTraceResult parallel = RunPauseTraceScenario(true, finalMark, bits, workers);
+        if (!Check(serial.ok && parallel.ok, "serial and parallel pause trace scenarios finish"))
+        {
+            return;
+        }
+        Check(serial.parallelPauses == 0 && serial.replayPackets == 0,
+            "the serial setting never opens the pause trace");
+        Check(parallel.parallelPauses >= 1, "the parallel setting opens the pause trace");
+        Check(serial.copied >= 100 && serial.moved >= (finalMark ? 50u : 1000u),
+            "the scenario really copies mature objects");
+        Check(parallel.traced == serial.traced,
+            "every object is traced exactly once, as in the serial pause");
+        Check(parallel.copied == serial.copied && parallel.copiedBytes == serial.copiedBytes,
+            "every source is copied exactly once, as in the serial pause");
+        Check(parallel.distinctChildren == serial.distinctChildren,
+            "the shared children give the serial result");
+        if (finalMark)
+        {
+            Check(serial.replayed > 0 && parallel.replayPackets >= 2 && parallel.replayCopies == parallel.replayed,
+                "the remembered slots are replayed by one packet for each chunk");
+        }
+    }
+
+    // The scheduler half of the pause trace: a packet of a stop-the-world stage opens the resumable trace stage, the packets of
+    // the trace run on several workers although the limit of concurrent trace workers is one, and the next stage does not
+    // start before the trace has ended, also when the packet that opened it has returned.
+    struct PauseTraceSchedulerContext
+    {
+        LxrWorkScheduler* scheduler = nullptr;
+        size_t workers = 0;
+        size_t packets = 0;
+        bool wait = false;
+        std::atomic<size_t> traceRuns{0};
+        std::atomic<size_t> running{0};
+        std::atomic<size_t> maxRunning{0};
+        std::atomic<size_t> traceRunsAtClosure{SIZE_MAX};
+        std::atomic<size_t> closureRuns{0};
+        std::mutex lock;
+        std::set<std::thread::id> threads;
+        std::vector<std::unique_ptr<LxrWorkPacket>> owned;
+        std::atomic<bool> openFailed{false};
+        std::atomic<bool> wasOpenInClosure{false};
+    };
+
+    void PauseTraceSchedulerTrace(LxrWorkPacket*, size_t, void* context)
+    {
+        PauseTraceSchedulerContext* state = static_cast<PauseTraceSchedulerContext*>(context);
+        size_t running = state->running.fetch_add(1, std::memory_order_acq_rel) + 1;
+        size_t seen = state->maxRunning.load(std::memory_order_relaxed);
+        while (running > seen && !state->maxRunning.compare_exchange_weak(seen, running))
+        {
+        }
+        std::this_thread::sleep_for(std::chrono::milliseconds(4));
+        {
+            std::lock_guard<std::mutex> guard(state->lock);
+            state->threads.insert(std::this_thread::get_id());
+        }
+        state->running.fetch_sub(1, std::memory_order_acq_rel);
+        state->traceRuns.fetch_add(1, std::memory_order_acq_rel);
+    }
+
+    bool PauseTraceSchedulerDone(void* context)
+    {
+        PauseTraceSchedulerContext* state = static_cast<PauseTraceSchedulerContext*>(context);
+        return state->traceRuns.load(std::memory_order_acquire) == state->packets;
+    }
+
+    void PauseTraceSchedulerPrepare(LxrWorkPacket*, size_t worker, void* context)
+    {
+        PauseTraceSchedulerContext* state = static_cast<PauseTraceSchedulerContext*>(context);
+        if (state->scheduler->OpenPauseTrace() != LxrWorkSchedulerResult::Success)
+        {
+            state->openFailed = true;
+            return;
+        }
+        for (size_t index = 0; index < state->packets; index++)
+        {
+            LxrWorkPacket* packet = new LxrWorkPacket(
+                1000 + index, LxrWorkBucketStage::ConcurrentResumable, nullptr, 0, PauseTraceSchedulerTrace, state);
+            {
+                std::lock_guard<std::mutex> guard(state->lock);
+                state->owned.emplace_back(packet);
+            }
+            if (state->scheduler->Submit(packet) != LxrWorkSchedulerResult::Success)
+            {
+                state->openFailed = true;
+            }
+        }
+        if (state->wait)
+        {
+            if (state->scheduler->HelpPauseTrace(worker, PauseTraceSchedulerDone, state) !=
+                    LxrWorkSchedulerResult::Success ||
+                state->scheduler->ClosePauseTrace(worker) != LxrWorkSchedulerResult::Success)
+            {
+                state->openFailed = true;
+            }
+        }
+    }
+
+    void PauseTraceSchedulerClosure(LxrWorkPacket*, size_t, void* context)
+    {
+        PauseTraceSchedulerContext* state = static_cast<PauseTraceSchedulerContext*>(context);
+        state->traceRunsAtClosure.store(state->traceRuns.load(std::memory_order_acquire));
+        state->wasOpenInClosure = state->scheduler->IsPauseTraceOpen();
+        state->closureRuns.fetch_add(1);
+    }
+
+    void ValidatePauseTraceScheduler(size_t workers, bool wait)
+    {
+        LxrWorkScheduler scheduler;
+        PauseTraceSchedulerContext state;
+        state.scheduler = &scheduler;
+        state.workers = workers;
+        state.packets = 24;
+        state.wait = wait;
+        if (!Check(scheduler.Initialize(workers) == LxrWorkSchedulerResult::Success &&
+                scheduler.EnableConcurrentStage(LxrWorkBucketStage::ConcurrentResumable) ==
+                    LxrWorkSchedulerResult::Success &&
+                scheduler.ConfigureConcurrentTraceWorkers(1) == LxrWorkSchedulerResult::Success,
+                "pause trace scheduler initializes with one concurrent trace worker"))
+        {
+            return;
+        }
+        LxrWorkPacket prepare(1, LxrWorkBucketStage::Prepare, nullptr, 0, PauseTraceSchedulerPrepare, &state);
+        LxrWorkPacket closure(2, LxrWorkBucketStage::Closure, nullptr, 0, PauseTraceSchedulerClosure, &state);
+        Check(scheduler.Submit(&prepare) == LxrWorkSchedulerResult::Success &&
+                scheduler.Submit(&closure) == LxrWorkSchedulerResult::Success,
+            "the pause packets queue");
+        Check(scheduler.BeginStwCycle() == LxrWorkSchedulerResult::Success &&
+                scheduler.WaitForCycleCompletion(Timeout) == LxrWorkSchedulerResult::Success,
+            "the cycle with an open pause trace completes");
+        Check(!state.openFailed.load(), "the pause trace opens, accepts its packets, and closes");
+        Check(state.traceRuns.load() == state.packets, "every packet of the pause trace runs once");
+        Check(state.closureRuns.load() == 1 && state.traceRunsAtClosure.load() == state.packets,
+            "the next stage starts after the last packet of the pause trace");
+        if (workers > 1)
+        {
+            Check(state.maxRunning.load() >= 2,
+                "the pause trace packets run at the same time, beyond the limit of concurrent trace workers");
+        }
+        if (!wait)
+        {
+            Check(scheduler.IsPauseTraceOpen() && scheduler.ClosePauseTrace(workers) == LxrWorkSchedulerResult::Success,
+                "a trace that the packet left open is closed by the caller");
+        }
+        Check(!scheduler.IsPauseTraceOpen() && !scheduler.IsStageOpen(LxrWorkBucketStage::ConcurrentResumable) &&
+                !scheduler.IsStageEnabled(LxrWorkBucketStage::ConcurrentResumable),
+            "the resumable stage is closed again after the pause trace");
+        Check(scheduler.GetMetrics().ownershipViolations == 0, "the pause trace has no ownership violation");
+        Check(scheduler.ResetCompletedCycle() == LxrWorkSchedulerResult::Success, "the cycle resets");
+        scheduler.Shutdown();
+    }
 }
 
 int main(int argc, char** argv)
 {
+    if (argc == 2 && strcmp(argv[1], "--pause-trace") == 0)
+    {
+        for (size_t workers : {size_t{1}, size_t{4}})
+        {
+            ValidatePauseTraceScheduler(workers, true);
+            ValidatePauseTraceScheduler(workers, false);
+        }
+        for (uint8_t bits : {uint8_t{2}, uint8_t{8}})
+        {
+            for (size_t workers : {size_t{1}, size_t{4}})
+            {
+                ValidatePauseTrace(false, bits, workers);
+                ValidatePauseTrace(true, bits, workers);
+            }
+            ValidatePauseTraceOwnerCopy(bits);
+        }
+        std::printf("%s: %d/%d pause trace checks\n", Failures == 0 ? "PASS" : "FAIL", Checks - Failures, Checks);
+        return Failures == 0 ? 0 : 1;
+    }
+    if (argc == 2 && strcmp(argv[1], "--lazy-sweep") == 0)
+    {
+        ValidateParallelLazySweep();
+        ValidateEagerMarkClear(false);
+        ValidateEagerMarkClear(true);
+        std::printf("%s: %d/%d parallel lazy sweep checks\n",
+            Failures == 0 ? "PASS" : "FAIL", Checks - Failures, Checks);
+        return Failures == 0 ? 0 : 1;
+    }
     if (argc == 2 && strcmp(argv[1], "--d2-spans") == 0)
     {
         ValidateFastSpan();
         ValidateD2Refill();
         ValidateD2RecycledHole();
+        for (size_t gapBytes : {1024, 4096})
+        {
+            for (size_t mode : {0, 1, 2, 3})
+            {
+                ValidateMediumOverflow(mode, gapBytes);
+            }
+        }
         ValidateD2Spans();
         ValidateD2InteriorLookup();
         ValidateD2ConcurrentMarking();
@@ -9138,6 +10215,16 @@ int main(int argc, char** argv)
             Failures == 0 ? "PASS" : "FAIL", Checks - Failures, Checks);
         return Failures == 0 ? 0 : 1;
     }
+    if (argc == 2 && strcmp(argv[1], "--item3") == 0)
+    {
+        for (int bits : {2, 4, 8})
+        {
+            ValidateItem3(static_cast<uint8_t>(bits));
+        }
+        std::printf("%s: %d/%d item 3 increment path checks\n",
+            Failures == 0 ? "PASS" : "FAIL", Checks - Failures, Checks);
+        return Failures == 0 ? 0 : 1;
+    }
     if (argc == 2 && strcmp(argv[1], "--f5-policy") == 0)
     {
         ValidateF5OccupiedPages(false);
@@ -9161,6 +10248,16 @@ int main(int argc, char** argv)
             Failures == 0 ? "PASS" : "FAIL", Checks - Failures, Checks);
         return Failures == 0 ? 0 : 1;
     }
+    if (argc == 2 && strcmp(argv[1], "--release-stage") == 0)
+    {
+        ValidateParallelRelease(4, 2700, 16, 5);
+        ValidateParallelRelease(1, 1100, 8, 2);
+        ValidateParallelRelease(4, 3, 4, 1);
+        ValidateParallelRelease(4, 1100, 16, 2, 500);
+        std::printf("%s: %d/%d release stage checks\n",
+            Failures == 0 ? "PASS" : "FAIL", Checks - Failures, Checks);
+        return Failures == 0 ? 0 : 1;
+    }
 #if defined(LXR_RC_EARLY_ROOT_CONTROL) || defined(LXR_RC_SWEEP_QUERY_CONTROL)
     ValidateAcyclicAndRoots(8);
 #else
@@ -9173,6 +10270,7 @@ int main(int argc, char** argv)
         ValidateLargeObjects(bits);
         ValidateCycleReclamation(bits);
         ValidateF10Overflow(bits);
+        ValidateItem3(bits);
     }
     for (size_t fields : {1023, 1024, 1025, 4097})
     {
@@ -9180,6 +10278,13 @@ int main(int argc, char** argv)
     }
     ValidateCompetingClaims();
     ValidateRecycledSizeFallback();
+    for (size_t gapBytes : {1024, 4096})
+    {
+        for (size_t mode : {0, 1, 2, 3})
+        {
+            ValidateMediumOverflow(mode, gapBytes);
+        }
+    }
     ValidateChurnAdmission();
     ValidateAllocationDuringLazyDeath();
     ValidateFirstStoreBeforeAllocation();
@@ -9188,6 +10293,18 @@ int main(int argc, char** argv)
     ValidateSharedSatbStream();
     ValidateRetiredLeaseReuse();
     ValidateBlackNewbornClosure();
+    ValidateParallelRelease(4, 2700, 16, 5);
+    ValidateParallelRelease(1, 1100, 8, 2);
+    ValidateParallelRelease(4, 3, 4, 1);
+    ValidateParallelRelease(4, 1100, 16, 2, 500);
+    ValidateParallelLazySweep();
+    ValidateEagerMarkClear(false);
+    ValidateEagerMarkClear(true);
+    ValidatePauseTraceScheduler(4, true);
+    ValidatePauseTraceScheduler(4, false);
+    ValidatePauseTrace(false, 8, 4);
+    ValidatePauseTrace(true, 8, 4);
+    ValidatePauseTraceOwnerCopy(8);
 #endif
     std::printf("%s: %d/%d integrated P4 checks\n",
         Failures == 0 ? "PASS" : "FAIL", Checks - Failures, Checks);

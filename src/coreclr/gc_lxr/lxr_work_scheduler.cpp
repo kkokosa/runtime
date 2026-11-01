@@ -737,8 +737,10 @@ public:
             return LxrIsConcurrentStage(stage);
         }
 
+        // A pause may open the resumable trace stage for the length of its trace (OpenPauseTrace).
         return stage == LxrWorkBucketStage::Unconstrained ||
-            stage == currentStwStage.load(std::memory_order_seq_cst);
+            stage == currentStwStage.load(std::memory_order_seq_cst) ||
+            (stage == LxrWorkBucketStage::ConcurrentResumable && pauseTrace.load(std::memory_order_seq_cst));
     }
 
     bool IsEligibleLocked(LxrWorkBucketStage stage) const
@@ -761,7 +763,7 @@ public:
 #if defined(LXR_SIDE_METADATA_TEST_PLATFORM) && defined(LXR_F4_NO_CONC_LIMIT_CONTROL)
         return true;
 #else
-        return !(IsTraceStage(stage) &&
+        return !(IsTraceStage(stage) && !IsTraceLimitBypassed() &&
             concurrentTraceRunning.load(std::memory_order_seq_cst) >= concurrentTraceLimit.load(std::memory_order_relaxed));
 #endif // LXR_SIDE_METADATA_TEST_PLATFORM && LXR_F4_NO_CONC_LIMIT_CONTROL
     }
@@ -794,7 +796,8 @@ public:
 #if defined(LXR_SIDE_METADATA_TEST_PLATFORM) && defined(LXR_F4_NO_CONC_LIMIT_CONTROL)
             (void)running;
 #else
-            if (running >= concurrentTraceLimit.load(std::memory_order_relaxed))
+            if (running >= concurrentTraceLimit.load(std::memory_order_relaxed) &&
+                !IsTraceLimitBypassed())
             {
                 concurrentTraceRunning.fetch_sub(1, std::memory_order_seq_cst);
                 runnable = false;
@@ -1026,6 +1029,25 @@ public:
             bucket.executing.load(std::memory_order_seq_cst) == 0;
     }
 
+    // The stage of the pause is complete when its bucket is drained. While the pause trace is open, the packets of the
+    // trace stage count too: a stage does not end before the trace that a packet of the stage started.
+    bool IsStageCompleteLocked(LxrWorkBucketStage stage) const
+    {
+        return IsBucketDrainedLocked(stage) &&
+            (!pauseTrace.load(std::memory_order_seq_cst) ||
+                IsBucketDrainedLocked(LxrWorkBucketStage::ConcurrentResumable));
+    }
+
+    // The limit of concurrent trace workers does not apply to the trace of a pause: every worker helps.
+    bool IsTraceLimitBypassed() const
+    {
+#if defined(LXR_SIDE_METADATA_TEST_PLATFORM) && defined(LXR_PAUSE_TRACE_LIMIT_CONTROL)
+        return false;
+#else
+        return pauseTrace.load(std::memory_order_seq_cst);
+#endif // LXR_SIDE_METADATA_TEST_PLATFORM && LXR_PAUSE_TRACE_LIMIT_CONTROL
+    }
+
     void RecordOpenLocked(LxrWorkBucketStage stage)
     {
         openTrace.push_back(stage);
@@ -1105,7 +1127,7 @@ public:
         while (cycleActive && AllWorkersParkedLocked())
         {
             Bucket& current = buckets[StageIndex(currentStwStage)];
-            if (!IsBucketDrainedLocked(currentStwStage))
+            if (!IsStageCompleteLocked(currentStwStage))
             {
                 break;
             }
@@ -1277,6 +1299,9 @@ public:
     // uses ConcGCThreads of its ParallelGCThreads workers for the concurrent trace. Default: all workers.
     std::atomic<size_t> concurrentTraceLimit{SIZE_MAX};
     std::atomic<size_t> concurrentTraceRunning{0};
+    // A pause has opened the resumable trace stage for its own trace (OpenPauseTrace). The limit of concurrent trace workers
+    // does not apply while it is true: every worker helps.
+    std::atomic<bool> pauseTrace{false};
     CancelledPacketCallback cancelledCallback = nullptr;
     void* cancelledContext = nullptr;
     ActiveDeferred active;
@@ -1376,6 +1401,169 @@ public:
         return StageIndex(stage) < StageCount && buckets[StageIndex(stage)].injector.Count() != 0;
     }
 
+    // Takes one packet of the resumable trace stage for a thread that helps with the trace of a pause. A worker takes
+    // from its own deque first, then from the injector of the stage, then from the deques of the other workers. The
+    // pause thread has no deque. A packet of another stage that it meets goes back to the injector of its stage.
+    LxrWorkPacket* PollPauseTrace(size_t executionIndex)
+    {
+        constexpr LxrWorkBucketStage TraceStage = LxrWorkBucketStage::ConcurrentResumable;
+        if (!IsRunnable(TraceStage))
+        {
+            return nullptr;
+        }
+        LxrWorkPacket* packet = nullptr;
+        if (executionIndex < workers.size())
+        {
+            WorkDeque& own = workers[executionIndex].trace;
+            while ((packet = own.Pop()) != nullptr)
+            {
+                if (packet->GetStage() != TraceStage)
+                {
+                    Requeue(packet);
+                    continue;
+                }
+                ClaimResult claim = TryClaim(packet, executionIndex);
+                if (claim == ClaimResult::Claimed)
+                {
+                    return packet;
+                }
+                if (claim == ClaimResult::NotRunnable)
+                {
+                    own.Push(packet);
+                    return nullptr;
+                }
+            }
+        }
+        Bucket& bucket = buckets[StageIndex(TraceStage)];
+        while (bucket.injector.PopBatch(&packet, 1) == 1)
+        {
+            ClaimResult claim = TryClaim(packet, executionIndex);
+            if (claim == ClaimResult::Claimed)
+            {
+                return packet;
+            }
+            if (claim == ClaimResult::NotRunnable)
+            {
+                Requeue(packet);
+                return nullptr;
+            }
+        }
+        for (size_t offset = 1; offset <= workers.size(); offset++)
+        {
+            size_t victimIndex = (executionIndex + offset) % (workers.size() + 1);
+            if (victimIndex >= workers.size() || victimIndex == executionIndex)
+            {
+                continue;
+            }
+            WorkDeque& deque = workers[victimIndex].trace;
+            WorkDeque::StealResult result;
+            do
+            {
+                result = deque.Steal(&packet);
+            } while (result == WorkDeque::StealResult::Retry);
+            if (result != WorkDeque::StealResult::Success)
+            {
+                continue;
+            }
+            if (packet->GetStage() != TraceStage)
+            {
+                Requeue(packet);
+                continue;
+            }
+            ClaimResult claim = TryClaim(packet, executionIndex);
+            if (claim == ClaimResult::Claimed)
+            {
+                return packet;
+            }
+            if (claim == ClaimResult::NotRunnable)
+            {
+                Requeue(packet);
+                return nullptr;
+            }
+        }
+        return nullptr;
+    }
+
+    // Runs trace packets on the calling thread until done() says so. The caller is the pause thread or a worker that runs a
+    // packet of a pause stage; the thread is not a pause thread that wants the workers to take small stages, so a packet
+    // that the trace submits wakes a sleeping worker as usual.
+    LxrWorkSchedulerResult HelpPauseTrace(size_t executionIndex, bool (*done)(void*), void* context)
+    {
+        PauseThreadReset reset;
+        unsigned idle = 0;
+        while (!done(context))
+        {
+            LxrWorkPacket* packet = PollPauseTrace(executionIndex);
+            if (packet != nullptr)
+            {
+                RunPacket(packet, executionIndex);
+                idle = 0;
+                continue;
+            }
+            if (shuttingDown.load(std::memory_order_acquire))
+            {
+                return LxrWorkSchedulerResult::Shutdown;
+            }
+            Idle(&idle);
+        }
+        return LxrWorkSchedulerResult::Success;
+    }
+
+    // Ends the pause trace. It runs what is left (a pause that has failed leaves packets that finish without work), waits for
+    // the packets that run, and closes the stage again. A packet can be left in a queue of the stage only after a failure.
+    LxrWorkSchedulerResult ClosePauseTrace(size_t executionIndex)
+    {
+        PauseThreadReset reset;
+        Bucket& bucket = buckets[StageIndex(LxrWorkBucketStage::ConcurrentResumable)];
+        unsigned idle = 0;
+        while (true)
+        {
+            if (IsBucketDrainedLocked(LxrWorkBucketStage::ConcurrentResumable))
+            {
+                std::lock_guard<std::mutex> guard(lock);
+                if (IsBucketDrainedLocked(LxrWorkBucketStage::ConcurrentResumable))
+                {
+                    bucket.state = BucketState::Closed;
+                    bucket.enabled = false;
+                    bucket.accepting = false;
+                    pauseTrace.store(false, std::memory_order_seq_cst);
+                    return LxrWorkSchedulerResult::Success;
+                }
+            }
+            LxrWorkPacket* packet = PollPauseTrace(executionIndex);
+            if (packet != nullptr)
+            {
+                RunPacket(packet, executionIndex);
+                idle = 0;
+                continue;
+            }
+            if (shuttingDown.load(std::memory_order_acquire))
+            {
+                return LxrWorkSchedulerResult::Shutdown;
+            }
+            Idle(&idle);
+        }
+    }
+
+    static void Idle(unsigned* idle)
+    {
+        if ((++*idle & 15) == 0)
+        {
+            std::this_thread::yield();
+        }
+        else
+        {
+            CpuRelax();
+        }
+    }
+
+    struct PauseThreadReset final
+    {
+        bool saved = tlsPauseThread;
+        PauseThreadReset() { tlsPauseThread = false; }
+        ~PauseThreadReset() { tlsPauseThread = saved; }
+    };
+
     // Spins while keepSpinning() is true, for at most the spin budget. Returns true when keepSpinning() became false.
     template <typename Predicate>
     bool SpinWhile(Predicate keepSpinning)
@@ -1441,7 +1629,7 @@ public:
             {
                 continue;
             }
-            if (AllWorkersParkedLocked() && IsBucketDrainedLocked(currentStwStage))
+            if (AllWorkersParkedLocked() && IsStageCompleteLocked(currentStwStage))
             {
                 if (AdvanceBucketsLocked())
                 {
@@ -1480,7 +1668,7 @@ public:
         (void)stage;
         NotifyAllLocked();
 #else
-        if (IsTraceStage(stage) &&
+        if (IsTraceStage(stage) && !IsTraceLimitBypassed() &&
             concurrentTraceRunning.load() >= concurrentTraceLimit.load())
         {
             return;
@@ -1835,6 +2023,74 @@ LxrWorkSchedulerResult LxrWorkScheduler::RunQueuedInline(
         m_impl->condition.notify_all();
     }
     return LxrWorkSchedulerResult::Success;
+}
+
+LxrWorkSchedulerResult LxrWorkScheduler::OpenPauseTrace()
+{
+    if (m_impl == nullptr)
+    {
+        return LxrWorkSchedulerResult::NotInitialized;
+    }
+    std::lock_guard<std::mutex> guard(m_impl->lock);
+    if (m_impl->shuttingDown)
+    {
+        return LxrWorkSchedulerResult::Shutdown;
+    }
+    if (!m_impl->cycleActive || m_impl->pauseTrace.load())
+    {
+        return LxrWorkSchedulerResult::InvalidState;
+    }
+    Impl::Bucket& bucket = m_impl->buckets[StageIndex(LxrWorkBucketStage::ConcurrentResumable)];
+    // The bucket is closed by BeginStwCycle; the packets of the concurrent trace that wait in the queues stay where they are.
+    bucket.enabled = true;
+    bucket.accepting = true;
+    bucket.state = BucketState::Open;
+    m_impl->pauseTrace.store(true, std::memory_order_seq_cst);
+    uint64_t waiting = bucket.outstanding.load();
+    if (waiting != 0)
+    {
+        m_impl->WakeWorkersLocked(static_cast<size_t>(waiting), false);
+    }
+    return LxrWorkSchedulerResult::Success;
+}
+
+LxrWorkSchedulerResult LxrWorkScheduler::HelpPauseTrace(size_t executionIndex, bool (*done)(void*), void* context)
+{
+    if (m_impl == nullptr)
+    {
+        return LxrWorkSchedulerResult::NotInitialized;
+    }
+    if (done == nullptr || executionIndex > m_impl->workers.size())
+    {
+        return LxrWorkSchedulerResult::InvalidArgument;
+    }
+    if (!m_impl->pauseTrace.load(std::memory_order_seq_cst))
+    {
+        return LxrWorkSchedulerResult::InvalidState;
+    }
+    return m_impl->HelpPauseTrace(executionIndex, done, context);
+}
+
+LxrWorkSchedulerResult LxrWorkScheduler::ClosePauseTrace(size_t executionIndex)
+{
+    if (m_impl == nullptr)
+    {
+        return LxrWorkSchedulerResult::NotInitialized;
+    }
+    if (executionIndex > m_impl->workers.size())
+    {
+        return LxrWorkSchedulerResult::InvalidArgument;
+    }
+    if (!m_impl->pauseTrace.load(std::memory_order_seq_cst))
+    {
+        return LxrWorkSchedulerResult::InvalidState;
+    }
+    return m_impl->ClosePauseTrace(executionIndex);
+}
+
+bool LxrWorkScheduler::IsPauseTraceOpen() const
+{
+    return m_impl != nullptr && m_impl->pauseTrace.load(std::memory_order_seq_cst);
 }
 
 LxrWorkSchedulerResult LxrWorkScheduler::Submit(

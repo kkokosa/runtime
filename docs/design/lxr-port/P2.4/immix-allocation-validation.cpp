@@ -1321,6 +1321,125 @@ namespace
         }
     }
 
+    // Item 4. A recycled refill that is given the size of the pending request passes over the holes that are too small
+    // for it: it does not zero them, clear their planes or count their lines, and it counts them as skipped.
+    void TestMinimumHoleBytes()
+    {
+        Fixture fixture(1, 6, 1);
+        Expect("item4 hole fixture initialized", fixture.initialized);
+        if (!fixture.initialized)
+        {
+            return;
+        }
+        size_t arenaBytes = 6 * ImmixBlockGeometry::BlockBytes;
+        for (LxrSideMetadataKind kind : {LxrSideMetadataKind::ValidObject, LxrSideMetadataKind::FieldUnlogged})
+        {
+            ExpectMetadata("item4 poison plane",
+                fixture.metadata.FillRangeBytes(kind, fixture.data_start, arenaBytes, 0xff), SideMetadataResult::Success);
+        }
+        auto planeIs = [&](LxrSideMetadataKind kind, uintptr_t start, size_t size, uintptr_t expected)
+        {
+            for (uintptr_t address = start; address < start + size; address += sizeof(uintptr_t))
+            {
+                if (LoadMetadata(fixture, kind, address) != expected)
+                {
+                    return false;
+                }
+            }
+            return true;
+        };
+        // Block B: holes of 2 lines ([4,6)), 6 lines ([9,15)) and 2 lines ([21,23)). Block C: one hole of 2 lines.
+        uintptr_t blockB = fixture.data_start + (2 * ImmixBlockGeometry::BlockBytes);
+        uintptr_t blockC = fixture.data_start + (4 * ImmixBlockGeometry::BlockBytes);
+        for (uintptr_t block : {blockB, blockC})
+        {
+            SeedReusableBlock(fixture, block);
+            SeedAllLines(fixture, block, 1);
+        }
+        for (size_t line : {3, 4, 5, 8, 9, 10, 11, 12, 13, 14, 20, 21, 22})
+        {
+            SeedLine(fixture, blockB, line, 0);
+        }
+        for (size_t line : {3, 4, 5})
+        {
+            SeedLine(fixture, blockC, line, 0);
+        }
+        constexpr size_t Request = 4 * ImmixBlockGeometry::LineBytes;
+        ImmixBumpAllocator first;
+        ImmixAllocationStatus status = ImmixAllocationStatus::InvalidRequest;
+        ExpectMetadata("item4 first allocator", first.Initialize(&fixture.allocation, OwnerOne), SideMetadataResult::Success);
+        ExpectMetadata("item4 refill for a request of 4 lines",
+            first.TryRefill(ImmixAllocationSource::MutatorRecycled, ImmixMarkingContext::Inactive, &status, Request),
+            SideMetadataResult::Success);
+        Expect("item4 the refill is ready", status == ImmixAllocationStatus::Ready);
+        Expect("item4 the refill passes over the hole of 2 lines and takes the hole of 6 lines",
+            first.GetBlock() == blockB && first.GetCursor() == LineAddress(blockB, 9) &&
+            first.GetLimit() == LineAddress(blockB, 15));
+        Expect("item4 one hole was skipped", fixture.allocation.GetHolesSkipped() == 1);
+        Expect("item4 only the lines of the hole that was taken are counted as consumed",
+            fixture.allocation.GetRecycledLinesConsumed() == 6);
+        Expect("item4 the hole that was passed over keeps its planes",
+            planeIs(LxrSideMetadataKind::ValidObject, LineAddress(blockB, 4), 2 * ImmixBlockGeometry::LineBytes, 1) &&
+            planeIs(LxrSideMetadataKind::FieldUnlogged, LineAddress(blockB, 4), 2 * ImmixBlockGeometry::LineBytes, 1));
+        Expect("item4 the hole that was taken has clear planes",
+            planeIs(LxrSideMetadataKind::ValidObject, LineAddress(blockB, 9), 6 * ImmixBlockGeometry::LineBytes, 0) &&
+            planeIs(LxrSideMetadataKind::FieldUnlogged, LineAddress(blockB, 9), 6 * ImmixBlockGeometry::LineBytes, 0));
+
+        ExpectMetadata("item4 second refill for a request of 4 lines",
+            first.TryRefill(ImmixAllocationSource::MutatorRecycled, ImmixMarkingContext::Inactive, &status, Request),
+            SideMetadataResult::Success);
+        Expect("item4 no hole of 4 lines is left", status == ImmixAllocationStatus::Exhausted && first.GetBlock() == 0);
+        Expect("item4 the holes of 2 lines of both blocks were skipped", fixture.allocation.GetHolesSkipped() == 3);
+        Expect("item4 nothing more was counted as consumed", fixture.allocation.GetRecycledLinesConsumed() == 6);
+        Expect("item4 the holes of 2 lines keep their planes",
+            planeIs(LxrSideMetadataKind::ValidObject, LineAddress(blockB, 21), 2 * ImmixBlockGeometry::LineBytes, 1) &&
+            planeIs(LxrSideMetadataKind::ValidObject, LineAddress(blockC, 4), 2 * ImmixBlockGeometry::LineBytes, 1) &&
+            planeIs(LxrSideMetadataKind::FieldUnlogged, LineAddress(blockC, 4), 2 * ImmixBlockGeometry::LineBytes, 1));
+
+    }
+
+    // Item 4. Without a size every hole is taken, as before, and a fresh refill ignores the size. A new fixture: a block
+    // that was taken is not taken again in the epoch.
+    void TestMinimumHoleBytesUnsized()
+    {
+        ImmixAllocationStatus status = ImmixAllocationStatus::InvalidRequest;
+        Fixture other(1, 6, 1);
+        Expect("item4 second fixture initialized", other.initialized);
+        if (!other.initialized)
+        {
+            return;
+        }
+        uintptr_t otherBlock = other.data_start + (2 * ImmixBlockGeometry::BlockBytes);
+        SeedReusableBlock(other, otherBlock);
+        SeedAllLines(other, otherBlock, 1);
+        for (size_t line : {3, 4, 5, 8, 9, 10, 11, 12, 13, 14})
+        {
+            SeedLine(other, otherBlock, line, 0);
+        }
+        ImmixBumpAllocator second;
+        ExpectMetadata("item4 second allocator", second.Initialize(&other.allocation, OwnerTwo), SideMetadataResult::Success);
+        ExpectMetadata("item4 refill without a size",
+            second.TryRefill(ImmixAllocationSource::MutatorRecycled, ImmixMarkingContext::Inactive, &status),
+            SideMetadataResult::Success);
+        Expect("item4 the refill without a size takes the first hole",
+            status == ImmixAllocationStatus::Ready && second.GetBlock() == otherBlock &&
+            second.GetCursor() == LineAddress(otherBlock, 4) && second.GetLimit() == LineAddress(otherBlock, 6));
+        Expect("item4 the refill without a size counts the hole and skips none",
+            other.allocation.GetRecycledLinesConsumed() == 2 && other.allocation.GetHolesSkipped() == 0);
+        second.Reset(&status);
+
+        // A fresh refill ignores the size.
+        ImmixBumpAllocator third;
+        ExpectMetadata("item4 third allocator", third.Initialize(&other.allocation, OwnerThree), SideMetadataResult::Success);
+        ExpectMetadata("item4 fresh refill with a size",
+            third.TryRefill(ImmixAllocationSource::MutatorFresh, ImmixMarkingContext::Inactive, &status,
+                12 * ImmixBlockGeometry::LineBytes),
+            SideMetadataResult::Success);
+        Expect("item4 a fresh refill gives the whole block",
+            status == ImmixAllocationStatus::Ready && third.GetLimit() - third.GetCursor() == ImmixBlockGeometry::BlockBytes);
+        third.Reset(&status);
+    }
+
     // P28 (F10). The metadata loads are plain acquire loads. Sequential consistency between a store and a later load of
     // another location comes from the store (a compare-exchange loop, a full barrier). This is the store-buffer test: two
     // threads each store to their own location and then load the location of the other. Both loads returning zero would be
@@ -2060,6 +2179,8 @@ int main()
     TestF9RefillSchedule(3);
     TestF9DirtyRangeIsReported();
     TestF9Cursors();
+    TestMinimumHoleBytes();
+    TestMinimumHoleBytesUnsized();
     TestF10LoadOrder();
     TestF10Prefetch();
     TestF10ByteCompareExchange(1);

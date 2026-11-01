@@ -192,6 +192,10 @@ public:
 
     void Store(uintptr_t dataAddress, uintptr_t value, SideMetadataMemoryOrder order) const;
 
+    // A store without a read-modify-write instruction, for an entry whose metadata byte no other thread can write while
+    // this call runs (the Java LXR writes these bytes with plain stores: util/rc.rs, set_relaxed and the straddle marks).
+    // The caller proves the ownership. Entries of more than 8 bits, and big-endian targets, use the atomic Store.
+    void StoreExclusive(uintptr_t dataAddress, uintptr_t value) const;
     // Returns true when the value was exchanged. The value that was seen is always returned in *observed.
     bool CompareExchange(
         uintptr_t dataAddress,
@@ -616,6 +620,36 @@ inline void SideMetadataAccessor::Store(
         }
         oldWord = actual;
     }
+}
+
+inline void SideMetadataAccessor::StoreExclusive(uintptr_t dataAddress, uintptr_t value) const
+{
+#if !BIGENDIAN
+    if (m_log_bits_per_value <= 3)
+    {
+        uint32_t byteShift;
+        volatile uint8_t* metadataByte = LocateByte(dataAddress, &byteShift);
+#ifdef _DEBUG
+        {
+            SideMetadataLocation checked = Locate(dataAddress);
+            VerifyLocation(dataAddress, checked);
+            _ASSERTE(reinterpret_cast<volatile uint8_t*>(checked.word) + (checked.shift >> 3) == metadataByte);
+            _ASSERTE((checked.shift & 7) == byteShift);
+            _ASSERTE((value & ~m_value_mask) == 0);
+        }
+#endif // _DEBUG
+        const uint8_t mask = static_cast<uint8_t>(m_value_mask << byteShift);
+        const uint8_t desired = static_cast<uint8_t>((value & m_value_mask) << byteShift);
+        const uint8_t oldByte = VolatileLoadWithoutBarrier(metadataByte);
+        const uint8_t newByte = static_cast<uint8_t>((oldByte & ~mask) | desired);
+        if (newByte != oldByte)
+        {
+            VolatileStoreWithoutBarrier(const_cast<uint8_t*>(metadataByte), newByte);
+        }
+        return;
+    }
+#endif // !BIGENDIAN
+    Store(dataAddress, value, SideMetadataMemoryOrder::Relaxed);
 }
 
 inline bool SideMetadataAccessor::CompareExchange(

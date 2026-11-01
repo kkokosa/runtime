@@ -45,6 +45,9 @@ case "$control" in
     TraceBatchDrop) flags+=(-DLXR_TRACE_BATCH_DROP_CONTROL) ;;
     TraceBatchUnbatched) flags+=(-DLXR_TRACE_BATCH_UNBATCHED_CONTROL) ;;
     TraceBatchEarly) flags+=(-DLXR_TRACE_BATCH_EARLY_CONTROL) ;;
+    PauseTraceMark) flags+=(-DLXR_PAUSE_TRACE_MARK_CONTROL) ;;
+    PauseTraceLimit) flags+=(-DLXR_PAUSE_TRACE_LIMIT_CONTROL) ;;
+    PauseTraceStore) flags+=(-DLXR_PAUSE_TRACE_REPLAY_STORE_CONTROL) ;;
     *) echo "Unsupported control: $control" >&2; exit 1 ;;
 esac
 gc="$root/src/coreclr/gc"
@@ -85,6 +88,7 @@ case "$control" in
     ReserveUnits) selectors=(--p8-policy) ;;
     Log*) selectors=(--log-storage) ;;
     TraceBatch*) selectors=(--trace-batching) ;;
+    PauseTrace*) selectors=(--pause-trace) ;;
 esac
 "$output/lxr-rc-validation" "${selectors[@]}" > "$output/run.log" 2>&1 || status=$?
 if [[ "$control" != None ]]; then

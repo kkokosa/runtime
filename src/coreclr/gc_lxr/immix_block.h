@@ -243,6 +243,20 @@ public:
     SideMetadataResult TryReleaseNursery(
         uintptr_t block,
         ImmixBlockOperationStatus* status);
+    // Pause only, and only while no other thread changes the state of these blocks (the release stage of a pause). The
+    // blocks are given by their index from `arena`. It does for a batch what TryReleaseNursery does for one block, but it
+    // takes no block lock: a young block that is still Unallocated has no count, no straddle mark and no unlog bit, so
+    // only its ValidObject plane is cleared (one fill), and nothing else is written. A block that is not clean (a byte or,
+    // in Debug and test builds, a plane has a value) goes through TryReleaseNursery. `released` is the number of blocks
+    // for which TryReleaseNursery would have returned Updated.
+    SideMetadataResult ReleaseNurseryBatchQuiescent(
+        uintptr_t arena,
+        const uint32_t* blocks,
+        size_t count,
+        size_t* released);
+    // Pause only. Whether ReleaseNurseryBatchQuiescent releases the block, and so clears its ValidObject plane: the block
+    // has no owner, is Unallocated and is a nursery block of this epoch. Nothing changes this answer inside the stage.
+    SideMetadataResult IsReleasableNurseryQuiescent(uintptr_t block, bool* releasable) const;
 #ifdef LXR_ENABLE_LAZY_COMPLETION_COUNTER
     // Mutator phase, inside a lazy sweep. Makes a block Reusable with the given number of unavailable lines. A block
     // that an allocator holds, or that an allocator took in this mutator epoch, has young objects without counts, so

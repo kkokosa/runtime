@@ -255,6 +255,7 @@ LxrGcHeap::LxrGcHeap()
 void LxrGcHeap::Fatal(const char* message) const
 {
     GCToEEInterface::LogErrorToHost(message);
+    fprintf(stderr, "LXR fatal: %s (engine failure %u)\n", message, static_cast<unsigned>(m_engine.GetFailure()));
     GCToEEInterface::HandleFatalError(static_cast<unsigned>(E_FAIL));
     abort();
 }
@@ -353,8 +354,14 @@ HRESULT LxrGcHeap::Initialize()
         !ReadSetting("LXRBufferBytes", &configuration.allocationBufferBytes, 10, ImmixBlockGeometry::BlockBytes) ||
         !ReadBooleanSetting("LXRNoLineRecycling", &noRecycling) ||
         !ReadBooleanSetting("LXRNoMutatorLineRecycling", &noMutatorRecycling) ||
+        !ReadBooleanSetting("LXRMediumOverflow", &configuration.mediumOverflow) ||
+        !ReadSetting("LXRMediumOverflowMode", &configuration.mediumOverflowMode, 10, 3) ||
         !ReadBooleanSetting("LXROvershootToSpace", &overshoot) ||
         !ReadBooleanSetting("LXRLazyDecrements", &configuration.lazyDecrements) ||
+        !ReadBooleanSetting("LXRParallelSweep", &configuration.parallelSweep) ||
+        !ReadBooleanSetting("LXRParallelPauseTrace", &configuration.parallelPauseTrace) ||
+        !ReadSetting("LXRPauseTraceBatch", &configuration.pauseTraceBatch, 10, 8192) ||
+        !ReadBooleanSetting("LXREagerMarkClear", &configuration.eagerMarkClear) ||
         !ReadBooleanSetting("LXRWaitForLazy", &m_wait_for_lazy) ||
         !ReadBooleanSetting("LXRFastAllocation", &m_fast_enabled) ||
         !ReadBooleanSetting("LXREvacuateNursery", &configuration.evacuateNursery) ||
@@ -810,9 +817,12 @@ void LxrGcHeap::BarrierSlowPath(Object** slot)
 }
 
 // Logs every field of the range whose unlog bit is set. The side metadata has one bit for every 8-byte slot, so a
-// metadata byte covers eight fields; a range of fields that are all logged costs one byte load for eight slots.
+// metadata byte covers eight fields; a range of fields that are all logged costs one byte load for eight slots, and
+// eight metadata bytes (64 fields) are tested with one load. The mutator is resolved once for the whole range.
 void LxrGcHeap::LogOldValues(Object** destination, size_t count)
 {
+    LxrGcHeap* heap = s_heap;
+    LxrRcMutator* mutator = nullptr;
     const uint8_t* metadata = reinterpret_cast<const uint8_t*>(g_lxr_write_barrier_globals.metadata_base);
     uintptr_t first = reinterpret_cast<uintptr_t>(destination) >> 3;
     uintptr_t end = first + count;
@@ -820,6 +830,12 @@ void LxrGcHeap::LogOldValues(Object** destination, size_t count)
     {
         uintptr_t byteIndex = index >> 3;
         unsigned startBit = static_cast<unsigned>(index & 7);
+        if (startBit == 0 && (byteIndex & 7) == 0 && end - index >= 64 &&
+            VolatileLoad(reinterpret_cast<const uint64_t*>(metadata + byteIndex)) == 0)
+        {
+            index += 64;
+            continue;
+        }
         unsigned endBit = (byteIndex == ((end - 1) >> 3)) ? static_cast<unsigned>(((end - 1) & 7) + 1) : 8;
         unsigned bits = VolatileLoad(metadata + byteIndex);
         bits &= (0xFFu << startBit) & ((1u << endBit) - 1);
@@ -827,7 +843,16 @@ void LxrGcHeap::LogOldValues(Object** destination, size_t count)
         {
             if ((bits & (1u << bit)) != 0)
             {
-                LogOldValue(reinterpret_cast<Object**>(((byteIndex << 3) + bit) << 3));
+                Object** slot = reinterpret_cast<Object**>(((byteIndex << 3) + bit) << 3);
+                Object* oldTarget = VolatileLoad(slot);
+                if (mutator == nullptr)
+                {
+                    mutator = heap->FindOrAttach(GCToEEInterface::GetAllocContext(), true);
+                }
+                if (heap->m_engine.LogBeforeWrite(mutator, slot, oldTarget) != LxrRcResult::Success)
+                {
+                    heap->Fatal("LXR pre-store logging failed before the managed field was overwritten.");
+                }
             }
         }
         index = (byteIndex + 1) << 3;
@@ -879,6 +904,17 @@ void LxrGcHeap::LogOldReferences(void* destination, size_t length)
     {
         uintptr_t byteIndex = index >> 3;
         unsigned startBit = static_cast<unsigned>(index & 7);
+        if (startBit == 0 && (byteIndex & 7) == 0 && endSlot - index >= 64)
+        {
+            // Eight metadata bytes (64 fields) in one load, as the Java LXR tests the range (barrier.rs).
+            if (VolatileLoad(reinterpret_cast<const uint64_t*>(metadata + byteIndex)) != 0)
+            {
+                unlogged = true;
+                break;
+            }
+            index += 64;
+            continue;
+        }
         unsigned endBit = byteIndex == ((endSlot - 1) >> 3)
             ? static_cast<unsigned>(((endSlot - 1) & 7) + 1) : 8;
         unsigned mask = (0xFFu << startBit) & ((1u << endBit) - 1);
@@ -1245,6 +1281,12 @@ LxrRcResult LxrGcHeap::FinishLazy(LxrReferenceCounting* engine, void* context)
             engine->GetTracePhase() == LxrTracePhase::Concurrent, heap->m_concurrent_enabled.load(), true))
     {
         return LxrRcResult::InvariantViolation;
+    }
+    if (heap->m_policy.CycleHint())
+    {
+        // The next collection starts a trace and clears the ObjectMark plane. Let the workers clear it now (Java LXR:
+        // decide_next_gc_may_perform_cycle_collection).
+        engine->ScheduleMarkClear();
     }
     // The lazy sweep has counted the free lines of the blocks that the pause promoted, so the figures are complete now.
     size_t heapBytes;
@@ -2257,8 +2299,16 @@ void LxrGcHeap::EnumerateConfigurationValues(void* context, ConfigurationValueFu
         GCConfigurationType::Boolean, m_policy_configuration.harmonic);
     callback(context, "LXRLazyDecrements", "System.GC.LXRLazyDecrements",
         GCConfigurationType::Boolean, m_heap_configuration.lazyDecrements);
+    callback(context, "LXRParallelSweep", "System.GC.LXRParallelSweep",
+        GCConfigurationType::Boolean, m_heap_configuration.parallelSweep);
+    callback(context, "LXRParallelPauseTrace", "System.GC.LXRParallelPauseTrace",
+        GCConfigurationType::Boolean, m_heap_configuration.parallelPauseTrace);
+    callback(context, "LXREagerMarkClear", "System.GC.LXREagerMarkClear",
+        GCConfigurationType::Boolean, m_heap_configuration.eagerMarkClear);
     callback(context, "LXRLineRecycling", "System.GC.LXRLineRecycling",
         GCConfigurationType::Boolean, m_heap_configuration.lineRecycling);
+    callback(context, "LXRMediumOverflow", "System.GC.LXRMediumOverflow",
+        GCConfigurationType::Boolean, m_heap_configuration.mediumOverflow);
     callback(context, "LXRFastAllocation", "System.GC.LXRFastAllocation", GCConfigurationType::Boolean, m_fast_enabled);
     callback(context, "LXROvershootToSpace", "System.GC.LXROvershootToSpace", GCConfigurationType::Boolean,
         m_engine.IsOvershootEnabled());
@@ -2939,6 +2989,10 @@ uint64_t LxrGcHeap::GetPrototypeMetric(uint32_t metric) const
                 case 506: return m_engine.GetSchedulerMetrics().stolen;
                 default: break;
             }
+            if (metric >= 600 && metric < 600 + LxrReferenceCounting::LazyMetricCount)
+            {
+                return m_engine.GetLazyMetric(metric - 600);
+            }
             if (metric >= 520 && metric < 528)
             {
                 return m_cause_counts[metric - 520].load(std::memory_order_relaxed);
@@ -2994,6 +3048,18 @@ uint64_t LxrGcHeap::GetPrototypeMetric(uint32_t metric) const
             if (metric >= 48 && metric <= 70)
             {
                 return m_engine.GetStorageMetric(metric - 48);
+            }
+            if (metric >= 1000 && metric < 1000 + LxrPauseTimers::KindCount * 128)
+            {
+                return m_engine.GetPauseTimers().GetKindTotal((metric - 1000) / 128, (metric - 1000) % 128);
+            }
+            if (metric >= 660 && metric < 664)
+            {
+                return m_engine.GetPauseTraceMetric(metric - 660);
+            }
+            if (metric >= 640 && metric < 648)
+            {
+                return m_engine.GetMediumOverflowMetric(metric - 640);
             }
             Unsupported("LXR prototype metric index is invalid.");
             return UINT64_MAX;
