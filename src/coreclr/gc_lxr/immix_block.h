@@ -283,6 +283,16 @@ public:
 
     SideMetadataResult TryLog(uintptr_t block, bool* logged);
     SideMetadataResult Unlog(uintptr_t block);
+#ifdef LXR_BLOCK_OPERATION_TEST_HOOK
+    // Test only. The hook runs in every block operation, after the operation is counted as in flight and before it reads or
+    // changes any block. A test uses it to hold operations open while an epoch flip is tried.
+    using InOperationHook = void (*)(void* context);
+    void SetInOperationHookForTest(InOperationHook hook, void* context)
+    {
+        m_in_operation_context = context;
+        m_in_operation_hook = hook;
+    }
+#endif // LXR_BLOCK_OPERATION_TEST_HOOK
 
 private:
     class BlockOperationScope final
@@ -293,6 +303,7 @@ private:
 
     private:
         const ImmixBlockManager* m_manager;
+        size_t m_stripe;
     };
 
 #ifdef _DEBUG
@@ -367,26 +378,42 @@ private:
         ImmixBlockOperationStatus* status);
     // Keeps the block counters in step with a change of the raw state byte of one block.
     void NoteRawStateChange(uint8_t oldRaw, uint8_t newRaw);
-    void BeginBlockOperation() const;
-    void EndBlockOperation() const;
+    size_t BeginBlockOperation() const;
+    void EndBlockOperation(size_t stripe) const;
+    bool HasActiveOperations() const;
     bool BeginPhaseTransition();
     void EndPhaseTransition();
 
     SideMetadataManager* m_metadata;
     SideMetadataAccessor m_accessors[LxrSideMetadataLayout::SpecCount];
     SideMetadataAccessor m_reference_count;
-    std::atomic<uint8_t> m_global_phase_epoch;
-    mutable std::atomic<uint32_t> m_active_operations;
+    // The three groups below are on separate cache lines. The first is read on every block operation and every allocation
+    // search and changes only at an epoch flip. The operation counters are changed twice by every block operation, and the
+    // block counters at every block state change, by all worker threads: when they shared a line with the epoch, each of
+    // those changes made every reader of the epoch miss in its cache.
+    alignas(64) std::atomic<uint8_t> m_global_phase_epoch;
+    mutable std::atomic<bool> m_phase_transition;
     std::atomic<uint64_t> m_flip_serial{0};
+    // Operations in flight, one counter per cache line. An operation counts itself in the stripe that its stack address
+    // selects, and a flip waits until every stripe is zero.
+    static constexpr size_t OperationStripes = 16;
+    struct alignas(64) OperationStripe
+    {
+        std::atomic<uint32_t> count{0};
+    };
+    mutable OperationStripe m_operation_stripes[OperationStripes];
     // Block counters. They change at block state transitions only (about once per block and epoch).
-    std::atomic<size_t> m_non_free_blocks{0};
+    alignas(64) std::atomic<size_t> m_non_free_blocks{0};
     std::atomic<size_t> m_reusable_free_lines{0};
     // Counts the blocks that were made Reusable. A failed search for a recycled block is valid until this changes.
     std::atomic<uint64_t> m_reusable_serial{0};
 #ifdef _DEBUG
-    mutable std::atomic<uint32_t> m_active_readers;
+    alignas(64) mutable std::atomic<uint32_t> m_active_readers;
 #endif // _DEBUG
-    mutable std::atomic<bool> m_phase_transition;
+#ifdef LXR_BLOCK_OPERATION_TEST_HOOK
+    InOperationHook m_in_operation_hook = nullptr;
+    void* m_in_operation_context = nullptr;
+#endif // LXR_BLOCK_OPERATION_TEST_HOOK
 };
 
 static_assert(ImmixBlockGeometry::BlockBytes == 32 * 1024);
