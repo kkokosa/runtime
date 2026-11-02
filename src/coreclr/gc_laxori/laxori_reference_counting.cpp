@@ -1842,6 +1842,10 @@ LaxoriRcResult LaxoriReferenceCounting::AttachMutator(void* identity, LaxoriRcMu
         candidate.overflowSpanStart = 0;
         candidate.region = LaxoriPrivateRegion();
         candidate.tag = 0;
+        candidate.acquireEpoch = ~static_cast<uint64_t>(0);
+        candidate.acquireSkip = 0;
+        candidate.localSkip = 0;
+        candidate.localStreak = 0;
         candidate.spans.Clear();
         candidate.state.store(2, std::memory_order_release);
         *mutator = &candidate;

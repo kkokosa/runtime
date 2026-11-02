@@ -212,7 +212,7 @@ private:
     void Unsupported(const char* operation) const;
     // ---- Laxori: private tier (laxori_private.cpp) ----
     struct LocalGcContext;
-    bool InitializePrivateTier(size_t regionKB, bool enabled, bool collectEscaped);
+    bool InitializePrivateTier(size_t regionKB, bool enabled, bool collectEscaped, size_t escapedCollectDiv);
     Object* AllocPrivateSlow(gc_alloc_context* context, LaxoriRcMutator* mutator, size_t size);
     Object* AllocShared(gc_alloc_context* context, size_t size, uint32_t flags);
     void OpenGap(gc_alloc_context* context, LaxoriRcMutator* mutator, uint32_t gapIndex);
@@ -235,6 +235,9 @@ private:
     bool LocalCollect(LaxoriRcMutator* mutator);
     void VerifyRegion(LaxoriPrivateRegion& region, const char* where);
     bool m_verify_private = false;
+    // Test-only control (DOTNET_LAXORITestControl): 1 skips the update of the stack roots, 2 skips the update of the references
+    // of the objects, 3 lets an escape skip the children of the object, 4 skips the clearing of a gap. The managed tests must fail.
+    int m_test_control = 0;
     bool LocalMark(LaxoriPrivateRegion& region);
     bool LocalPlan(LaxoriPrivateRegion& region, size_t* freeBytes);
     void LocalUpdate(LaxoriPrivateRegion& region);
@@ -244,6 +247,7 @@ private:
     static void UpdateFn(Object** slot, ScanContext* scan, uint32_t flags);
     bool m_private_enabled = false;
     bool m_collect_escaped = false;
+    size_t m_escaped_collect_limit = 0;      // a region is collected when its escaped bytes are at most this (0: only without escapes)
     uintptr_t m_arena = 0;
     size_t m_arena_bytes = 0;
     size_t m_region_bytes = 0;

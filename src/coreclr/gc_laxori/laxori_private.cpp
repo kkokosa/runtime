@@ -85,6 +85,36 @@ namespace
         }
         return true;
     }
+
+    // Calls fn(object, size) for every object of the live stretches of a region, dead objects included, in address order.
+    // The region must have no open buffer.
+    template <typename Fn>
+    inline void WalkRegionObjects(const LaxoriPrivateRegion& region, Fn&& fn)
+    {
+        uintptr_t cursor = region.start + sizeof(uintptr_t);
+        uint32_t gap = 0;
+        while (true)
+        {
+            while (gap < region.gapCount && region.gaps[gap].end + sizeof(uintptr_t) <= cursor)
+            {
+                gap++;
+            }
+            if (gap < region.gapCount && region.gaps[gap].start + sizeof(uintptr_t) <= cursor)
+            {
+                cursor = region.gaps[gap].end + sizeof(uintptr_t);
+                gap++;
+                continue;
+            }
+            if (cursor - sizeof(uintptr_t) >= region.parseEnd)
+            {
+                return;
+            }
+            Object* object = reinterpret_cast<Object*>(cursor);
+            size_t size = LocalSize(object);
+            fn(object, size);
+            cursor += size;
+        }
+    }
 }
 
 struct LaxoriGcHeap::LocalGcContext
@@ -290,7 +320,7 @@ void LaxoriGcHeap::EscapeRecursively(LaxoriPrivateRegion& region, Object* object
                 BitSet(reinterpret_cast<uintptr_t>(slot));
                 Object* child = *slot;
                 uintptr_t childAddress = reinterpret_cast<uintptr_t>(child);
-                if (InRegion(region, childAddress) && !BitTest(childAddress + sizeof(uintptr_t)))
+                if (InRegion(region, childAddress) && !BitTest(childAddress + sizeof(uintptr_t)) && m_test_control != 3)
                 {
                     BitSet(childAddress + sizeof(uintptr_t));
                     escaped += LocalSize(child);
@@ -474,7 +504,7 @@ void LaxoriGcHeap::OpenGap(gc_alloc_context* context, LaxoriRcMutator* mutator, 
 {
     LaxoriPrivateRegion& region = mutator->Region();
     const LaxoriPrivateGap gap = region.gaps[gapIndex];
-    if (!region.freshGaps)
+    if (!region.freshGaps && m_test_control != 4)
     {
         memset(reinterpret_cast<void*>(gap.start), 0, gap.end - gap.start);
     }
@@ -549,6 +579,17 @@ Object* LaxoriGcHeap::AllocPrivateSlow(gc_alloc_context* context, LaxoriRcMutato
         {
             return nullptr;
         }
+        // The thread has no region. A buffer that it still holds is a buffer of the shared engine: close it (a region can be
+        // taken only when no buffer is published). After a failure the thread allocates in the shared engine, with the fast
+        // buffer of LXR, until a pause has freed blocks or a number of slow allocations have passed.
+        if (context->alloc_ptr != nullptr)
+        {
+            RetireAllocationSpan(context, true);
+        }
+        if (mutator->AcquireEpoch() == m_collections.load(std::memory_order_relaxed) && --mutator->AcquireSkip() > 0)
+        {
+            return nullptr;
+        }
         if (GetCollectionCause(false) != LaxoriCollectionCause::None)
         {
             if (CollectForPressure(false, false) != LaxoriRcResult::Success)
@@ -563,6 +604,7 @@ Object* LaxoriGcHeap::AllocPrivateSlow(gc_alloc_context* context, LaxoriRcMutato
         }
         if (!taken)
         {
+            mutator->SetAcquireFailure(m_collections.load(std::memory_order_relaxed), 512);
             return nullptr;
         }
         size_t firstBit = (region.start - m_arena) >> 9;
@@ -637,6 +679,10 @@ void LaxoriGcHeap::UpdateFn(Object** slot, ScanContext* scan, uint32_t flags)
 {
     LocalGcContext* local = static_cast<LocalGcContext*>(scan->_unused1);
     LaxoriGcHeap* heap = local->heap;
+    if (heap->m_test_control == 1)
+    {
+        return;
+    }
     LaxoriPrivateRegion& region = *local->region;
     uintptr_t location = reinterpret_cast<uintptr_t>(*slot);
     bool interior = (flags & GC_CALL_INTERIOR) != 0;
@@ -700,6 +746,25 @@ bool LaxoriGcHeap::LocalMark(LaxoriPrivateRegion& region)
     scan.promotion = TRUE;
     scan._unused1 = &local;
     GCToEEInterface::GcScanCurrentStackRoots(reinterpret_cast<promote_func*>(MarkFn), &scan);
+
+    // The sync-block table of the runtime holds raw pointers to the objects that have a sync block, dead or alive, and it is
+    // updated only by a pause. An object with a sync block therefore stays where it is and stays alive until the region is
+    // dissolved. The walk finds the dead ones too: the objects between two gaps are contiguous.
+    WalkRegionObjects(region, [&](Object* walked, size_t size)
+    {
+        if (m_test_control == 5)
+        {
+            return;
+        }
+        uintptr_t address = reinterpret_cast<uintptr_t>(walked);
+        if (!BitTest(address) && HasSyncBlock(walked))
+        {
+            BitSet(address);
+            BitSet(address + 2 * sizeof(uintptr_t));
+            region.survivors += size;
+            PushMarkStack(region, walked);
+        }
+    });
 
     Object* object = PopMarkStack(region);
     while (object != nullptr)
@@ -821,7 +886,7 @@ void LaxoriGcHeap::LocalUpdate(LaxoriPrivateRegion& region)
         uintptr_t address = reinterpret_cast<uintptr_t>(object);
         size_t size = LocalSize(object);
         // An escaped object refers only to escaped objects (and to objects outside the region): nothing to update.
-        if (!BitTest(address + sizeof(uintptr_t)))
+        if (!BitTest(address + sizeof(uintptr_t)) && m_test_control != 2)
         {
             GCReferenceRangeIterator iterator(object);
             GCReferenceRange range;
@@ -878,22 +943,41 @@ bool LaxoriGcHeap::LocalCollect(LaxoriRcMutator* mutator)
     {
         VerifyRegion(region, "before-collect");
     }
-    if (region.escapedSize > m_region_bytes / 4 || (region.escapedSize != 0 && !m_collect_escaped))
+    if (region.escapedSize > m_region_bytes / 4 || (region.escapedSize != 0 && region.escapedSize > m_escaped_collect_limit))
     {
         m_engine.CountRegionMetric(LaxoriReferenceCounting::LocalSkipped);
         return false;
     }
+    if (mutator->LocalSkip() != 0)
+    {
+        mutator->LocalSkip()--;
+        m_engine.CountRegionMetric(LaxoriReferenceCounting::LocalSkipped);
+        return false;
+    }
+    // A collection that does not pay makes the thread skip the next regions (1, 3, 7, 15), so that a thread whose regions are
+    // full of live data does not mark them again and again.
+    auto notPaid = [&]()
+    {
+        uint32_t& streak = mutator->LocalStreak();
+        if (streak < 4)
+        {
+            streak++;
+        }
+        mutator->LocalSkip() = (1u << streak) - 1;
+    };
     const size_t before = region.parseEnd - region.start;
     region.survivors = 0;
     region.markStack = 0;
     if (!LocalMark(region))
     {
+        notPaid();
         m_engine.CountRegionMetric(LaxoriReferenceCounting::LocalMarkAborted);
         return false;
     }
     size_t freeBytes = 0;
     if (!LocalPlan(region, &freeBytes) || freeBytes < m_region_bytes / 4)
     {
+        notPaid();
         ClearPads(region);
         free(region.nextGaps);
         region.nextGaps = nullptr;
@@ -902,6 +986,7 @@ bool LaxoriGcHeap::LocalCollect(LaxoriRcMutator* mutator)
         m_engine.CountRegionMetric(LaxoriReferenceCounting::LocalNotWorth);
         return false;
     }
+    mutator->LocalStreak() = 0;
     LocalUpdate(region);
     LocalCompact(region);
     memset(m_private_index + ((region.start - m_arena) >> IndexShift), 0, (m_region_bytes >> IndexShift) * sizeof(uint32_t));
@@ -1031,10 +1116,14 @@ void LaxoriGcHeap::VerifyRegion(LaxoriPrivateRegion& region, const char* where)
     }
 }
 
-bool LaxoriGcHeap::InitializePrivateTier(size_t regionKB, bool enabled, bool collectEscaped)
+bool LaxoriGcHeap::InitializePrivateTier(size_t regionKB, bool enabled, bool collectEscaped, size_t escapedCollectDiv)
 {
     m_private_enabled = enabled;
     m_verify_private = getenv("DOTNET_LAXORIVerifyPrivate") != nullptr;
+    {
+        const char* control = getenv("DOTNET_LAXORITestControl");
+        m_test_control = control != nullptr ? atoi(control) : 0;
+    }
     m_collect_escaped = collectEscaped;
     m_arena = m_engine.GetReservationStart();
     m_arena_bytes = m_engine.GetReservationBytes();
@@ -1047,6 +1136,7 @@ bool LaxoriGcHeap::InitializePrivateTier(size_t regionKB, bool enabled, bool col
         return false;
     }
     m_region_bytes = regionKB * 1024;
+    m_escaped_collect_limit = collectEscaped ? m_region_bytes / (escapedCollectDiv == 0 ? 16 : escapedCollectDiv) : 0;
     m_region_blocks = m_region_bytes / ImmixBlockGeometry::BlockBytes;
     m_region_shift = 0;
     while ((static_cast<size_t>(1) << m_region_shift) < m_region_bytes)

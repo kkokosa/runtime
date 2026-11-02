@@ -120,16 +120,30 @@ internal static class CompareDriver
         double cpuBefore = process.TotalProcessorTime.TotalMilliseconds;
         string? mark = Environment.GetEnvironmentVariable("PROF_MARK"); if (mark is not null) File.WriteAllText(mark + ".start", "1");
         ulong m33a = metric is not null ? metric(33) : 0;
+        // Private tier (Laxori): metrics 700..716 (see RegionMetric in laxori_reference_counting.h) and 48 (objects promoted by pauses).
+        const int RegionCount = 17;
+        ulong[] regionBefore = new ulong[RegionCount];
+        bool hasRegion = metric is not null && metric(700) != UInt64.MaxValue;
+        ulong promotionsBefore = metric is not null ? metric(48) : 0;
+        if (hasRegion)
+        {
+            for (uint i = 0; i < RegionCount; i++) regionBefore[i] = metric!(700 + i);
+        }
         long start = Now();
         long checksum = Invoke(size, operations);
         long end = Now();
         if (mark is not null) File.WriteAllText(mark + ".end", "1");
         if (metric is not null) Console.Error.WriteLine("fast_refills=" + (metric(33) - m33a));
-        if (metric is not null && metric(700) != UInt64.MaxValue)
+        long[] region = new long[RegionCount];
+        if (hasRegion)
         {
-            string[] names = { "begun", "ended", "reset", "resetBytes", "pubEscape", "pubFull", "pubPause", "acquired", "escapeCalls", "foreign" };
-            Console.Error.WriteLine("laxori: " + string.Join(" ", Array.ConvertAll(names, n => n + "=" + metric(700 + (uint)Array.IndexOf(names, n)))));
+            for (uint i = 0; i < RegionCount; i++) region[i] = (long)(metric!(700 + i) - regionBefore[i]);
+            string[] names = { "acquired", "dissolvedPause", "dissolvedFull", "dissolvedEscape", "dissolvedExit", "localCollections", "localSkipped",
+                "markAborted", "notWorth", "survivorBytes", "reclaimedBytes", "escapeCalls", "escapedObjects", "escapedBytes", "foreign",
+                "acquireFailures", "bulkEscapes" };
+            Console.Error.WriteLine("laxori: " + string.Join(" ", Array.ConvertAll(names, n => n + "=" + region[Array.IndexOf(names, n)])));
         }
+        long promotions = metric is not null ? (long)(metric(48) - promotionsBefore) : 0;
         double cpuAfter = process.TotalProcessorTime.TotalMilliseconds;
 
         double pauseMsAfter = GC.GetTotalPauseDuration().TotalMilliseconds;
@@ -178,6 +192,8 @@ internal static class CompareDriver
             total_collections = totalCollections,
             allocated_mb = allocatedMb,
             item4 = item4Delta,
+            region,
+            promotions,
             causes,
             timer_ns = timerDelta,
             scheduler = schedDelta

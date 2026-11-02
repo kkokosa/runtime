@@ -17,7 +17,7 @@ The user's decision: Laxori is **our Satori plus our LXR**. It is not a copy of 
 * When a private region is full, the **allocating thread collects it alone** (Satori `ThreadLocalCollect`, `Mark`,
   `Plan`, `UpdatePointers`, `Compact`). Roots are the stack of this thread (`GCToEEInterface::GcScanCurrentStackRoots`)
   and the escaped objects. Escaped and pinned objects do not move. Movable survivors slide to the start of the region.
-  Gaps are formatted as free objects. The collection is skipped when the survivors are more than region/8. It does not stop
+  Gaps are dead space (see section 6). The collection is skipped when the survivors are more than region/8. It does not stop
   other threads.
 * The **shared heap is the LXR engine** (field logging, counts, SATB trace, block reclamation, nursery and mature copying,
   large object space). An LXR pause treats a private region as a set of young objects. After the pause the thread starts
@@ -148,24 +148,43 @@ collection of this region (the last one did not buy enough).
    outside the region is ignored; `GC_CALL_INTERIOR` resolves the object with `FindObject` (index); `GC_CALL_PINNED` sets Pinned
    unless the object is escaped. Propagate with the mark stack. Stop when survivors are more than `region/8` (undo, no change).
 2. **Plan.** Walk the marked objects in address order and slide the movable ones (not Escaped, not Pinned, no sync-block index)
-   to the lowest free address, skipping unmovable objects. The relocation distance goes to the header. Unmarked runs
-   and the gaps that remain are formatted as **free objects** (minimum 3 words; a gap smaller than that is added to the object
-   before it). L1 collects only a region with no escaped object and no pinned object, so the plan is one slide. L2 needs the
-   skipping.
+   to the lowest free address, skipping unmovable objects. The relocation distance goes to the header. Two rules came out of the
+   implementation (see "Layout rule: an object never crosses a block" below): an object never lands across a block boundary
+   (it goes to the start of the next block, or stays where it is if that address is not below its source), and the space between
+   two objects is recorded as a **gap** (a dead range inside one block, any size), not formatted as a free object. L1 collects only
+   a region with no escaped object (a pinned object is unmovable and creates a gap); L2 also collects regions with escaped objects, which stay in place.
 3. **Update.** `GcScanCurrentStackRoots` with `UpdateFn`; then every marked object's reference slots that point into the region
    (objects outside the region cannot refer to a movable object by I2).
 4. **Compact.** `memmove` runs with the same distance (the header word moves with the object). Clear Marked and Pinned, keep
    Escaped. Reset the index.
-5. **Reopen.** The allocation cursor is the end of the last live or unmovable object. The tail up to the region end is zeroed
-   (I6): its cost is the garbage that the collection found. L1: one tail. L2: the gaps between unmovable objects stay free
-   objects and are not reused until the pause (a limit of L2, written down).
+5. **Reopen.** The planned gaps replace the old gap list. They are opened one after another as the runtime buffer; a gap is
+   zeroed when it is opened (a gap of a new region is zero already) and a gap under 1 KiB is not opened. The cost of the zeroing is
+   the garbage that the collection found. Unused gaps stay dead until the pause.
 
-Free objects use `g_gc_pFreeObjectMethodTable` and the size rules of the runtime (`MIN_OBJECT_SIZE`).
+### Layout rule: an object never crosses a block (found in L1, 8 threads, region > 32 KiB)
+
+The Immix engine promotes in place and sweeps **by the block of the object start**. An object that starts in block *b* and ends in
+block *b+1* leaves *b+1* without a live object that starts in it, so the pause releases *b+1* while the tail of the object still
+lives there. With one-block regions this cannot happen, and the first implementation (one parsable gap per region, objects
+across blocks) failed only at region sizes above 32 KiB, at 4 and more threads (`graph` test: 50 to 100 percent of the runs,
+with null method tables and non-pointer values in reference fields found by the pause).
+
+The rules now:
+
+1. a buffer is never longer than one block (a gap is inside one block), so the runtime bump allocator cannot cross a boundary;
+2. the plan never puts a movable object across a boundary;
+3. a dead range can have any size, because it is not parsed. The free-object format needs 24 bytes, and a leftover of 8 or 16 bytes at
+   the end of a block (the common case for a 24 to 64 byte object) cannot be formatted. So **gaps are a list**
+   (`LaxoriPrivateRegion::gaps`, sorted, disjoint) and the engine gets **one span for each stretch of live objects** (the region
+   without its gaps), so the engine never reads dead memory (`CloseRegionSpan`);
+4. `FindObject` (interior pointers) walks the objects of a stretch and steps over the gaps.
+
+Free objects (`g_gc_pFreeObjectMethodTable`) are no longer used by the private tier.
 
 ### Dissolve (the pause and the "region is full and not collectable" case)
 
-`FlushMutators` already closes every span. For a region the span is `[region start, cursor)`. This is a sequence of complete
-objects, with free objects for the gaps and escaped objects in place. Nothing else is done: the clean-nursery-block rule of the
+`FlushMutators` already closes every span. A region gives one span for each stretch of live objects (the region without its gaps, so
+every span is a sequence of complete objects, with escaped objects in place). Nothing else is done: the clean-nursery-block rule of the
 engine releases a block that no object promoted, and a survivor found by the stack scan gets its first increment and is copied or
 promoted as any young object. `private_bits` and `region_owner` entries are cleared (the owner table first, so that no barrier
 sees a stale tag). The blocks go back with `ReturnBlock` (engine) as in M1.
@@ -180,7 +199,7 @@ sees a stale tag). The blocks go back with `ReturnBlock` (engine) as in M1.
 | statics, thread statics | stored in heap arrays: a store through the barrier, so the target escapes. |
 | `ref`/byref and `Span<T>` | stack only. Interior roots resolve through the index. A byref to a heap field of a private object is a stack root. |
 | exceptions | the runtime keeps a thrown object in a handle: it escapes. |
-| sync blocks | an object with a sync-block index or a thin lock owned by another thread is treated as escaped and unmovable when it is found (hash code only is stored in the header and moves with the object). **Not verified**: the test `sync` in L1 checks hash code plus `lock` plus `Monitor.Wait` from two threads. |
+| sync blocks | **found in L2 and fixed**: the sync-block table of the runtime holds a raw pointer to every object that has a sync block (a `lock` after `GetHashCode`, or a contended `lock`) and only a pause updates it. A thread-local collection that reclaimed or moved such an object left a stale entry, which the next pause used as a root (null method table). The mark phase therefore walks the live stretches of the region (dead objects too, they are contiguous between gaps) and treats every object with a sync-block index as a pinned root: it stays and lives until the region is dissolved. Hash code only is stored in the header and moves with the object. Test: `sync` in `PrivateTests` (crashed in L2 mode before the fix, passes after). |
 | thread exit | `FixAllocContext` dissolves the region before the mutator is detached. |
 | another thread reads a private object | cannot happen (I1). A reference that goes to another thread was stored into the heap (escape) or into a handle (escape). |
 | `GC.Collect`, `GetTotalAllocatedBytes` | a user `GC.Collect` is an LXR pause (dissolve). Allocation accounting follows the buffer rules of LXR: a buffer adds its size, the unused tail is subtracted when it is retired. A thread-local collection adds the newly opened tail. |
@@ -188,10 +207,10 @@ sees a stale tag). The blocks go back with `ReturnBlock` (engine) as in M1.
 ## 8. Interaction with every LXR phase (the consistency list)
 
 * **(a) Parsable young spans.** The engine assumes a span is "a sequence of complete objects with no gaps"
-  (`lxr_young_spans.h`). Free objects and escaped objects in place keep this true: they are complete objects with a method table
-  and a size. Only `FindInYoungSpans` walks a span object by object (`ObjectSize` of the free-object method table works). It
-  must **not return a free object** for an interior address (it would be counted): one check is added there. The nursery sweep
-  and `ReleaseNurseryBatchQuiescent` do not walk objects. `CheckProbeInSpans` is a test probe.
+  (`lxr_young_spans.h`). A private region gives the engine one span for each stretch of live objects, so every span is a sequence
+  of complete objects (escaped objects in place are complete objects). Only `FindInYoungSpans` walks a span object by object. The
+  nursery sweep and `ReleaseNurseryBatchQuiescent` do not walk objects. `CheckProbeInSpans` is a test probe. The block rule of
+  section 6 (an object never crosses a block) is part of this invariant.
 * **(b) Black allocation during a concurrent trace.** The engine sets ObjectMark for a whole block when it is taken while a trace
   runs. By I5 a region cannot live across the pause that starts or ends a trace, so all its blocks were taken in one marking state.
   A thread-local collection never changes ObjectMark. The trace never reaches a movable private object (I1, I2). It can reach an

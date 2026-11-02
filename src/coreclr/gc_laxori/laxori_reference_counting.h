@@ -374,6 +374,15 @@ public:
     LaxoriPrivateRegion& Region() { return region; }
     uintptr_t Tag() const { return tag; }
     void SetTag(uintptr_t value) { tag = value; }
+    // Back-off of the region acquisition: after a failure the thread does not ask again until a pause has happened or `skip`
+    // slow allocations have passed.
+    uint64_t AcquireEpoch() const { return acquireEpoch; }
+    int32_t& AcquireSkip() { return acquireSkip; }
+    void SetAcquireFailure(uint64_t epoch, int32_t skip) { acquireEpoch = epoch; acquireSkip = skip; }
+    // Back-off of the thread-local collection: after a collection that did not pay (the mark aborted, or too little was freed) the
+    // thread dissolves the next regions without trying, 1, 3, 7 and at most 15 of them.
+    uint32_t& LocalSkip() { return localSkip; }
+    uint32_t& LocalStreak() { return localStreak; }
 
 private:
     friend class LaxoriReferenceCounting;
@@ -399,6 +408,10 @@ private:
     // fs:0). The runtime buffer [publishedCursor, publishedLimit) lies in the region while region.buffer is set.
     LaxoriPrivateRegion region;
     uintptr_t tag = 0;
+    uint64_t acquireEpoch = ~static_cast<uint64_t>(0);
+    int32_t acquireSkip = 0;
+    uint32_t localSkip = 0;
+    uint32_t localStreak = 0;
     std::atomic<uint64_t> overflowObjects;
     std::atomic<uint64_t> overflowBytes;
     // The closed spans of this thread since the last pause. A pause merges them into the list of the engine.

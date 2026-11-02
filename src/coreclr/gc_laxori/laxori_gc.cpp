@@ -343,7 +343,8 @@ HRESULT LaxoriGcHeap::Initialize()
     configuration.prezeroThread = false;
     bool privateEnabled = true;
     size_t regionKB = 256;
-    bool escapedInPlace = false;
+    bool escapedInPlace = true;
+    size_t escapedCollectDiv = 16;
     if (!ReadBooleanSetting("LAXORILegacyCapacity", &legacy) ||
         !ReadSetting("LAXORIImmixInitialMB", &immixInitial, 10, LaxoriSideMetadataLayout::AddressLimit >> 20) ||
         !ReadSetting("LAXORILOSInitialMB", &largeInitial, 10, LaxoriSideMetadataLayout::AddressLimit >> 20) ||
@@ -392,9 +393,14 @@ HRESULT LaxoriGcHeap::Initialize()
         !ReadSetting("LAXORIPrezeroWindowBlocks", &configuration.prezeroWindowBlocks, 10, 65536) ||
         !ReadBooleanSetting("LAXORIPrivate", &privateEnabled) ||
         !ReadSetting("LAXORIRegionKB", &regionKB, 10, 4096) ||
-        !ReadBooleanSetting("LAXORIEscapedInPlace", &escapedInPlace))
+        !ReadBooleanSetting("LAXORIEscapedInPlace", &escapedInPlace) ||
+        !ReadSetting("LAXORIEscapedCollectDiv", &escapedCollectDiv, 10, 64))
     {
         return E_FAIL;
+    }
+    if (escapedCollectDiv == 0)
+    {
+        escapedCollectDiv = 16;
     }
     size_t gcThreads = 0;
     size_t concurrentThreads = 0;
@@ -512,7 +518,7 @@ HRESULT LaxoriGcHeap::Initialize()
         m_engine.Shutdown();
         return E_OUTOFMEMORY;
     }
-    if (!InitializePrivateTier(regionKB, privateEnabled, escapedInPlace))
+    if (!InitializePrivateTier(regionKB, privateEnabled, escapedInPlace, escapedCollectDiv))
     {
         m_engine.Shutdown();
         Unsupported("Laxori could not create its private tier (LAXORIRegionKB must be a power of two from 32 to 4096).");
@@ -672,7 +678,15 @@ Object* LaxoriGcHeap::Alloc(gc_alloc_context* context, size_t size, uint32_t fla
 // The allocation of the shared heap (the LXR engine).
 Object* LaxoriGcHeap::AllocShared(gc_alloc_context* context, size_t size, uint32_t flags)
 {
-    if (!m_private_enabled)
+    // A thread that has a private region keeps its buffer for the region. A thread without one uses the buffer of the engine
+    // like LXR does (closed before a slow allocation, published again after it).
+    bool noRegion = true;
+    if (m_private_enabled)
+    {
+        LaxoriRcMutator* current = context->gc_reserved_1 == nullptr ? nullptr : m_engine.FindCachedMutator(context->gc_reserved_1, context);
+        noRegion = current == nullptr || current->Region().start == 0;
+    }
+    if (noRegion)
     {
         RetireAllocationSpan(context, true);
     }
@@ -764,7 +778,7 @@ Object* LaxoriGcHeap::AllocShared(gc_alloc_context* context, size_t size, uint32
     }
     m_context_allocated_bytes.fetch_add(size, std::memory_order_relaxed);
     if (m_fast_enabled && size < LaxoriLargeObjectSpace::MinimumObjectBytes &&
-        (flags & GC_ALLOC_USER_OLD_HEAP) == 0 && !m_private_enabled)
+        (flags & GC_ALLOC_USER_OLD_HEAP) == 0 && noRegion)
     {
         uintptr_t cursor;
         uintptr_t limit;
@@ -2992,6 +3006,7 @@ uint64_t LaxoriGcHeap::GetPrototypeMetric(uint32_t metric) const
         case 45: return m_native_plane_limit;
         case 46: return m_engine.GetLifetimeProbeBirths();
         case 47: return m_engine.GetLifetimeProbeReclaims();
+        case 48: return rc.promotions;
         case 462: return rc.loggedSlots;
         case 463: return rc.oldTargetChecks;
         case 464: return m_bulk_move_calls.load(std::memory_order_relaxed);
