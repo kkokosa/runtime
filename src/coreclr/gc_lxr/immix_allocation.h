@@ -93,6 +93,20 @@ public:
         ImmixHole* hole,
         size_t* nextSearchLine,
         ImmixAllocationStatus* status) const;
+    // The result of calling TryFindNextHole from searchLine until it returns a hole of at least minimumLines lines (the
+    // holes that it passes over, which have the minimum reuse lines but fewer than minimumLines, are added to *skipped).
+    // The count words of the block are read in halves of 64 lines, with no more than one pass over each, and the runs of
+    // dead lines are found with bit operations. TryFindNextHole is better for a request that fits the first hole.
+    SideMetadataResult TryFindFittingHole(
+        uintptr_t block,
+        size_t searchLine,
+        size_t minimumLines,
+        ImmixHole* hole,
+        size_t* nextSearchLine,
+        ImmixAllocationStatus* status,
+        size_t* skipped) const;
+    // The sum of the lines of all holes that TryFindNextHole returns for the block, from line 0.
+    SideMetadataResult CountHoleLines(uintptr_t block, size_t* lines) const;
 
     size_t GetFreshBlocksAcquired() const;
     size_t GetRecycledBlocksAcquired() const;
@@ -154,6 +168,36 @@ private:
         uintptr_t block,
         size_t lineIndex,
         bool* dead) const;
+    // Dead lines of one block as one bit per line (bit i of mask[h] is line 64 * h + i), read from the count plane when a
+    // half is first needed.
+    struct DeadLineCache
+    {
+        uint64_t mask[2];
+        bool loaded[2];
+    };
+    // Checks the arguments and the block as TryFindNextHole does, and gives the first word of the count plane of the block.
+    SideMetadataResult LocateBlockForScan(
+        uintptr_t block,
+        ImmixHole* hole,
+        size_t* nextSearchLine,
+        ImmixAllocationStatus* status,
+        const volatile uintptr_t** blockWords) const;
+    uint64_t GetDeadMask(
+        uintptr_t block,
+        const volatile uintptr_t* blockWords,
+        size_t half,
+        DeadLineCache* cache) const;
+    // One search of TryFindFittingHole over the lines that the cache covers.
+    void FindHoleByMask(
+        uintptr_t block,
+        const volatile uintptr_t* blockWords,
+        DeadLineCache* cache,
+        size_t searchLine,
+        size_t minimumLines,
+        ImmixHole* hole,
+        size_t* nextSearchLine,
+        ImmixAllocationStatus* status,
+        size_t* skipped) const;
     // The line scan of the Java LXR (RCArray::is_dead): the counts of one line are a few whole words of the count plane, and
     // the line is dead when all of them are zero. blockWords is the first word of the count plane of the block.
     bool IsLineDeadFast(const volatile uintptr_t* blockWords, size_t lineIndex) const
@@ -180,7 +224,8 @@ private:
         uintptr_t owner,
         ImmixAllocationSource source,
         uintptr_t* block,
-        ImmixAllocationStatus* status);
+        ImmixAllocationStatus* status,
+        size_t minimumFreeLines = 0);
     SideMetadataResult ReturnBlock(
         uintptr_t block,
         uintptr_t owner,

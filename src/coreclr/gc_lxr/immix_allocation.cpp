@@ -20,6 +20,18 @@ namespace
         *end = start + size;
         return true;
     }
+
+    // The index of the lowest set bit. The value is not zero.
+    inline size_t LowestSetBit(uint64_t value)
+    {
+#if defined(_MSC_VER) && !defined(__clang__)
+        unsigned long index;
+        _BitScanForward64(&index, value);
+        return static_cast<size_t>(index);
+#else
+        return static_cast<size_t>(__builtin_ctzll(value));
+#endif
+    }
 }
 
 ImmixAllocationManager::ImmixAllocationManager()
@@ -299,6 +311,234 @@ SideMetadataResult ImmixAllocationManager::TryFindNextHole(
     return SideMetadataResult::Success;
 }
 
+SideMetadataResult ImmixAllocationManager::LocateBlockForScan(
+    uintptr_t block,
+    ImmixHole* hole,
+    size_t* nextSearchLine,
+    ImmixAllocationStatus* status,
+    const volatile uintptr_t** blockWords) const
+{
+    if ((hole == nullptr) ||
+        (nextSearchLine == nullptr) ||
+        (status == nullptr) ||
+        (m_metadata == nullptr))
+    {
+        return SideMetadataResult::InvalidArgument;
+    }
+
+    hole->start = block;
+    hole->end = block;
+    hole->line_count = 0;
+    *status = ImmixAllocationStatus::Exhausted;
+    if (!ImmixBlockGeometry::IsBlockAligned(block) ||
+        (block < m_arena_start) ||
+        (block >= (m_arena_start + m_arena_size)))
+    {
+        return SideMetadataResult::AddressNotOwned;
+    }
+
+    *blockWords = m_reference_count.Locate(block).word;
+    return SideMetadataResult::Success;
+}
+
+uint64_t ImmixAllocationManager::GetDeadMask(
+    uintptr_t block,
+    const volatile uintptr_t* blockWords,
+    size_t half,
+    DeadLineCache* cache) const
+{
+    if (cache->loaded[half])
+    {
+        return cache->mask[half];
+    }
+
+    // A line is dead when all of its count words are zero (the same rule as IsLineDeadFast). The loop has no branch that
+    // depends on the counts.
+    const volatile uintptr_t* words = blockWords + (half * 64 * m_rc_words_per_line);
+    uint64_t mask = 0;
+    if (m_rc_words_per_line == 1)
+    {
+        for (size_t line = 0; line < 64; line++)
+        {
+            mask |= static_cast<uint64_t>(VolatileLoadWithoutBarrier(words + line) == 0) << line;
+        }
+    }
+    else
+    {
+        for (size_t line = 0; line < 64; line++)
+        {
+            uintptr_t any = 0;
+            for (size_t word = 0; word < m_rc_words_per_line; word++)
+            {
+                any |= VolatileLoadWithoutBarrier(words + (line * m_rc_words_per_line) + word);
+            }
+            mask |= static_cast<uint64_t>(any == 0) << line;
+        }
+    }
+#ifdef LXR_F9_TEST_HOOKS
+    m_line_probes.fetch_add(64, std::memory_order_relaxed);
+#endif // LXR_F9_TEST_HOOKS
+#ifdef _DEBUG
+    for (size_t line = 0; line < 64; line++)
+    {
+        size_t lineIndex = (half * 64) + line;
+        bool dead = ((mask >> line) & 1) != 0;
+        for (int attempt = 0; attempt < 16; attempt++)
+        {
+            bool checkedDead = false;
+            if (IsLineDead(block, lineIndex, &checkedDead) != SideMetadataResult::Success || checkedDead == dead)
+            {
+                break;
+            }
+            // Another thread may have changed a count between the two reads; look again.
+            dead = IsLineDeadFast(blockWords, lineIndex);
+            _ASSERTE(attempt != 15 && "The line mask of the count plane and the checked scan disagree.");
+        }
+        mask = (mask & ~(static_cast<uint64_t>(1) << line)) | (static_cast<uint64_t>(dead) << line);
+    }
+#else
+    (void)block;
+#endif // _DEBUG
+    cache->mask[half] = mask;
+    cache->loaded[half] = true;
+    return mask;
+}
+
+void ImmixAllocationManager::FindHoleByMask(
+    uintptr_t block,
+    const volatile uintptr_t* blockWords,
+    DeadLineCache* cache,
+    size_t searchLine,
+    size_t minimumLines,
+    ImmixHole* hole,
+    size_t* nextSearchLine,
+    ImmixAllocationStatus* status,
+    size_t* skipped) const
+{
+    static_assert(ImmixBlockGeometry::LinesPerBlock == 128, "The line masks have two halves.");
+    // The first line at or after `from` that is dead (wantDead) or live, or the end of the block.
+    auto nextLine = [&](size_t from, bool wantDead) -> size_t
+    {
+        for (size_t half = from >> 6; half < 2; half++)
+        {
+            uint64_t mask = GetDeadMask(block, blockWords, half, cache);
+            if (!wantDead)
+            {
+                mask = ~mask;
+            }
+            if (half == (from >> 6))
+            {
+                mask &= ~static_cast<uint64_t>(0) << (from & 63);
+            }
+            if (mask != 0)
+            {
+                return (half * 64) + LowestSetBit(mask);
+            }
+        }
+        return ImmixBlockGeometry::LinesPerBlock;
+    };
+
+    size_t position = searchLine;
+    while (position < ImmixBlockGeometry::LinesPerBlock)
+    {
+        size_t runStart = nextLine(position, true);
+        if (runStart >= ImmixBlockGeometry::LinesPerBlock)
+        {
+            break;
+        }
+        size_t runEnd = nextLine(runStart, false);
+        position = runEnd;
+        // The first dead line after a live line is not reusable (an object of the live line may overflow into it), except
+        // line 0. The line at the search line has no known predecessor and counts as such a line, as in TryFindNextHole.
+        size_t first = (runStart == 0) ? 0 : runStart + 1;
+        if (first >= runEnd)
+        {
+            continue;
+        }
+
+        size_t reusableLines = runEnd - first;
+        *nextSearchLine = runEnd;
+        if (reusableLines >= m_minimum_reuse_lines)
+        {
+            if (reusableLines >= minimumLines)
+            {
+                hole->start = block + (first * ImmixBlockGeometry::LineBytes);
+                hole->end = block + (runEnd * ImmixBlockGeometry::LineBytes);
+                hole->line_count = reusableLines;
+                *status = ImmixAllocationStatus::Ready;
+                return;
+            }
+            (*skipped)++;
+        }
+    }
+
+    *nextSearchLine = ImmixBlockGeometry::LinesPerBlock;
+}
+
+SideMetadataResult ImmixAllocationManager::TryFindFittingHole(
+    uintptr_t block,
+    size_t searchLine,
+    size_t minimumLines,
+    ImmixHole* hole,
+    size_t* nextSearchLine,
+    ImmixAllocationStatus* status,
+    size_t* skipped) const
+{
+    if ((nextSearchLine == nullptr) ||
+        (skipped == nullptr) ||
+        (searchLine > ImmixBlockGeometry::LinesPerBlock))
+    {
+        return SideMetadataResult::InvalidArgument;
+    }
+
+    *nextSearchLine = searchLine;
+    *skipped = 0;
+    const volatile uintptr_t* blockWords = nullptr;
+    SideMetadataResult result = LocateBlockForScan(block, hole, nextSearchLine, status, &blockWords);
+    if (result != SideMetadataResult::Success)
+    {
+        return result;
+    }
+
+    DeadLineCache cache = {};
+    FindHoleByMask(block, blockWords, &cache, searchLine, minimumLines, hole, nextSearchLine, status, skipped);
+    return SideMetadataResult::Success;
+}
+
+SideMetadataResult ImmixAllocationManager::CountHoleLines(uintptr_t block, size_t* lines) const
+{
+    if (lines == nullptr)
+    {
+        return SideMetadataResult::InvalidArgument;
+    }
+
+    ImmixHole hole;
+    size_t next = 0;
+    ImmixAllocationStatus status;
+    const volatile uintptr_t* blockWords = nullptr;
+    *lines = 0;
+    SideMetadataResult result = LocateBlockForScan(block, &hole, &next, &status, &blockWords);
+    if (result != SideMetadataResult::Success)
+    {
+        return result;
+    }
+
+    DeadLineCache cache = {};
+    size_t skipped = 0;
+    size_t total = 0;
+    while (next < ImmixBlockGeometry::LinesPerBlock)
+    {
+        status = ImmixAllocationStatus::Exhausted;
+        FindHoleByMask(block, blockWords, &cache, next, 0, &hole, &next, &status, &skipped);
+        if (status == ImmixAllocationStatus::Ready)
+        {
+            total += hole.line_count;
+        }
+    }
+    *lines = total;
+    return SideMetadataResult::Success;
+}
+
 size_t ImmixAllocationManager::GetFreshBlocksAcquired() const
 {
     return m_fresh_blocks_acquired.load(std::memory_order_relaxed);
@@ -448,7 +688,8 @@ SideMetadataResult ImmixAllocationManager::AcquireBlock(
     uintptr_t owner,
     ImmixAllocationSource source,
     uintptr_t* block,
-    ImmixAllocationStatus* status)
+    ImmixAllocationStatus* status,
+    size_t minimumFreeLines)
 {
     if ((block == nullptr) ||
         (status == nullptr) ||
@@ -513,6 +754,14 @@ SideMetadataResult ImmixAllocationManager::AcquireBlock(
             return failure != SideMetadataResult::Success || !nursery;
         }
         if (state == ImmixBlockState::Unallocated)
+        {
+            return false;
+        }
+        // The free lines of a Reusable block were counted when it was made Reusable, and lines only become free after that,
+        // so a block with fewer free lines than the pending request needs has no hole that fits it.
+        if (minimumFreeLines != 0 && state == ImmixBlockState::Reusable &&
+            ImmixBlockGeometry::LinesPerBlock - static_cast<size_t>(unavailableLines) < minimumFreeLines &&
+            unavailableLines <= ImmixBlockGeometry::LinesPerBlock)
         {
             return false;
         }
@@ -962,7 +1211,8 @@ SideMetadataResult ImmixBumpAllocator::TryRefill(
             m_owner,
             source,
             &block,
-            status);
+            status,
+            (minimumHoleBytes + ImmixBlockGeometry::LineBytes - 1) / ImmixBlockGeometry::LineBytes);
         if ((result != SideMetadataResult::Success) ||
             (*status != ImmixAllocationStatus::Ready))
         {
@@ -1165,6 +1415,28 @@ SideMetadataResult ImmixBumpAllocator::FindHole(
     ImmixHole* hole,
     ImmixAllocationStatus* status)
 {
+    // A request of more than one line looks for a long hole through the whole block, so the lines are read as masks. A
+    // request that one line holds takes the first hole, and that search reads only the lines up to the end of the hole.
+    size_t minimumLines =
+        (minimumHoleBytes + ImmixBlockGeometry::LineBytes - 1) / ImmixBlockGeometry::LineBytes;
+    if (minimumLines > 1 && minimumLines > m_manager->m_minimum_reuse_lines)
+    {
+        size_t skipped = 0;
+        SideMetadataResult result = m_manager->TryFindFittingHole(
+            block,
+            searchLine,
+            minimumLines,
+            hole,
+            &m_next_search_line,
+            status,
+            &skipped);
+        if (skipped != 0)
+        {
+            m_manager->m_holes_skipped.fetch_add(skipped, std::memory_order_relaxed);
+        }
+        return result;
+    }
+
     for (;;)
     {
         SideMetadataResult result = m_manager->TryFindNextHole(
