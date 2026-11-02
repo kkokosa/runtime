@@ -1440,6 +1440,296 @@ namespace
         third.Reset(&status);
     }
 
+    // The search for a hole of a given length (the search of a medium request) lists the holes of the lazy search, in the same
+    // order, and returns the first of at least that length: for counts of 2, 4 and 8 bits, every minimum run length, many
+    // required lengths and start lines, and random line patterns. The sum of the lines of all holes (the free lines of a
+    // block that a sweep counts) is the same as the sum over the lazy search.
+    void TestFittingHoleSearch()
+    {
+        constexpr double Densities[] = {0.0, 0.05, 0.3, 0.6, 0.9, 1.0};
+        constexpr size_t Lengths[] = {0, 1, 2, 3, 5, 16, 63, 64, 65, 100, 127, 128, 129};
+        constexpr size_t Starts[] = {0, 1, 2, 7, 62, 63, 64, 65, 100, 126, 127, 128};
+        uint64_t state = 91;
+        size_t mismatches = 0;
+        size_t compared = 0;
+        size_t fits = 0;
+        size_t sumMismatches = 0;
+        for (uint8_t logBits = 1; logBits <= 3; logBits++)
+        {
+            for (size_t minimumReuse : {1, 2, 3})
+            {
+                Fixture fixture(logBits, 4, minimumReuse);
+                Expect("fitting fixture initialized", fixture.initialized);
+                if (!fixture.initialized)
+                {
+                    return;
+                }
+                for (size_t round = 0; round < 24; round++)
+                {
+                    for (size_t index = 0; index < 4; index++)
+                    {
+                        uintptr_t block = fixture.data_start + (index * ImmixBlockGeometry::BlockBytes);
+                        double density = Densities[(round + index) % 6];
+                        SeedAllLines(fixture, block, 0);
+                        for (size_t line = 0; line < ImmixBlockGeometry::LinesPerBlock; line++)
+                        {
+                            if ((F9Next(&state) % 1000) < static_cast<uint32_t>(density * 1000))
+                            {
+                                F9SeedLiveLine(fixture, block, line, logBits, &state);
+                            }
+                        }
+
+                        size_t lazyTotal = 0;
+                        for (size_t search = 0; search < ImmixBlockGeometry::LinesPerBlock;)
+                        {
+                            ImmixHole hole = {};
+                            size_t next = 0;
+                            ImmixAllocationStatus status = ImmixAllocationStatus::InvalidRequest;
+                            fixture.allocation.TryFindNextHole(block, search, &hole, &next, &status);
+                            if (status != ImmixAllocationStatus::Ready)
+                            {
+                                break;
+                            }
+                            lazyTotal += hole.line_count;
+                            search = next;
+                        }
+                        size_t counted = SIZE_MAX;
+                        SideMetadataResult countResult = fixture.allocation.CountHoleLines(block, &counted);
+                        sumMismatches += (countResult != SideMetadataResult::Success || counted != lazyTotal) ? 1 : 0;
+
+                        for (size_t length : Lengths)
+                        {
+                            for (size_t start : Starts)
+                            {
+                                size_t expectedSkipped = 0;
+                                size_t expectedNext = start;
+                                ImmixHole expectedHole = {};
+                                ImmixAllocationStatus expectedStatus = ImmixAllocationStatus::Exhausted;
+                                size_t search = start;
+                                for (;;)
+                                {
+                                    ImmixHole hole = {};
+                                    size_t next = 0;
+                                    ImmixAllocationStatus status = ImmixAllocationStatus::InvalidRequest;
+                                    fixture.allocation.TryFindNextHole(block, search, &hole, &next, &status);
+                                    if (status != ImmixAllocationStatus::Ready)
+                                    {
+                                        expectedNext = next;
+                                        break;
+                                    }
+                                    if (hole.line_count >= length)
+                                    {
+                                        expectedHole = hole;
+                                        expectedNext = next;
+                                        expectedStatus = ImmixAllocationStatus::Ready;
+                                        break;
+                                    }
+                                    expectedSkipped++;
+                                    search = next;
+                                }
+
+                                ImmixHole actualHole = {};
+                                size_t actualNext = SIZE_MAX;
+                                ImmixAllocationStatus actualStatus = ImmixAllocationStatus::InvalidRequest;
+                                size_t actualSkipped = SIZE_MAX;
+                                SideMetadataResult result = fixture.allocation.TryFindFittingHole(
+                                    block, start, length, &actualHole, &actualNext, &actualStatus, &actualSkipped);
+                                compared++;
+                                fits += actualStatus == ImmixAllocationStatus::Ready ? 1 : 0;
+                                bool same = result == SideMetadataResult::Success && actualStatus == expectedStatus &&
+                                    actualNext == expectedNext && actualSkipped == expectedSkipped;
+                                if (same && expectedStatus == ImmixAllocationStatus::Ready)
+                                {
+                                    same = actualHole.start == expectedHole.start && actualHole.end == expectedHole.end &&
+                                        actualHole.line_count == expectedHole.line_count;
+                                }
+                                if (same && expectedStatus != ImmixAllocationStatus::Ready)
+                                {
+                                    same = actualHole.start == block && actualHole.end == block && actualHole.line_count == 0;
+                                }
+                                mismatches += same ? 0 : 1;
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        Expect("fitting the search for a hole of a given length lists the holes of the lazy search",
+            mismatches == 0 && compared > 100000 && fits > 1000);
+        Expect("fitting the count of the lines of the holes is the sum over the lazy search", sumMismatches == 0);
+
+        // Arguments and blocks that are not valid.
+        Fixture fixture(1, 2, 1);
+        Expect("fitting error fixture initialized", fixture.initialized);
+        if (!fixture.initialized)
+        {
+            return;
+        }
+        ImmixHole hole = {};
+        size_t next = 5;
+        size_t skipped = 5;
+        ImmixAllocationStatus status = ImmixAllocationStatus::Ready;
+        ExpectMetadata("fitting a block that is not aligned",
+            fixture.allocation.TryFindFittingHole(
+                fixture.data_start + ImmixBlockGeometry::LineBytes, 3, 2, &hole, &next, &status, &skipped),
+            SideMetadataResult::AddressNotOwned);
+        Expect("fitting a block that is not aligned leaves the search line and no hole",
+            next == 3 && skipped == 0 && status == ImmixAllocationStatus::Exhausted && hole.line_count == 0);
+        ExpectMetadata("fitting a block outside of the arena",
+            fixture.allocation.TryFindFittingHole(
+                fixture.data_start + (2 * ImmixBlockGeometry::BlockBytes), 0, 2, &hole, &next, &status, &skipped),
+            SideMetadataResult::AddressNotOwned);
+        ExpectMetadata("fitting a search line after the end of the block",
+            fixture.allocation.TryFindFittingHole(
+                fixture.data_start, ImmixBlockGeometry::LinesPerBlock + 1, 2, &hole, &next, &status, &skipped),
+            SideMetadataResult::InvalidArgument);
+        ExpectMetadata("fitting without a hole",
+            fixture.allocation.TryFindFittingHole(fixture.data_start, 0, 2, nullptr, &next, &status, &skipped),
+            SideMetadataResult::InvalidArgument);
+        ExpectMetadata("fitting without a skip count",
+            fixture.allocation.TryFindFittingHole(fixture.data_start, 0, 2, &hole, &next, &status, nullptr),
+            SideMetadataResult::InvalidArgument);
+        size_t lines = 5;
+        ExpectMetadata("counting the lines of a block that is not aligned",
+            fixture.allocation.CountHoleLines(fixture.data_start + ImmixBlockGeometry::LineBytes, &lines),
+            SideMetadataResult::AddressNotOwned);
+        Expect("counting the lines of a block that is not aligned gives zero", lines == 0);
+        ExpectMetadata("counting without a result",
+            fixture.allocation.CountHoleLines(fixture.data_start, nullptr), SideMetadataResult::InvalidArgument);
+    }
+
+    // The search for a hole of a given length reads the count words in halves of 64 lines, and each half at most once.
+    void TestFittingHoleReadsHalves()
+    {
+        Fixture fixture(1, 2, 1);
+        Expect("halves fixture initialized", fixture.initialized);
+        if (!fixture.initialized)
+        {
+            return;
+        }
+        uintptr_t block = fixture.data_start;
+        SeedAllLines(fixture, block, 1);
+        // Holes of 3 lines at [4,7), 2 lines at [10,12) and 5 lines at [70,75).
+        for (size_t line : {3, 4, 5, 6, 9, 10, 11, 69, 70, 71, 72, 73, 74})
+        {
+            SeedLine(fixture, block, line, 0);
+        }
+        ImmixHole hole = {};
+        size_t next = 0;
+        size_t skipped = 0;
+        ImmixAllocationStatus status = ImmixAllocationStatus::InvalidRequest;
+        uint64_t before = fixture.allocation.GetLineProbesForTest();
+        fixture.allocation.TryFindFittingHole(block, 0, 2, &hole, &next, &status, &skipped);
+        Expect("halves a hole in the first half reads 64 lines",
+            fixture.allocation.GetLineProbesForTest() - before == 64 && status == ImmixAllocationStatus::Ready &&
+            hole.start == LineAddress(block, 4) && hole.end == LineAddress(block, 7) && skipped == 0);
+        before = fixture.allocation.GetLineProbesForTest();
+        fixture.allocation.TryFindFittingHole(block, 0, 4, &hole, &next, &status, &skipped);
+        Expect("halves a hole in the second half reads both halves once",
+            fixture.allocation.GetLineProbesForTest() - before == 128 && status == ImmixAllocationStatus::Ready &&
+            hole.start == LineAddress(block, 70) && hole.end == LineAddress(block, 75) && next == 75 && skipped == 2);
+        before = fixture.allocation.GetLineProbesForTest();
+        fixture.allocation.TryFindFittingHole(block, 0, 6, &hole, &next, &status, &skipped);
+        Expect("halves a search with no hole reads both halves once",
+            fixture.allocation.GetLineProbesForTest() - before == 128 && status == ImmixAllocationStatus::Exhausted &&
+            next == ImmixBlockGeometry::LinesPerBlock && skipped == 3);
+        before = fixture.allocation.GetLineProbesForTest();
+        fixture.allocation.TryFindFittingHole(block, 64, 4, &hole, &next, &status, &skipped);
+        Expect("halves a search from the second half reads only that half",
+            fixture.allocation.GetLineProbesForTest() - before == 64 && status == ImmixAllocationStatus::Ready &&
+            hole.start == LineAddress(block, 70));
+    }
+
+    // A refill for a request of more than one line passes over a Reusable block that has fewer free lines than the request
+    // needs, without taking the block, and passes over a block whose counts show no hole of that length (the holes that it
+    // has are counted as skipped). A block that is not Reusable has no known count of free lines, and is searched.
+    void TestFreeLineFilter()
+    {
+        Fixture fixture(1, 6, 1);
+        Expect("filter fixture initialized", fixture.initialized);
+        if (!fixture.initialized)
+        {
+            return;
+        }
+        // The state says 127 free lines, and the counts show holes of 2 and 3 lines only.
+        uintptr_t fragmented = fixture.data_start + (4 * ImmixBlockGeometry::BlockBytes);
+        SeedReusableBlock(fixture, fragmented, 1);
+        SeedAllLines(fixture, fragmented, 1);
+        for (size_t line : {3, 4, 5, 20, 21, 22, 23})
+        {
+            SeedLine(fixture, fragmented, line, 0);
+        }
+        ImmixBumpAllocator probe;
+        ImmixAllocationStatus probeStatus = ImmixAllocationStatus::InvalidRequest;
+        ExpectMetadata("filter probe allocator", probe.Initialize(&fixture.allocation, OwnerTwo), SideMetadataResult::Success);
+        ExpectMetadata("filter request of 4 lines for a fragmented block",
+            probe.TryRefill(ImmixAllocationSource::MutatorRecycled, ImmixMarkingContext::Inactive, &probeStatus,
+                4 * ImmixBlockGeometry::LineBytes),
+            SideMetadataResult::Success);
+        Expect("filter a block with no hole of 4 lines is not taken",
+            probeStatus == ImmixAllocationStatus::Exhausted && probe.GetBlock() == 0 &&
+            fixture.allocation.GetRecycledBlocksAcquired() == 0);
+        Expect("filter the holes of the block that was not taken are counted as skipped",
+            fixture.allocation.GetHolesSkipped() == 2);
+        fixture.allocation.ResetCursors();
+        ExpectMetadata("filter request of 3 lines for a fragmented block",
+            probe.TryRefill(ImmixAllocationSource::MutatorRecycled, ImmixMarkingContext::Inactive, &probeStatus,
+                3 * ImmixBlockGeometry::LineBytes),
+            SideMetadataResult::Success);
+        Expect("filter a block with a hole of 3 lines is taken for a request of 3 lines",
+            probeStatus == ImmixAllocationStatus::Ready && probe.GetBlock() == fragmented &&
+            probe.GetCursor() == LineAddress(fragmented, 21) && probe.GetLimit() == LineAddress(fragmented, 24));
+        probe.Reset(&probeStatus);
+        SeedReusableBlock(fixture, fragmented, 0);
+        fixture.allocation.ResetCursors();
+        const size_t acquiredBefore = fixture.allocation.GetRecycledBlocksAcquired();
+        uintptr_t reusable = fixture.data_start;
+        uintptr_t marked = fixture.data_start + (2 * ImmixBlockGeometry::BlockBytes);
+        // The state says 8 free lines. The counts show that every line is free: lines only become free after the count.
+        SeedReusableBlock(fixture, reusable, ImmixBlockGeometry::LinesPerBlock - 8);
+        SeedAllLines(fixture, reusable, 0);
+        ImmixBumpAllocator allocator;
+        ImmixAllocationStatus status = ImmixAllocationStatus::InvalidRequest;
+        ExpectMetadata("filter allocator", allocator.Initialize(&fixture.allocation, OwnerOne), SideMetadataResult::Success);
+        ExpectMetadata("filter request of 9 lines",
+            allocator.TryRefill(ImmixAllocationSource::MutatorRecycled, ImmixMarkingContext::Inactive, &status,
+                9 * ImmixBlockGeometry::LineBytes),
+            SideMetadataResult::Success);
+        Expect("filter a block with 8 free lines is not taken for a request of 9 lines",
+            status == ImmixAllocationStatus::Exhausted && allocator.GetBlock() == 0 &&
+            fixture.allocation.GetRecycledBlocksAcquired() == acquiredBefore);
+
+        fixture.allocation.ResetCursors();
+        ExpectMetadata("filter request of 8 lines",
+            allocator.TryRefill(ImmixAllocationSource::MutatorRecycled, ImmixMarkingContext::Inactive, &status,
+                8 * ImmixBlockGeometry::LineBytes),
+            SideMetadataResult::Success);
+        Expect("filter a block with 8 free lines is taken for a request of 8 lines",
+            status == ImmixAllocationStatus::Ready && allocator.GetBlock() == reusable &&
+            fixture.allocation.GetRecycledBlocksAcquired() == acquiredBefore + 1);
+        allocator.Reset(&status);
+
+        // Marked and Unmarked blocks have no count of free lines.
+        for (uint8_t raw : {static_cast<uint8_t>(UINT8_MAX - 1), static_cast<uint8_t>(UINT8_MAX)})
+        {
+            SeedReusableBlock(fixture, marked, raw);
+            SeedAllLines(fixture, marked, 0);
+            SeedReusableBlock(fixture, reusable, 0);
+            fixture.allocation.ResetCursors();
+            ExpectMetadata("filter request of 100 lines for a block that is not Reusable",
+                allocator.TryRefill(ImmixAllocationSource::MutatorRecycled, ImmixMarkingContext::Inactive, &status,
+                    100 * ImmixBlockGeometry::LineBytes),
+                SideMetadataResult::Success);
+            Expect("filter a block that is not Reusable is taken",
+                status == ImmixAllocationStatus::Ready && allocator.GetBlock() == marked &&
+                allocator.GetLimit() - allocator.GetCursor() == ImmixBlockGeometry::BlockBytes);
+            allocator.Reset(&status);
+            ExpectMetadata("filter put back the state",
+                fixture.metadata.Store(LxrSideMetadataKind::BlockMark, marked, 0, SideMetadataMemoryOrder::SequentiallyConsistent),
+                SideMetadataResult::Success);
+        }
+    }
+
     // P28 (F10). The metadata loads are plain acquire loads. Sequential consistency between a store and a later load of
     // another location comes from the store (a compare-exchange loop, a full barrier). This is the store-buffer test: two
     // threads each store to their own location and then load the location of the other. Both loads returning zero would be
@@ -2181,6 +2471,9 @@ int main()
     TestF9Cursors();
     TestMinimumHoleBytes();
     TestMinimumHoleBytesUnsized();
+    TestFittingHoleSearch();
+    TestFittingHoleReadsHalves();
+    TestFreeLineFilter();
     TestF10LoadOrder();
     TestF10Prefetch();
     TestF10ByteCompareExchange(1);

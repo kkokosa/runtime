@@ -800,7 +800,31 @@ SideMetadataResult ImmixAllocationManager::AcquireBlock(
         }
 #endif // !LXR_SIDE_METADATA_TEST_PLATFORM || !LXR_S7_POH_RECYCLE_CONTROL
         // A block that an allocator took in this epoch has young objects without counts.
-        return !m_blocks->IsReusingFast(address);
+        if (m_blocks->IsReusingFast(address))
+        {
+            return false;
+        }
+        if (minimumFreeLines > 1 && minimumFreeLines > m_minimum_reuse_lines)
+        {
+            // A request of more than one line needs a hole of that length. Taking a block, searching it and giving it back
+            // changes the metadata of the block and costs more than the search, and most blocks have no such hole, so the
+            // block is looked at first. The search that follows the acquire reads the same lines again.
+            const volatile uintptr_t* blockWords = m_reference_count.Locate(address).word;
+            DeadLineCache cache = {};
+            ImmixHole fit = {};
+            size_t fitNext = 0;
+            size_t fitSkipped = 0;
+            ImmixAllocationStatus fitStatus = ImmixAllocationStatus::Exhausted;
+            FindHoleByMask(address, blockWords, &cache, 0, minimumFreeLines, &fit, &fitNext, &fitStatus, &fitSkipped);
+            if (fitStatus != ImmixAllocationStatus::Ready)
+            {
+                // The holes that were passed over are counted as a refill that searched the block would count them.
+                m_holes_skipped.fetch_add(fitSkipped, std::memory_order_relaxed);
+                return false;
+            }
+            return true;
+        }
+        return true;
     };
 
     while (true)
