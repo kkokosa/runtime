@@ -383,7 +383,7 @@ namespace
         live.push_back(first);
 
         LxrLargeObjectAllocation second;
-#ifndef HOST_UNIX
+#if !defined(HOST_UNIX) || defined(LXR_LOS_PORTABLE_COMMIT)
         // The Unix space commits the admitted range once, and the other platforms commit the pages of each allocation.
         LxrTestFailCommitAfter(0);
         LxrLargeObjectAllocation failed;
@@ -434,7 +434,7 @@ namespace
             metadata.CommitDataRange(start + Mebibyte, 3 * Mebibyte) == SideMetadataResult::Success,
             "growth commit of metadata");
         Check(space.GrowQuiescent(Mebibyte) == LxrLargeObjectResult::InvalidArgument, "growth does not shrink");
-#ifdef HOST_UNIX
+#if defined(HOST_UNIX) && !defined(LXR_LOS_PORTABLE_COMMIT)
         // A commit failure leaves the space as it was, and the growth works when it is repeated.
         LxrTestFailCommitAfter(0);
         Check(space.GrowQuiescent(4 * Mebibyte) == LxrLargeObjectResult::CommitFailed, "growth commit failure");

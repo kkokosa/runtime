@@ -12,29 +12,30 @@
 #ifndef LXR_SIDE_METADATA_TEST_PLATFORM
 #include <minipal/ospagesize.h>
 #endif
-#ifdef HOST_UNIX
+#ifdef LXR_SIDE_METADATA_TEST_PLATFORM
+bool LxrTestDecommitShouldFail();
+#endif
+#if defined(HOST_UNIX) && !defined(LXR_LOS_PORTABLE_COMMIT)
 #include <sys/mman.h>
 // The admitted range stays committed (read and write) while the space lives. A free page gives its memory back to the
 // system with madvise(MADV_DONTNEED), and the next use of the page reads zeros. This takes the address-space lock only for
 // reading, and it does not change the mappings. A commit and a decommit of every allocation take it for writing, and with
-// many threads that serializes the threads in the kernel.
+// many threads that serializes the threads in the kernel. LXR_LOS_PORTABLE_COMMIT selects the portable code, which commits
+// the pages of each allocation and decommits the pages of each release, on Unix too.
 #define LXR_LOS_PERSISTENT_COMMIT
-#ifdef LXR_SIDE_METADATA_TEST_PLATFORM
-bool LxrTestDecommitShouldFail();
-#endif
 #endif
 
 namespace
 {
     bool ReleasePhysicalPages(uintptr_t pageStart, size_t pageBytes)
     {
-#ifdef LXR_LOS_PERSISTENT_COMMIT
 #ifdef LXR_SIDE_METADATA_TEST_PLATFORM
         if (LxrTestDecommitShouldFail())
         {
             return false;
         }
 #endif
+#ifdef LXR_LOS_PERSISTENT_COMMIT
         return madvise(reinterpret_cast<void*>(pageStart), pageBytes, MADV_DONTNEED) == 0;
 #else
         return GCToOSInterface::VirtualDecommit(reinterpret_cast<void*>(pageStart), pageBytes);
