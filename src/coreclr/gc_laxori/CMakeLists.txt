@@ -48,6 +48,8 @@ set(LAXORI_SOURCES
   laxori_pin_list.h
   laxori_young_spans.h
   laxori_gc.cpp
+  laxori_private.cpp
+  laxori_private.h
   laxori_gc.h
   laxori_gcload.cpp
   laxori_write_barrier.cpp

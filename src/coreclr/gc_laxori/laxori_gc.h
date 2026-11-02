@@ -127,16 +127,13 @@ public:
     // Called by the assembly write barrier (through LaxoriBarrierSlowPath) when the unlog bit of a field is set.
     static void BarrierSlowPath(Object** slot);
 
-    // Laxori: request-private regions (docs/design/laxori-port/DESIGN.md).
-    // Called by the assembly write barrier when a reference to an object of a private region is stored into a field that is
-    // not in a private region.
+    // Laxori: the private tier (docs/design/laxori-port/DESIGN-v2.md).
+    // Called by the assembly write barrier when a reference to an object of a private region of the current thread is stored
+    // into a place that is not private (or into an exposed slot of the region).
     static void EscapeSlowPath(Object** slot, Object* reference);
-    // Publishes the private region of the calling thread when the object lies in a private region.
+    // Escapes the object (and what it reaches in the region) when it is in the private region of the current thread.
     static void EscapeObject(Object* object);
-    // The exported hooks. The thread must be in cooperative mode (they are called without a GC transition).
-    void BeginRequest();
-    void EndRequest(Object* result);
-    bool RequestsEnabled() const { return m_requests_enabled; }
+    bool PrivateEnabled() const { return m_private_enabled; }
 
     ObjectReferenceEnumerationParameters* GetObjectReferenceEnumerationParameters() override;
     ObjectHeaderBitsParameters* GetObjectHeaderBitsParameters() override;
@@ -158,8 +155,6 @@ public:
 
 private:
     static constexpr size_t ImmixBytes = 8 * 1024 * 1024;
-    // Laxori: the largest object that is allocated in a request region (a quarter of the block).
-    static constexpr size_t MaximumPrivateObjectBytes = 8 * 1024;
     static constexpr size_t LargeBytes = 16 * 1024 * 1024;
     static constexpr size_t MaximumMutators = 1024;
     static constexpr size_t MaximumRoots = 131072;
@@ -215,16 +210,50 @@ private:
 
     void Fatal(const char* message) const;
     void Unsupported(const char* operation) const;
-    // Laxori helpers. All of them run in cooperative mode (see EnterCooperative).
-    bool IsPrivateObject(const void* address) const { return m_engine.IsPrivateAddress(reinterpret_cast<uintptr_t>(address)); }
-    void PublishRegionOfCurrentThread(bool atEscape);
-    void PublishWordsOfSource(const void* source, size_t length);
-    bool AllocatePrivate(gc_alloc_context* context, LaxoriRcMutator* mutator, size_t size, Object** object);
-    void InstallPrivateBuffer(gc_alloc_context* context, LaxoriRcMutator* mutator);
-    bool m_requests_enabled = false;
-    // The number of threads that are in a request. Zero lets the bulk and runtime store callbacks skip all request work.
-    std::atomic<uint32_t> m_requests_active{0};
-    uint8_t* m_block_table = nullptr;
+    // ---- Laxori: private tier (laxori_private.cpp) ----
+    struct LocalGcContext;
+    bool InitializePrivateTier(size_t regionKB, bool enabled, bool collectEscaped);
+    Object* AllocPrivateSlow(gc_alloc_context* context, LaxoriRcMutator* mutator, size_t size);
+    Object* AllocShared(gc_alloc_context* context, size_t size, uint32_t flags);
+    void OpenGap(gc_alloc_context* context, LaxoriRcMutator* mutator, uint32_t gapIndex);
+    void SetBufferLimits(gc_alloc_context* context, uintptr_t cursor, uintptr_t limit);
+    void DissolveCurrentRegion(gc_alloc_context* context, LaxoriRcMutator* mutator, size_t reason);
+    bool BitTest(uintptr_t address) const;
+    void BitSet(uintptr_t address);
+    void BitClear(uintptr_t address);
+    bool AnyExposed(uintptr_t first, size_t length) const;
+    Object* NextMarked(uintptr_t from, uintptr_t limit) const;
+    bool InRegion(const LaxoriPrivateRegion& region, uintptr_t pointer) const;
+    bool InRegionInterior(const LaxoriPrivateRegion& region, uintptr_t pointer) const;
+    Object* FindObject(const LaxoriPrivateRegion& region, uintptr_t location, uintptr_t liveCursor);
+    void PushMarkStack(LaxoriPrivateRegion& region, Object* object);
+    Object* PopMarkStack(LaxoriPrivateRegion& region);
+    void EscapeRecursively(LaxoriPrivateRegion& region, Object* object);
+    void EscapeInCurrentRegion(Object** destination, Object* reference);
+    void EscapeCheck(Object** destination, Object* reference);
+    void EscapeBulk(void* destination, const void* source, size_t length);
+    bool LocalCollect(LaxoriRcMutator* mutator);
+    void VerifyRegion(LaxoriPrivateRegion& region, const char* where);
+    bool m_verify_private = false;
+    bool LocalMark(LaxoriPrivateRegion& region);
+    bool LocalPlan(LaxoriPrivateRegion& region, size_t* freeBytes);
+    void LocalUpdate(LaxoriPrivateRegion& region);
+    void LocalCompact(LaxoriPrivateRegion& region);
+    void ClearPads(LaxoriPrivateRegion& region);
+    static void MarkFn(Object** slot, ScanContext* scan, uint32_t flags);
+    static void UpdateFn(Object** slot, ScanContext* scan, uint32_t flags);
+    bool m_private_enabled = false;
+    bool m_collect_escaped = false;
+    uintptr_t m_arena = 0;
+    size_t m_arena_bytes = 0;
+    size_t m_region_bytes = 0;
+    size_t m_region_blocks = 0;
+    size_t m_region_shift = 0;
+    size_t m_max_private_object = 0;
+    uint64_t* m_region_owner = nullptr;
+    uint64_t* m_private_bits = nullptr;
+    uintptr_t m_private_bits_base = 0;
+    uint32_t* m_private_index = nullptr;
     LaxoriRcMutator* FindOrAttach(gc_alloc_context* context, bool barrier);
     LaxoriRcResult RunScan(uint8_t kind);
     bool WaitForScanComplete();
@@ -358,5 +387,13 @@ private:
     BOOLEAN (WINAPI *m_process_exiting)();
 #endif // TARGET_WINDOWS
 };
+
+// The inline allocation helpers of the runtime test the limit that the runtime keeps in ee_alloc_context::m_CombinedLimit,
+// the pointer-sized field just before the gc_alloc_context (vm/gcheaputilities.h). The runtime refreshes it after every call of
+// Alloc. The private tier changes the buffer outside Alloc (opening a gap, retiring), so it writes the field too.
+inline void SetCombinedLimit(gc_alloc_context* context, uint8_t* limit)
+{
+    reinterpret_cast<uint8_t**>(context)[-1] = limit;
+}
 
 #endif // LAXORI_GC_H

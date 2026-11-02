@@ -139,14 +139,6 @@ namespace
         *value = parsed != 0;
         return true;
     }
-
-    // The inline allocation helpers of the runtime test the limit that the runtime keeps in ee_alloc_context::m_CombinedLimit,
-    // the pointer-sized field just before the gc_alloc_context (vm/gcheaputilities.h). The runtime refreshes it after every
-    // call of Alloc. The request hooks and the barrier slow path change the buffer outside Alloc, so they write it too.
-    inline void SetCombinedLimit(gc_alloc_context* context, uint8_t* limit)
-    {
-        reinterpret_cast<uint8_t**>(context)[-1] = limit;
-    }
 }
 
 LaxoriGcHeap* LaxoriGcHeap::s_heap = nullptr;
@@ -349,6 +341,9 @@ HRESULT LaxoriGcHeap::Initialize()
     // CPU time rises.
     configuration.prezero = true;
     configuration.prezeroThread = false;
+    bool privateEnabled = true;
+    size_t regionKB = 256;
+    bool escapedInPlace = false;
     if (!ReadBooleanSetting("LAXORILegacyCapacity", &legacy) ||
         !ReadSetting("LAXORIImmixInitialMB", &immixInitial, 10, LaxoriSideMetadataLayout::AddressLimit >> 20) ||
         !ReadSetting("LAXORILOSInitialMB", &largeInitial, 10, LaxoriSideMetadataLayout::AddressLimit >> 20) ||
@@ -395,7 +390,9 @@ HRESULT LaxoriGcHeap::Initialize()
         !ReadBooleanSetting("LAXORIPrezeroThread", &configuration.prezeroThread) ||
         !ReadSetting("LAXORIPrezeroMarginBlocks", &configuration.prezeroMarginBlocks, 10, 4096) ||
         !ReadSetting("LAXORIPrezeroWindowBlocks", &configuration.prezeroWindowBlocks, 10, 65536) ||
-        !ReadBooleanSetting("LAXORIRequests", &m_requests_enabled))
+        !ReadBooleanSetting("LAXORIPrivate", &privateEnabled) ||
+        !ReadSetting("LAXORIRegionKB", &regionKB, 10, 4096) ||
+        !ReadBooleanSetting("LAXORIEscapedInPlace", &escapedInPlace))
     {
         return E_FAIL;
     }
@@ -510,13 +507,17 @@ HRESULT LaxoriGcHeap::Initialize()
     }
     m_cards = new (std::nothrow) uint8_t[m_engine.GetReservationBytes() / 2048 + 1]{};
     m_bundles = new (std::nothrow) uint8_t[m_engine.GetReservationBytes() / (2 * 1024 * 1024) + 1]{};
-    m_block_table = new (std::nothrow) uint8_t[(m_engine.GetReservationBytes() >> ImmixBlockGeometry::BlockLogBytes) + 1]{};
-    if (m_cards == nullptr || m_bundles == nullptr || m_block_table == nullptr)
+    if (m_cards == nullptr || m_bundles == nullptr)
     {
         m_engine.Shutdown();
         return E_OUTOFMEMORY;
     }
-    m_engine.SetBlockTable(m_block_table);
+    if (!InitializePrivateTier(regionKB, privateEnabled, escapedInPlace))
+    {
+        m_engine.Shutdown();
+        Unsupported("Laxori could not create its private tier (LAXORIRegionKB must be a power of two from 32 to 4096).");
+        return E_OUTOFMEMORY;
+    }
     g_gc_lowest_address = reinterpret_cast<uint8_t*>(m_engine.GetReservationStart());
     g_gc_highest_address = g_gc_lowest_address + m_engine.GetReservationBytes();
     g_gc_card_table = reinterpret_cast<uint32_t*>(
@@ -546,7 +547,9 @@ HRESULT LaxoriGcHeap::Initialize()
         m_engine.GetReservationBytes(),
         reinterpret_cast<void*>(&LaxoriBarrierSlowPath),
         LaxoriWriteBarrierComputeXsaveMask(),
-        m_block_table,
+        m_region_owner,
+        m_private_bits_base,
+        m_region_shift,
         reinterpret_cast<void*>(&LaxoriEscapeSlowPath));
     GCToEEInterface::StompWriteBarrier(&parameters);
     gc_alloc_context* context = GCToEEInterface::GetAllocContext();
@@ -609,36 +612,70 @@ LaxoriRcMutator* LaxoriGcHeap::FindOrAttach(gc_alloc_context* context, bool barr
             m_barrier_bootstraps.fetch_add(1, std::memory_order_relaxed);
         }
     }
+    if (mutator->Tag() == 0)
+    {
+        uintptr_t tag;
+        __asm__ volatile("mov %%fs:0, %0" : "=r"(tag));
+        mutator->SetTag(tag);
+    }
     context->gc_reserved_1 = mutator;
     return mutator;
 }
 
 Object* LaxoriGcHeap::Alloc(gc_alloc_context* context, size_t size, uint32_t flags)
 {
-    // The stock helpers bump alloc_ptr inside the buffer that this method gave to the thread, and call it only when the
-    // buffer cannot hold the object, or for an object that needs the slow path (a finalizable object, a sampled
-    // allocation, a large or pinned-object-heap object). A small object that fits is taken in place: the memory is
-    // zero already and the buffer is still prepared and counted.
-    if ((flags & GC_ALLOC_USER_OLD_HEAP) == 0 && context->alloc_ptr != nullptr &&
-        size >= MIN_OBJECT_SIZE && size < LaxoriLargeObjectSpace::MinimumObjectBytes)
-    {
-        size_t aligned = (size + sizeof(uintptr_t) - 1) & ~(sizeof(uintptr_t) - 1);
-        // A finalizable object does not go into a request region (the finalizer registry is a root).
-        if (static_cast<size_t>(context->alloc_limit - context->alloc_ptr) >= aligned &&
-            ((flags & GC_ALLOC_FINALIZE) == 0 || m_requests_active.load(std::memory_order_relaxed) == 0))
-        {
-            Object* inPlace = reinterpret_cast<Object*>(context->alloc_ptr);
-            context->alloc_ptr += aligned;
-            RegisterFinalizable(inPlace, flags);
-            return inPlace;
-        }
-    }
-    RetireAllocationSpan(context, true);
     if (size < MIN_OBJECT_SIZE || size > SIZE_MAX - (sizeof(uintptr_t) - 1))
     {
         return nullptr;
     }
     size = (size + sizeof(uintptr_t) - 1) & ~(sizeof(uintptr_t) - 1);
+    if (m_private_enabled)
+    {
+        // The buffer of the thread is its private region (or a gap of it). An ordinary small object goes there. Everything
+        // else (finalizable, pinned-object-heap, user-old-heap, and larger objects) is allocated by the shared engine and
+        // does not touch the buffer.
+        if ((flags & (GC_ALLOC_FINALIZE | GC_ALLOC_USER_OLD_HEAP | GC_ALLOC_PINNED_OBJECT_HEAP)) == 0 &&
+            size <= m_max_private_object)
+        {
+            if (context->alloc_ptr != nullptr && static_cast<size_t>(context->alloc_limit - context->alloc_ptr) >= size)
+            {
+                Object* inPlace = reinterpret_cast<Object*>(context->alloc_ptr);
+                context->alloc_ptr += size;
+                return inPlace;
+            }
+            LaxoriRcMutator* mutator = m_shutdown.load(std::memory_order_acquire) ? nullptr : FindOrAttach(context, false);
+            if (mutator != nullptr)
+            {
+                Object* object = AllocPrivateSlow(context, mutator, size);
+                if (object != nullptr)
+                {
+                    return object;
+                }
+            }
+        }
+        return AllocShared(context, size, flags);
+    }
+    // The private tier is off: the allocation of the LXR engine. The stock helpers bump alloc_ptr inside the buffer that this
+    // method gave to the thread, and call it only when the buffer cannot hold the object, or for an object that needs the
+    // slow path. A small object that fits is taken in place.
+    if ((flags & GC_ALLOC_USER_OLD_HEAP) == 0 && context->alloc_ptr != nullptr && size < LaxoriLargeObjectSpace::MinimumObjectBytes &&
+        static_cast<size_t>(context->alloc_limit - context->alloc_ptr) >= size)
+    {
+        Object* inPlace = reinterpret_cast<Object*>(context->alloc_ptr);
+        context->alloc_ptr += size;
+        RegisterFinalizable(inPlace, flags);
+        return inPlace;
+    }
+    return AllocShared(context, size, flags);
+}
+
+// The allocation of the shared heap (the LXR engine).
+Object* LaxoriGcHeap::AllocShared(gc_alloc_context* context, size_t size, uint32_t flags)
+{
+    if (!m_private_enabled)
+    {
+        RetireAllocationSpan(context, true);
+    }
     if (!m_shutdown.load(std::memory_order_acquire))
     {
         if (GetCollectionCause(false) != LaxoriCollectionCause::None)
@@ -661,19 +698,6 @@ Object* LaxoriGcHeap::Alloc(gc_alloc_context* context, size_t size, uint32_t fla
     if (mutator == nullptr)
     {
         return nullptr;
-    }
-    // Laxori. A thread in a request allocates its small ordinary objects in its private region.
-    if (m_engine.IsInRequest(mutator))
-    {
-        if ((flags & (GC_ALLOC_FINALIZE | GC_ALLOC_USER_OLD_HEAP | GC_ALLOC_PINNED_OBJECT_HEAP)) == 0 &&
-            size <= MaximumPrivateObjectBytes)
-        {
-            Object* privateObject = nullptr;
-            if (AllocatePrivate(context, mutator, size, &privateObject))
-            {
-                return privateObject;
-            }
-        }
     }
     Object* object = nullptr;
     // A pinned-object-heap object of a small size goes into a pinned block. The engine keeps those blocks apart, so
@@ -740,7 +764,7 @@ Object* LaxoriGcHeap::Alloc(gc_alloc_context* context, size_t size, uint32_t fla
     }
     m_context_allocated_bytes.fetch_add(size, std::memory_order_relaxed);
     if (m_fast_enabled && size < LaxoriLargeObjectSpace::MinimumObjectBytes &&
-        (flags & GC_ALLOC_USER_OLD_HEAP) == 0 && !m_engine.IsInRequest(mutator))
+        (flags & GC_ALLOC_USER_OLD_HEAP) == 0 && !m_private_enabled)
     {
         uintptr_t cursor;
         uintptr_t limit;
@@ -758,220 +782,7 @@ Object* LaxoriGcHeap::Alloc(gc_alloc_context* context, size_t size, uint32_t fla
         }
     }
     RegisterFinalizable(object, flags);
-    if (m_engine.IsInRequest(mutator) && m_engine.HasPrivateRegion(mutator))
-    {
-        // The object is shared. The thread goes on in its private region.
-        InstallPrivateBuffer(context, mutator);
-    }
     return object;
-}
-
-// ---- Laxori: request-private regions ----
-
-bool LaxoriGcHeap::AllocatePrivate(gc_alloc_context* context, LaxoriRcMutator* mutator, size_t size, Object** object)
-{
-    size = (size + sizeof(uintptr_t) - 1) & ~(sizeof(uintptr_t) - 1);
-    bool taken = false;
-    if (m_engine.AcquirePrivateRegion(mutator, &taken) != LaxoriRcResult::Success || !taken)
-    {
-        return false;
-    }
-    bool fits = false;
-    if (m_engine.TryAllocatePrivate(mutator, size, object, &fits) != LaxoriRcResult::Success)
-    {
-        return false;
-    }
-    if (!fits)
-    {
-        // The region is full. It becomes shared, and the request goes on in a new region (invariant I2).
-        if (m_engine.PublishPrivateRegion(mutator) != LaxoriRcResult::Success)
-        {
-            Fatal("Laxori could not publish a full request region.");
-        }
-        m_engine.CountRequestMetric(LaxoriReferenceCounting::RegionsPublishedFull);
-        if (m_engine.AcquirePrivateRegion(mutator, &taken) != LaxoriRcResult::Success || !taken ||
-            m_engine.TryAllocatePrivate(mutator, size, object, &fits) != LaxoriRcResult::Success || !fits)
-        {
-            return false;
-        }
-    }
-    context->alloc_bytes += static_cast<int64_t>(size);
-    m_context_allocated_bytes.fetch_add(size, std::memory_order_relaxed);
-    InstallPrivateBuffer(context, mutator);
-    return true;
-}
-
-// Gives the rest of the private region to the runtime as the allocation buffer of the thread.
-void LaxoriGcHeap::InstallPrivateBuffer(gc_alloc_context* context, LaxoriRcMutator* mutator)
-{
-    uintptr_t cursor = 0;
-    uintptr_t limit = 0;
-    if (m_engine.GetPrivateAllocationSpan(mutator, &cursor, &limit) != LaxoriRcResult::Success)
-    {
-        Fatal("Laxori could not publish its private allocation span.");
-    }
-    if (cursor != 0)
-    {
-        context->alloc_ptr = reinterpret_cast<uint8_t*>(cursor + sizeof(ObjHeader));
-        context->alloc_limit = reinterpret_cast<uint8_t*>(limit + sizeof(ObjHeader));
-        SetCombinedLimit(context, context->alloc_limit);
-        context->alloc_bytes += static_cast<int64_t>(limit - cursor);
-        m_context_allocated_bytes.fetch_add(limit - cursor, std::memory_order_relaxed);
-    }
-}
-
-// Publishes the private region of the calling thread, when it has one. The caller is in cooperative mode.
-void LaxoriGcHeap::PublishRegionOfCurrentThread(bool atEscape)
-{
-    gc_alloc_context* context = GCToEEInterface::GetAllocContext();
-    if (context == nullptr)
-    {
-        return;
-    }
-    LaxoriRcMutator* mutator = m_engine.FindCachedMutator(context->gc_reserved_1, context);
-    if (mutator == nullptr || !m_engine.HasPrivateRegion(mutator))
-    {
-        return;
-    }
-    RetireAllocationSpan(context, true);
-    if (m_engine.PublishPrivateRegion(mutator) != LaxoriRcResult::Success)
-    {
-        Fatal("Laxori could not publish a request region.");
-    }
-    if (atEscape)
-    {
-        m_engine.CountRequestMetric(LaxoriReferenceCounting::RegionsPublishedEscape);
-    }
-}
-
-void LaxoriGcHeap::EscapeSlowPath(Object**, Object* reference)
-{
-    LaxoriGcHeap* heap = s_heap;
-    heap->m_engine.CountRequestMetric(LaxoriReferenceCounting::EscapeSlowCalls);
-    gc_alloc_context* context = GCToEEInterface::GetAllocContext();
-    LaxoriRcMutator* mutator =
-        context == nullptr ? nullptr : heap->m_engine.FindCachedMutator(context->gc_reserved_1, context);
-    if (mutator == nullptr || !heap->m_engine.IsInPrivateRegion(mutator, reinterpret_cast<uintptr_t>(reference)))
-    {
-        // The reference is private to another thread, or to no thread: the invariant of the design does not hold.
-        heap->m_engine.CountRequestMetric(LaxoriReferenceCounting::ForeignEscapes);
-        return;
-    }
-    heap->PublishRegionOfCurrentThread(true);
-}
-
-extern "C" void LaxoriEscapeSlowPath(Object** slot, Object* reference)
-{
-    LaxoriGcHeap::EscapeSlowPath(slot, reference);
-}
-
-void LaxoriGcHeap::EscapeObject(Object* object)
-{
-    LaxoriGcHeap* heap = s_heap;
-    if (heap == nullptr || object == nullptr || !heap->IsPrivateObject(object))
-    {
-        return;
-    }
-    // The caller can be in preemptive mode (a handle is created by a QCall). A pause must not run while the region
-    // changes, so the thread enters cooperative mode. The pause may have dissolved the region meanwhile: test again.
-    bool wasPreemptive = !GCToEEInterface::IsPreemptiveGCDisabled();
-    if (wasPreemptive)
-    {
-        GCToEEInterface::DisablePreemptiveGC();
-    }
-    if (heap->IsPrivateObject(object))
-    {
-        heap->PublishRegionOfCurrentThread(true);
-    }
-    if (wasPreemptive)
-    {
-        GCToEEInterface::EnablePreemptiveGC();
-    }
-}
-
-void LaxoriEscapeObject(Object* object)
-{
-    LaxoriGcHeap::EscapeObject(object);
-}
-
-// Publishes the region of the thread when a word of the copied memory looks like an address in a private block. The words
-// need not be references: a wrong hit publishes a region early, which is always safe.
-void LaxoriGcHeap::PublishWordsOfSource(const void* source, size_t length)
-{
-    uintptr_t start = (reinterpret_cast<uintptr_t>(source) + sizeof(uintptr_t) - 1) & ~(sizeof(uintptr_t) - 1);
-    uintptr_t end = (reinterpret_cast<uintptr_t>(source) + length) & ~(sizeof(uintptr_t) - 1);
-    for (uintptr_t cursor = start; cursor < end; cursor += sizeof(uintptr_t))
-    {
-        if (IsPrivateObject(reinterpret_cast<const void*>(*reinterpret_cast<const uintptr_t*>(cursor))))
-        {
-            PublishRegionOfCurrentThread(true);
-            return;
-        }
-    }
-}
-
-void LaxoriGcHeap::BeginRequest()
-{
-    if (!m_requests_enabled || m_shutdown.load(std::memory_order_relaxed))
-    {
-        return;
-    }
-    gc_alloc_context* context = GCToEEInterface::GetAllocContext();
-    LaxoriRcMutator* mutator = context == nullptr ? nullptr : FindOrAttach(context, false);
-    if (mutator == nullptr)
-    {
-        return;
-    }
-    if (m_engine.IsInRequest(mutator))
-    {
-        // Requests do not nest: the first one ends here, and its region is published.
-        PublishRegionOfCurrentThread(false);
-    }
-    else
-    {
-        m_requests_active.fetch_add(1, std::memory_order_relaxed);
-    }
-    // The buffer of the shared allocator goes back to the engine; the next allocation takes the private region.
-    RetireAllocationSpan(context, true);
-    m_engine.SetInRequest(mutator, true);
-    m_engine.CountRequestMetric(LaxoriReferenceCounting::RequestsBegun);
-    if (m_engine.HasPrivateRegion(mutator))
-    {
-        InstallPrivateBuffer(context, mutator);
-    }
-}
-
-void LaxoriGcHeap::EndRequest(Object* result)
-{
-    if (!m_requests_enabled)
-    {
-        return;
-    }
-    gc_alloc_context* context = GCToEEInterface::GetAllocContext();
-    LaxoriRcMutator* mutator =
-        context == nullptr ? nullptr : m_engine.FindCachedMutator(context->gc_reserved_1, context);
-    if (mutator == nullptr || !m_engine.IsInRequest(mutator))
-    {
-        return;
-    }
-    m_engine.CountRequestMetric(LaxoriReferenceCounting::RequestsEnded);
-    if (result != nullptr && IsPrivateObject(result))
-    {
-        PublishRegionOfCurrentThread(true);
-    }
-    RetireAllocationSpan(context, true);
-    if (m_engine.HasPrivateRegion(mutator))
-    {
-        size_t bytes = 0;
-        if (m_engine.ResetPrivateRegion(mutator, &bytes) != LaxoriRcResult::Success)
-        {
-            Fatal("Laxori could not reset a request region.");
-        }
-        m_engine.CountRequestMetric(LaxoriReferenceCounting::RegionsReset);
-        m_engine.CountRequestMetric(LaxoriReferenceCounting::RegionBytesReset, bytes);
-    }
-    m_engine.SetInRequest(mutator, false);
-    m_requests_active.fetch_sub(1, std::memory_order_relaxed);
 }
 
 // A finalizable object is registered when it is allocated, as the standard collector does. The registry never reads the
@@ -1028,11 +839,16 @@ void LaxoriGcHeap::RetireAllocationSpan(gc_alloc_context* context, bool subtract
         return;
     }
     LaxoriRcMutator* mutator = m_engine.FindCachedMutator(context->gc_reserved_1, context);
+    bool privateBuffer = mutator != nullptr && mutator->Region().buffer;
     if (mutator == nullptr || context->alloc_limit < context->alloc_ptr ||
         m_engine.RetireAllocationSpan(mutator,
             reinterpret_cast<uintptr_t>(context->alloc_ptr) - sizeof(ObjHeader)) != LaxoriRcResult::Success)
     {
         Fatal("LAXORI allocation span contains a foreign or inconsistent used point.");
+    }
+    if (privateBuffer && m_verify_private)
+    {
+        VerifyRegion(mutator->Region(), "retire");
     }
     size_t unused = static_cast<size_t>(context->alloc_limit - context->alloc_ptr);
     m_unused_span_bytes.fetch_add(unused, std::memory_order_relaxed);
@@ -1125,17 +941,9 @@ void LaxoriGcHeap::PreStore(Object** destination, Object* newReference)
     {
         return;
     }
-    LaxoriGcHeap* heap = s_heap;
-    if (heap->m_requests_active.load(std::memory_order_relaxed) != 0)
+    if (s_heap->m_private_enabled)
     {
-        if (heap->IsPrivateObject(destination))
-        {
-            return;
-        }
-        if (heap->IsPrivateObject(newReference))
-        {
-            EscapeSlowPath(destination, newReference);
-        }
+        s_heap->EscapeCheck(destination, newReference);
     }
     const uint8_t* metadata = reinterpret_cast<const uint8_t*>(g_laxori_write_barrier_globals.metadata_base);
     uintptr_t address = reinterpret_cast<uintptr_t>(destination);
@@ -1248,10 +1056,9 @@ void LaxoriGcHeap::BulkMoveWithWriteBarrier(void* context, void* destination, co
         return;
     }
     LaxoriGcHeap* heap = static_cast<LaxoriGcHeap*>(context);
-    if (heap->m_requests_active.load(std::memory_order_relaxed) != 0 && IsInHeap(nullptr, destination) &&
-        !heap->IsPrivateObject(destination))
+    if (heap->m_private_enabled)
     {
-        heap->PublishWordsOfSource(source, length);
+        heap->EscapeBulk(destination, source, length);
     }
 #ifdef LAXORI_HAS_DIAGNOSTIC_PROBES
     if (heap->m_storage_diagnostics_enabled.load(std::memory_order_relaxed))
@@ -1351,10 +1158,6 @@ void LaxoriGcHeap::FixAllocContext(gc_alloc_context* context, void*, void*)
     // The EE already charged the departing tail to dead_threads_non_alloc_bytes.
     RetireAllocationSpan(context, false);
     LaxoriRcMutator* mutator = m_engine.FindMutator(context);
-    if (mutator != nullptr && m_engine.IsInRequest(mutator))
-    {
-        m_requests_active.fetch_sub(1, std::memory_order_relaxed);
-    }
     if (mutator != nullptr && m_engine.DetachMutator(mutator) != LaxoriRcResult::Success)
     {
         Fatal("LAXORI thread-detach buffer publication failed.");
@@ -2384,6 +2187,7 @@ Object* LaxoriGcHeap::GetNextFinalizable()
 
 bool LaxoriGcHeap::RegisterForFinalization(int, Object* object)
 {
+    EscapeObject(object);
     if (!m_engine.IsOwnedObject(object))
     {
         Unsupported("LAXORI cannot register finalization for a nonowned or incomplete object.");
@@ -3130,9 +2934,9 @@ LaxoriRcResult LaxoriGcHeap::GetPrototypeStorageRange(
 
 uint64_t LaxoriGcHeap::GetPrototypeMetric(uint32_t metric) const
 {
-    if (metric >= 700 && metric < 700 + LaxoriReferenceCounting::RequestMetricCount)
+    if (metric >= 700 && metric < 700 + LaxoriReferenceCounting::RegionMetricCount)
     {
-        return m_engine.GetRequestMetric(metric - 700);
+        return m_engine.GetRegionMetric(metric - 700);
     }
     LaxoriRcMetrics rc = m_engine.GetMetrics();
     LaxoriTraceMetrics trace = m_engine.GetTraceMetrics();

@@ -85,25 +85,7 @@ LAXORI_EXPORT uint64_t GC_LxrPrototype_GetMetric(uint32_t metric)
 
 LAXORI_EXPORT const char* GC_LaxoriPrototype_GetIdentity()
 {
-    return "LAXORI (Satori-style request-private regions over an LXR engine); GC interface 6.8; shared-write-barriers-v1";
-}
-
-// The request hooks (docs/design/laxori-port/DESIGN.md, section 3). The calling thread must be in cooperative mode: call
-// them through a function pointer with SuppressGCTransition. They do nothing unless DOTNET_LAXORIRequests=1.
-LAXORI_EXPORT void GC_Laxori_BeginRequest()
-{
-    if (Heap != nullptr)
-    {
-        Heap->BeginRequest();
-    }
-}
-
-LAXORI_EXPORT void GC_Laxori_EndRequest(void* result)
-{
-    if (Heap != nullptr)
-    {
-        Heap->EndRequest(static_cast<Object*>(result));
-    }
+    return "LAXORI (thread-local GC regions over an LXR engine); GC interface 6.8; shared-write-barriers-v1";
 }
 
 LAXORI_EXPORT uintptr_t GC_LaxoriPrototype_GetOwnedStart()

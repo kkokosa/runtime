@@ -17,7 +17,7 @@ static uintptr_t s_avLocations[] =
     reinterpret_cast<uintptr_t>(&LaxoriAssignRefMetadataAVLocation),
     reinterpret_cast<uintptr_t>(&LaxoriAssignRefAVLocation),
     reinterpret_cast<uintptr_t>(&LaxoriBarrierSlowAVLocation),
-    reinterpret_cast<uintptr_t>(&LaxoriEscapeSlowAVLocation),
+    reinterpret_cast<uintptr_t>(&LaxoriPrivateBitsAVLocation),
     0,
 };
 
@@ -28,7 +28,9 @@ static LaxoriWriteBarrierPatchable s_patchable[] =
     { &LaxoriPatchable_HeapSize, &g_laxori_write_barrier_globals.heap_size },
     { &LaxoriPatchable_SlowPath, &g_laxori_write_barrier_globals.slow_path },
     { &LaxoriPatchable_XsaveMask, &g_laxori_write_barrier_globals.xsave_mask },
-    { &LaxoriPatchable_BlockTable, &g_laxori_write_barrier_globals.block_table },
+    { &LaxoriPatchable_OwnerTable, &g_laxori_write_barrier_globals.owner_table },
+    { &LaxoriPatchable_PrivateBits, &g_laxori_write_barrier_globals.private_bits },
+    { &LaxoriPatchable_RegionShift, &g_laxori_write_barrier_globals.region_shift },
     { &LaxoriPatchable_EscapePath, &g_laxori_write_barrier_globals.escape_path },
     { nullptr, nullptr },
 };
@@ -84,13 +86,15 @@ uintptr_t LaxoriWriteBarrierComputeXsaveMask()
 
 void LaxoriWriteBarrierSetGlobals(
     uintptr_t metadataBase, uintptr_t heapLow, uintptr_t heapSize, void* slowPath, uintptr_t xsaveMask,
-    uint8_t* blockTable, void* escapePath)
+    uint64_t* ownerTable, uintptr_t privateBitsBase, uintptr_t regionShift, void* escapePath)
 {
     g_laxori_write_barrier_globals.metadata_base = metadataBase;
     g_laxori_write_barrier_globals.heap_low = heapLow;
     g_laxori_write_barrier_globals.heap_size = heapSize;
     g_laxori_write_barrier_globals.slow_path = reinterpret_cast<uintptr_t>(slowPath);
     g_laxori_write_barrier_globals.xsave_mask = xsaveMask;
-    g_laxori_write_barrier_globals.block_table = reinterpret_cast<uintptr_t>(blockTable);
+    g_laxori_write_barrier_globals.owner_table = reinterpret_cast<uintptr_t>(ownerTable);
+    g_laxori_write_barrier_globals.private_bits = privateBitsBase;
+    g_laxori_write_barrier_globals.region_shift = regionShift;
     g_laxori_write_barrier_globals.escape_path = reinterpret_cast<uintptr_t>(escapePath);
 }

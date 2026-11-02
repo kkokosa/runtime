@@ -214,6 +214,7 @@ void ImmixAllocationManager::ResetCursors()
     m_next_fresh_block.store(0, std::memory_order_relaxed);
     m_next_recycled_block.store(0, std::memory_order_relaxed);
     m_next_pinned_block.store(0, std::memory_order_relaxed);
+    m_next_run_block.store(0, std::memory_order_relaxed);
     m_next_copy_block.store(0, std::memory_order_relaxed);
 }
 
@@ -927,6 +928,129 @@ SideMetadataResult ImmixAllocationManager::AcquireBlock(
     }
 }
 
+SideMetadataResult ImmixAllocationManager::TryAcquireRun(
+    uintptr_t owner,
+    size_t blocks,
+    ImmixMarkingContext markingContext,
+    uintptr_t* start,
+    ImmixAllocationStatus* status)
+{
+    if ((start == nullptr) || (status == nullptr) || (owner == ImmixBlockManager::NoOwner) || (blocks == 0) ||
+        ((blocks & (blocks - 1)) != 0))
+    {
+        return SideMetadataResult::InvalidArgument;
+    }
+    *start = 0;
+    *status = ImmixAllocationStatus::Exhausted;
+    uint8_t globalEpoch = m_blocks->GetGlobalPhaseEpoch();
+    if ((globalEpoch & 1) == 0)
+    {
+        *status = ImmixAllocationStatus::InvalidPhase;
+        return SideMetadataResult::Success;
+    }
+    size_t limit = (m_placement && m_mutator_fresh_blocks < m_block_count) ? m_mutator_fresh_blocks : m_block_count;
+    if (limit > m_block_count)
+    {
+        limit = m_block_count;
+    }
+    const uintptr_t runBytes = static_cast<uintptr_t>(blocks) * ImmixBlockGeometry::BlockBytes;
+    auto alignedIndex = [&](size_t index) -> size_t
+    {
+        uintptr_t address = m_arena_start + (index * ImmixBlockGeometry::BlockBytes);
+        uintptr_t aligned = (address + runBytes - 1) & ~(runBytes - 1);
+        return static_cast<size_t>((aligned - m_arena_start) / ImmixBlockGeometry::BlockBytes);
+    };
+    SideMetadataResult failure = SideMetadataResult::Success;
+    auto isClean = [&](size_t index) -> bool
+    {
+        uintptr_t address = m_arena_start + (index * ImmixBlockGeometry::BlockBytes);
+        ImmixBlockState state;
+        uint8_t unavailableLines;
+        failure = m_blocks->GetStateFast(address, &state, &unavailableLines);
+        if (failure != SideMetadataResult::Success || state != ImmixBlockState::Unallocated)
+        {
+            return false;
+        }
+        bool nursery;
+        failure = m_blocks->IsNurseryFast(address, &nursery);
+        return failure == SideMetadataResult::Success && !nursery;
+    };
+    while (true)
+    {
+        size_t first = m_next_run_block.load(std::memory_order_relaxed);
+        size_t candidate = alignedIndex(first);
+        if (candidate + blocks > limit)
+        {
+            return SideMetadataResult::Success;
+        }
+        bool clean = true;
+        for (size_t block = 0; block < blocks && clean; block++)
+        {
+            clean = isClean(candidate + block);
+        }
+        if (failure != SideMetadataResult::Success)
+        {
+            return failure;
+        }
+        if (!m_next_run_block.compare_exchange_weak(
+                first, candidate + blocks, std::memory_order_relaxed, std::memory_order_relaxed))
+        {
+            continue;
+        }
+        if (!clean)
+        {
+            continue;
+        }
+        size_t acquired = 0;
+        for (; acquired < blocks; acquired++)
+        {
+            uintptr_t address = m_arena_start + ((candidate + acquired) * ImmixBlockGeometry::BlockBytes);
+            ImmixBlockOperationStatus blockStatus;
+            SideMetadataResult result = m_blocks->TryAcquire(address, owner, ImmixBlockAcquireKind::MutatorFresh, &blockStatus);
+            if (result != SideMetadataResult::Success)
+            {
+                return result;
+            }
+            if (GetAllocationStatus(blockStatus) != ImmixAllocationStatus::Ready)
+            {
+                break;
+            }
+        }
+        if (acquired != blocks)
+        {
+            // Another thread took a block of the run between the look and the claim. The blocks that this thread took go
+            // back (they stay clean nursery blocks of this epoch until the next pause), and the search goes on.
+            for (size_t block = 0; block < acquired; block++)
+            {
+                ImmixBlockOperationStatus returned;
+                m_blocks->TryReturn(
+                    m_arena_start + ((candidate + block) * ImmixBlockGeometry::BlockBytes), owner, &returned);
+            }
+            continue;
+        }
+        m_blocks_in_use.fetch_add(blocks, std::memory_order_release);
+        m_fresh_blocks_acquired.fetch_add(blocks, std::memory_order_relaxed);
+        for (size_t block = 0; block < blocks; block++)
+        {
+            size_t index = candidate + block;
+            NoteAcquired(index, true, true);
+            if (m_notes.pinned_flags != nullptr)
+            {
+                m_notes.pinned_flags[index].fetch_and(static_cast<uint8_t>(~PinnedBlockFlag), std::memory_order_acq_rel);
+            }
+            SideMetadataResult prepared = PrepareFreshBlock(
+                m_arena_start + (index * ImmixBlockGeometry::BlockBytes), ImmixAllocationSource::MutatorFresh, markingContext);
+            if (prepared != SideMetadataResult::Success)
+            {
+                return prepared;
+            }
+        }
+        *start = m_arena_start + (candidate * ImmixBlockGeometry::BlockBytes);
+        *status = ImmixAllocationStatus::Ready;
+        return SideMetadataResult::Success;
+    }
+}
+
 SideMetadataResult ImmixAllocationManager::ReturnBlock(
     uintptr_t block,
     uintptr_t owner,
@@ -1431,17 +1555,6 @@ SideMetadataResult ImmixBumpAllocator::SetCursor(uintptr_t cursor)
         return SideMetadataResult::InvalidArgument;
     }
     m_cursor = cursor;
-    return SideMetadataResult::Success;
-}
-
-SideMetadataResult ImmixBumpAllocator::RewindToBlockStart()
-{
-    if (m_block == 0 || !ImmixAllocationManager::IsFreshSource(m_source))
-    {
-        return SideMetadataResult::InvalidArgument;
-    }
-    m_cursor = m_block;
-    m_limit = m_block + ImmixBlockGeometry::BlockBytes;
     return SideMetadataResult::Success;
 }
 

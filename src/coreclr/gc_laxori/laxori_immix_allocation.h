@@ -87,6 +87,16 @@ public:
     // The Java LAXORI starts every pause, and ends it, with the block cursors at 0 (BlockPageResource::prepare_gc, reset).
     void ResetCursors();
 
+    // Laxori. Takes `blocks` (a power of two) adjacent clean blocks whose start address is a multiple of the run size, for a
+    // private region, and prepares every block as a clean mutator block. Status Ready: *start is the first block.
+    // Exhausted: no run is free until the cursors are reset. The run cursor moves forward only, as the block cursors do.
+    SideMetadataResult TryAcquireRun(
+        uintptr_t owner,
+        size_t blocks,
+        ImmixMarkingContext markingContext,
+        uintptr_t* start,
+        ImmixAllocationStatus* status);
+
     SideMetadataResult TryFindNextHole(
         uintptr_t block,
         size_t searchLine,
@@ -217,6 +227,12 @@ public:
     }
 #endif // LAXORI_SIDE_METADATA_TEST_PLATFORM
 
+    // Laxori. A private region hands its blocks back one by one when it is dissolved.
+    SideMetadataResult ReturnRegionBlock(uintptr_t block, uintptr_t owner, ImmixAllocationStatus* status)
+    {
+        return ReturnBlock(block, owner, status);
+    }
+
 private:
     friend class ImmixBumpAllocator;
 
@@ -344,6 +360,7 @@ private:
     std::atomic<size_t> m_next_fresh_block;
     std::atomic<size_t> m_next_recycled_block;
     std::atomic<size_t> m_next_pinned_block{0};
+    std::atomic<size_t> m_next_run_block{0};
     bool m_placement = false;
     size_t m_mutator_fresh_blocks = 0;
     std::atomic<size_t> m_next_copy_block{0};
@@ -402,8 +419,6 @@ public:
     uintptr_t GetCursor() const;
     uintptr_t GetLimit() const;
     SideMetadataResult SetCursor(uintptr_t cursor);
-    // Laxori: moves the cursor back to the start of the block that the allocator holds (a request region that is reused).
-    SideMetadataResult RewindToBlockStart();
 
 private:
     static bool TryAlignWithOffset(
