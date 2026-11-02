@@ -154,7 +154,7 @@ pause after the escape is the commit.
 | GC handles (strong, weak short/long, dependent, pinned, ref-counted, `GCHandle.Alloc`) | Laxori has its own `IGCHandleManager` wrapper (a copy of `gchandletable.cpp` with one hook). Every `CreateHandleOf*`, `StoreObjectInHandle` and `SetDependentHandleSecondary` call `EscapeObject(obj)`. A weak handle also publishes: a weak handle must not see an object die by bulk retirement. |
 | finalizable objects (`GC_ALLOC_FINALIZE`) | `Alloc` does not allocate a finalizable object in the request region. It goes to the shared allocator (the finalizer registry is a root). `GC.ReRegisterForFinalize` calls `RegisterForFinalization(obj)`, which publishes. |
 | statics and thread statics | their storage is a managed array or a field of an object in the shared heap. The store goes through the barrier, so it publishes. |
-| sync blocks (`lock` with contention, `Monitor.Wait`, hash code plus lock) | the sync block table holds a raw pointer to the object. `EndRequest` checks the object headers of the region for a sync block index **when it zeroes the region** (a linear walk, O(objects)). If one has it, the region is published instead of reset. See the risks. |
+| sync blocks (`lock` with contention, `Monitor.Wait`, hash code plus lock) | the sync block table holds a raw pointer to the object. **M1 does not detect this.** A thread-private object cannot be contended, so only the combination "hash code, then `lock`" (or `Monitor.Wait`, which needs a second thread) creates a sync block for it. A linear walk of the object headers at `EndRequest` would detect it, but it costs O(objects) per request, so it was not built. See the risks. |
 | interior pointers, `Span<T>`, `ref` locals | stack only: inside the stack contract of `EndRequest`. At a pause, the normal stack scan finds them (a private region is an ordinary young span at a pause). |
 | pinning (`fixed`, `GCHandle.Alloc(Pinned)`, pinned object heap) | `fixed` is a stack pin (same contract). A pinned handle publishes. Objects for the pinned object heap (`GC_ALLOC_PINNED_OBJECT_HEAP`) are never allocated in a request region. |
 | large objects and arrays of 8 KiB or more | allocated by the shared allocator (large object space from 32 KiB; shared Immix below that). A store of a private reference into them is a store into a shared object, so it publishes. |
@@ -181,8 +181,8 @@ pause after the escape is the commit.
 1. **The stack contract of `EndRequest`.** A live reference from a stack frame to a request object after `EndRequest` is a
    dangling reference after the region is reused. This is a program error, like an escaping `Span<T>`. A debug mode that
    poisons the retired region and keeps it out of the pool for one pause would find it. It is not part of M1.
-2. **Sync blocks and other native tables with raw object pointers** (section 7). The check is conservative. A miss means a
-   stale pointer in the sync block table.
+2. **Sync blocks and other native tables with raw object pointers** (section 7). M1 does not check them. A request object that
+   gets a sync block (hash code, then `lock`) and is then retired leaves a stale pointer in the sync block table. Not tested.
 3. **False publication.** The slow path is cheap, but a request that stores every object into a shared structure publishes its
    region each time, loses the benefit, and pays one block acquisition (a 32 KiB memset) each time.
 4. **Barrier cost** for stores into shared objects: a few instructions more than in LXR.
@@ -194,6 +194,13 @@ pause after the escape is the commit.
 9. **The JIT must route all reference stores through the helpers.** R2R code of the frame must be built with
    `CrossgenOldValueWriteBarriers=true` (R2R code without the flag is rejected). A store that bypasses the helpers would bypass
    escape detection. LXR makes the same assumption for its log.
+10. **The hooks write `ee_alloc_context::m_CombinedLimit`.** The runtime's inline allocation helpers test this field (the
+   pointer-sized field just before the `gc_alloc_context`), not `alloc_limit`. The runtime refreshes it after every `Alloc`
+   call, but the request hooks and the escape slow path change the buffer outside `Alloc`. Laxori therefore writes the field
+   itself (`SetCombinedLimit` in `laxori_gc.cpp`). This relies on the layout in `vm/gcheaputilities.h`. A better interface would
+   be a callback of the EE (an addition to `IGCToCLR`); that is future work.
+11. **The mutator count.** The engine admits 1024 simultaneous contexts (inherited from LXR). The thread-exit hook must run for
+   each exiting thread (it does: `FixAllocContext`).
 
 ## 10. Milestones
 

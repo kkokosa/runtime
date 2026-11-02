@@ -196,10 +196,69 @@ internal static unsafe class Program
         }
     }
 
+    // M2: published cyclic data (rings with back pointers) that becomes garbage when a table slot is replaced. The shared-heap
+    // reclamation (reference counting plus the trace for cycles) must keep the memory bounded.
+    sealed class Ring
+    {
+        public long Id; public Ring? Next; public Ring? Prev; public byte[] Data = null!;
+    }
+    static readonly Ring?[] s_rings = new Ring?[4096];
+
+    [MethodImpl(MethodImplOptions.NoInlining)]
+    static void RequestRing(ref long st, long id)
+    {
+        Ring first = new Ring { Id = id, Data = new byte[48] };
+        Ring prev = first;
+        for (int i = 1; i < 16; i++)
+        {
+            var r = new Ring { Id = id, Data = new byte[48] };
+            r.Prev = prev; prev.Next = r; prev = r;
+        }
+        prev.Next = first; first.Prev = prev;
+        s_rings[Rnd(ref st, s_rings.Length)] = first;
+    }
+
+    static void ValidateRings()
+    {
+        foreach (var head in s_rings)
+        {
+            if (head is null) continue;
+            Ring c = head; int n = 0;
+            do { if (c.Next!.Prev != c || c.Id != head.Id) throw new InvalidOperationException("corrupted ring"); c = c.Next; n++; } while (c != head && n < 100);
+            if (n != 16) throw new InvalidOperationException("ring length " + n);
+        }
+    }
+
+    static int RunCycles(int iterations)
+    {
+        long st = s_seed;
+        long peak = 0;
+        for (int i = 0; i < iterations; i++)
+        {
+            Begin(); RequestRing(ref st, i); End();
+            if ((i & 0x3FFFF) == 0) { ValidateRings(); peak = Math.Max(peak, Environment.WorkingSet); }
+        }
+        ValidateRings();
+        GC.Collect(); GC.WaitForPendingFinalizers(); GC.Collect();
+        ValidateRings();
+        peak = Math.Max(peak, Environment.WorkingSet);
+        Console.WriteLine("cycles: iterations=" + iterations + " peak working set MB=" + (peak >> 20));
+        if (s_metric != null)
+        {
+            string[] names = { "begun", "ended", "reset", "resetBytes", "pubEscape", "pubFull", "pubPause", "acquired", "escapeCalls", "foreign" };
+            for (uint i = 0; i < names.Length; i++) Console.Write(names[i] + "=" + s_metric(700 + i) + " ");
+            Console.WriteLine();
+        }
+        Check(peak < 1000L << 20, "memory of cyclic garbage stays bounded (peak working set " + (peak >> 20) + " MB)");
+        Console.WriteLine(s_failures == 0 ? "PASS" : "FAILURES=" + s_failures);
+        return s_failures == 0 ? 0 : 1;
+    }
+
     static int Main(string[] args)
     {
         int threads = args.Length > 0 ? int.Parse(args[0]) : 4;
         int iterations = args.Length > 1 ? int.Parse(args[1]) : 100000;
+        bool cycles = args.Length > 2 && args[2] == "cycles";
         string? gc = Environment.GetEnvironmentVariable("DOTNET_GCPath");
         if (!string.IsNullOrEmpty(gc))
         {
@@ -213,6 +272,7 @@ internal static unsafe class Program
             }
         }
         Console.WriteLine("hooks=" + s_hooks + " threads=" + threads + " iterations=" + iterations);
+        if (cycles) return RunCycles(iterations);
         var keep = new List<GCHandle>();
         var weak = new List<GCHandle>();
         var results = new ConcurrentBag<Node>();
