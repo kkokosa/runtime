@@ -828,7 +828,8 @@ LaxoriRcResult LaxoriReferenceCounting::Initialize(
         return Fail(LaxoriRcResult::SchedulerFailure);
     }
     m_allocation.SetAcquireNotes(
-        {m_allocated_block_storage.Get(), m_allocated_list, &m_allocated_count, m_mature_candidates, m_block_flags});
+        {m_allocated_block_storage.Get(), m_allocated_list, &m_allocated_count, m_mature_candidates, m_block_flags,
+            m_zero_state});
     for (size_t index = 0; index < configuration.maximumMutators; index++)
     {
         if (m_mutators[index].allocator.Initialize(&m_allocation, index + 1) != SideMetadataResult::Success ||
@@ -874,6 +875,11 @@ LaxoriRcResult LaxoriReferenceCounting::Initialize(
     if (m_coordinator.Initialize(&m_scheduler, adapter) != LaxoriPauseCoordinatorResult::Success)
     {
         return Fail(LaxoriRcResult::SchedulerFailure);
+    }
+    if (m_zero_state != nullptr && m_configuration.prezeroThread)
+    {
+        // Without the thread every block is cleared by the allocator that takes it, as before.
+        m_zeroer.Start(&m_allocation, m_configuration.prezeroMarginBlocks, m_configuration.prezeroWindowBlocks);
     }
     m_phase.store(LaxoriRcPhase::Mutator, std::memory_order_release);
     return LaxoriRcResult::Success;
@@ -944,6 +950,15 @@ LaxoriRcResult LaxoriReferenceCounting::InitializeBuffers(size_t slots)
             m_configuration.immixBytes / ImmixBlockGeometry::BlockBytes]{};
         m_block_flags = new (std::nothrow) std::atomic<uint8_t>[
             m_configuration.immixBytes / ImmixBlockGeometry::BlockBytes]{};
+        if (m_configuration.prezero && !m_observer)
+        {
+            m_zero_state = new (std::nothrow) std::atomic<uint8_t>[
+                m_configuration.immixBytes / ImmixBlockGeometry::BlockBytes]{};
+            if (m_zero_state == nullptr)
+            {
+                return Fail(LaxoriRcResult::OutOfMemory);
+            }
+        }
         // Not initialized: the entries are written before they are read, and the pages stay untouched until used.
         m_allocated_list = new (std::nothrow) uint32_t[m_configuration.immixBytes / ImmixBlockGeometry::BlockBytes];
         if (m_allocated_list == nullptr || m_block_flags == nullptr)
@@ -1296,6 +1311,7 @@ void LaxoriReferenceCounting::Shutdown()
         return;
     }
     m_phase.store(LaxoriRcPhase::Shutdown, std::memory_order_release);
+    m_zeroer.Stop();
     m_scheduler.Shutdown();
     DeleteRememberedChunks();
     DeleteWork();
@@ -1345,6 +1361,7 @@ void LaxoriReferenceCounting::Shutdown()
     delete[] m_dead_large;
     delete[] m_mature_candidates;
     delete[] m_block_flags;
+    delete[] m_zero_state;
     delete[] m_allocated_list;
     delete[] m_trace_locks;
     delete[] m_scan_buckets;
@@ -1362,6 +1379,7 @@ void LaxoriReferenceCounting::Shutdown()
     m_trace_locks = nullptr;
     m_scan_buckets = nullptr;
     m_block_flags = nullptr;
+    m_zero_state = nullptr;
     m_pins.Clear();
     m_roots[0] = nullptr;
     m_roots[1] = nullptr;
@@ -3022,6 +3040,10 @@ void LaxoriReferenceCounting::Suspend(void* context)
 {
     LaxoriReferenceCounting* engine = static_cast<LaxoriReferenceCounting*>(context);
     engine->m_runtime.suspend(engine->m_runtime.context);
+#if !defined(LAXORI_SIDE_METADATA_TEST_PLATFORM) || !defined(LAXORI_PREZERO_NO_PAUSE_GATE_CONTROL)
+    // Control: the pause does not hold the clearer back.
+    engine->m_allocation.SuspendPreZero();
+#endif // !LAXORI_SIDE_METADATA_TEST_PLATFORM || !LAXORI_PREZERO_NO_PAUSE_GATE_CONTROL
     int64_t prepareStart = engine->m_pause_timers.Enabled() ? engine->m_pause_timers.Stamp() : 0;
     engine->m_phase.store(LaxoriRcPhase::Suspended, std::memory_order_release);
     engine->m_copy_exhausted.store(false, std::memory_order_relaxed);
@@ -3172,6 +3194,8 @@ void LaxoriReferenceCounting::Resume(bool finishedGc, void* context)
         }
     }
     engine->m_runtime.resume(finishedGc, engine->m_runtime.context);
+    engine->m_allocation.ResumePreZero();
+    engine->m_zeroer.Wake();
 }
 
 LaxoriRcResult LaxoriReferenceCounting::Collect(
@@ -5145,20 +5169,10 @@ LaxoriRcResult LaxoriReferenceCounting::RefreshBlock(uintptr_t block, size_t ind
         return LaxoriRcResult::Success;
     }
     size_t freeLines = 0;
-    size_t next = 0;
-    while (next < ImmixBlockGeometry::LinesPerBlock)
+    result = FromMetadata(m_allocation.CountHoleLines(block, &freeLines));
+    if (result != LaxoriRcResult::Success)
     {
-        ImmixHole hole;
-        ImmixAllocationStatus found;
-        result = FromMetadata(m_allocation.TryFindNextHole(block, next, &hole, &next, &found));
-        if (result != LaxoriRcResult::Success)
-        {
-            return result;
-        }
-        if (found == ImmixAllocationStatus::Ready)
-        {
-            freeLines += hole.line_count;
-        }
+        return result;
     }
     if (freeLines == 0 || freeLines >= ImmixBlockGeometry::LinesPerBlock)
     {

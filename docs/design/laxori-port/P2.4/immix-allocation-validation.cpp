@@ -1,0 +1,2885 @@
+// Licensed to the .NET Foundation under one or more agreements.
+// The .NET Foundation licenses this file to you under the MIT license.
+
+#include "../../../../src/coreclr/gc/env/common.h"
+#include "../../../../src/coreclr/gc/env/gcenv.h"
+#include "../../../../src/coreclr/gc_laxori/laxori_immix_allocation.h"
+#define LAXORI_F10_PREFETCH_TEST_HOOK
+#include "../../../../src/coreclr/gc_laxori/laxori_prefetch.h"
+
+#include <atomic>
+#include <chrono>
+#include <stdio.h>
+#include <thread>
+#include <vector>
+
+namespace
+{
+#ifdef HOST_64BIT
+    constexpr uintptr_t DataStart = UINT64_C(0x0000000300000000);
+    constexpr size_t DefaultBlockCount = 8;
+    constexpr size_t DefaultDataSize =
+        DefaultBlockCount * ImmixBlockGeometry::BlockBytes;
+    constexpr uintptr_t OwnerOne = 0x2401;
+    constexpr uintptr_t OwnerTwo = 0x2402;
+    constexpr uintptr_t OwnerThree = 0x2403;
+#endif
+
+    int s_checks;
+    int s_failures;
+
+    void Expect(const char* name, bool condition)
+    {
+        s_checks++;
+        if (!condition)
+        {
+            s_failures++;
+            printf("FAIL: %s\n", name);
+        }
+    }
+
+    void ExpectMetadata(
+        const char* name,
+        SideMetadataResult actual,
+        SideMetadataResult expected)
+    {
+        if (actual != expected)
+        {
+            printf(
+                "DETAIL: %s actual=%u expected=%u\n",
+                name,
+                static_cast<unsigned>(actual),
+                static_cast<unsigned>(expected));
+        }
+        Expect(name, actual == expected);
+    }
+
+#ifdef HOST_64BIT
+    struct Fixture
+    {
+        LaxoriSideMetadataLayout layout;
+        SideMetadataManager metadata;
+        ImmixBlockManager blocks;
+        ImmixAllocationManager allocation;
+        uintptr_t data_start;
+        size_t data_size;
+        bool data_reserved;
+        bool initialized;
+
+        explicit Fixture(
+            uint8_t logReferenceCountBits = 1,
+            size_t blockCount = DefaultBlockCount,
+            size_t minimumReuseLines = 2,
+            uint64_t enabledSpecMask = UINT64_MAX)
+            : data_start(DataStart)
+            , data_size(blockCount * ImmixBlockGeometry::BlockBytes)
+            , data_reserved(false)
+            , initialized(false)
+        {
+            void* data = GCToOSInterface::VirtualReserveAt(
+                reinterpret_cast<void*>(data_start),
+                data_size,
+                VirtualReserveFlags::None);
+            if (data == reinterpret_cast<void*>(data_start))
+            {
+                data_reserved = true;
+            }
+
+            SideMetadataResult result = data_reserved
+                ? LaxoriSideMetadataLayout::Create(
+                    logReferenceCountBits,
+                    &layout)
+                : SideMetadataResult::ReservationFailed;
+            if ((result == SideMetadataResult::Success) &&
+                !GCToOSInterface::VirtualCommit(data, data_size))
+            {
+                result = SideMetadataResult::CommitFailed;
+            }
+            if (result == SideMetadataResult::Success)
+            {
+                result = metadata.Initialize(&layout, enabledSpecMask);
+            }
+            if (result == SideMetadataResult::Success)
+            {
+                result = blocks.Initialize(&metadata);
+            }
+            if (result == SideMetadataResult::Success)
+            {
+                result = blocks.RegisterBlockRange(data_start, data_size);
+            }
+            if (result == SideMetadataResult::Success)
+            {
+                result = allocation.Initialize(
+                    &metadata,
+                    &blocks,
+                    data_start,
+                    data_size,
+                    minimumReuseLines);
+            }
+            initialized = result == SideMetadataResult::Success;
+        }
+
+        ~Fixture()
+        {
+            allocation.Shutdown();
+            blocks.Shutdown();
+            metadata.Shutdown();
+            if (data_reserved)
+            {
+                GCToOSInterface::VirtualRelease(
+                    reinterpret_cast<void*>(data_start),
+                    data_size);
+            }
+        }
+    };
+
+    uint64_t KindMask(LaxoriSideMetadataKind kind)
+    {
+        return UINT64_C(1) << static_cast<uint8_t>(kind);
+    }
+
+    uintptr_t LineAddress(uintptr_t block, size_t line)
+    {
+        return block + (line * ImmixBlockGeometry::LineBytes);
+    }
+
+    void SeedAllLines(
+        Fixture& fixture,
+        uintptr_t block,
+        uintptr_t value)
+    {
+        ExpectMetadata(
+            "clear RC block",
+            fixture.metadata.ResetRangeQuiescent(
+                LaxoriSideMetadataKind::ReferenceCount,
+                block,
+                ImmixBlockGeometry::BlockBytes,
+                0),
+            SideMetadataResult::Success);
+        if (value == 0)
+        {
+            return;
+        }
+
+        for (size_t line = 0;
+             line < ImmixBlockGeometry::LinesPerBlock;
+             line++)
+        {
+            ExpectMetadata(
+                "seed live line",
+                fixture.metadata.Store(
+                    LaxoriSideMetadataKind::ReferenceCount,
+                    LineAddress(block, line),
+                    value,
+                    SideMetadataMemoryOrder::Relaxed),
+                SideMetadataResult::Success);
+        }
+    }
+
+    void SeedLine(
+        Fixture& fixture,
+        uintptr_t block,
+        size_t line,
+        uintptr_t value)
+    {
+        ExpectMetadata(
+            "seed RC line",
+            fixture.metadata.Store(
+                LaxoriSideMetadataKind::ReferenceCount,
+                LineAddress(block, line),
+                value,
+                SideMetadataMemoryOrder::Relaxed),
+            SideMetadataResult::Success);
+    }
+
+    void SeedReusableBlock(
+        Fixture& fixture,
+        uintptr_t block,
+        uint8_t unavailableLines = 1)
+    {
+        ExpectMetadata(
+            "seed reusable state",
+            fixture.metadata.Store(
+                LaxoriSideMetadataKind::BlockMark,
+                block,
+                unavailableLines,
+                SideMetadataMemoryOrder::SequentiallyConsistent),
+            SideMetadataResult::Success);
+        ExpectMetadata(
+            "seed reusable owner",
+            fixture.metadata.Store(
+                LaxoriSideMetadataKind::BlockOwner,
+                block,
+                ImmixBlockManager::NoOwner,
+                SideMetadataMemoryOrder::SequentiallyConsistent),
+            SideMetadataResult::Success);
+        ExpectMetadata(
+            "seed reusable lock",
+            fixture.metadata.Store(
+                LaxoriSideMetadataKind::BlockInUse,
+                block,
+                0,
+                SideMetadataMemoryOrder::SequentiallyConsistent),
+            SideMetadataResult::Success);
+        ExpectMetadata(
+            "seed reusable phase",
+            fixture.metadata.Store(
+                LaxoriSideMetadataKind::PhaseEpoch,
+                block,
+                0,
+                SideMetadataMemoryOrder::SequentiallyConsistent),
+            SideMetadataResult::Success);
+        ExpectMetadata(
+            "seed reusable defrag",
+            fixture.metadata.Store(
+                LaxoriSideMetadataKind::BlockDefrag,
+                block,
+                0,
+                SideMetadataMemoryOrder::SequentiallyConsistent),
+            SideMetadataResult::Success);
+    }
+
+    uintptr_t LoadMetadata(
+        Fixture& fixture,
+        LaxoriSideMetadataKind kind,
+        uintptr_t address)
+    {
+        uintptr_t value = UINTPTR_MAX;
+        ExpectMetadata(
+            "load metadata",
+            fixture.metadata.Load(
+                kind,
+                address,
+                SideMetadataMemoryOrder::SequentiallyConsistent,
+                &value),
+            SideMetadataResult::Success);
+        return value;
+    }
+
+    void ExpectObjectMarkRange(
+        const char* name,
+        Fixture& fixture,
+        uintptr_t start,
+        size_t size,
+        uintptr_t expected)
+    {
+        const SideMetadataSpec* spec =
+            fixture.layout.GetSpec(LaxoriSideMetadataKind::ObjectMark);
+        Expect("object-mark spec exists", spec != nullptr);
+        if (spec == nullptr)
+        {
+            return;
+        }
+
+        size_t stride = size_t{1} << spec->log_bytes_per_value;
+        for (uintptr_t address = start;
+             address < start + size;
+             address += stride)
+        {
+            Expect(name, LoadMetadata(
+                fixture,
+                LaxoriSideMetadataKind::ObjectMark,
+                address) == expected);
+        }
+    }
+
+    void ExpectHole(
+        const char* name,
+        Fixture& fixture,
+        uintptr_t block,
+        size_t searchLine,
+        size_t expectedFirstLine,
+        size_t expectedEndLine,
+        size_t expectedNextLine)
+    {
+        ImmixHole hole = {};
+        size_t nextLine = SIZE_MAX;
+        ImmixAllocationStatus status =
+            ImmixAllocationStatus::InvalidRequest;
+        SideMetadataResult result = fixture.allocation.TryFindNextHole(
+            block,
+            searchLine,
+            &hole,
+            &nextLine,
+            &status);
+        ExpectMetadata(name, result, SideMetadataResult::Success);
+        Expect(name, status == ImmixAllocationStatus::Ready);
+        Expect(
+            name,
+            hole.start == LineAddress(block, expectedFirstLine));
+        Expect(
+            name,
+            hole.end == LineAddress(block, expectedEndLine));
+        Expect(
+            name,
+            hole.line_count == (expectedEndLine - expectedFirstLine));
+        Expect(name, nextLine == expectedNextLine);
+    }
+
+    void TestHoleDiscovery(uint8_t logReferenceCountBits)
+    {
+        Fixture fixture(logReferenceCountBits);
+        Expect("hole fixture initialized", fixture.initialized);
+        if (!fixture.initialized)
+        {
+            return;
+        }
+
+        uintptr_t block = fixture.data_start;
+        SeedAllLines(fixture, block, 0);
+        ExpectHole(
+            "all-dead starts at block",
+            fixture,
+            block,
+            0,
+            0,
+            ImmixBlockGeometry::LinesPerBlock,
+            ImmixBlockGeometry::LinesPerBlock);
+
+        SeedAllLines(fixture, block, 1);
+        SeedLine(fixture, block, 1, 0);
+        SeedLine(fixture, block, 2, 0);
+        SeedLine(fixture, block, 3, 0);
+        SeedLine(fixture, block, 8, 0);
+        SeedLine(fixture, block, 9, 0);
+        SeedLine(fixture, block, 10, 0);
+        ExpectHole(
+            "interior exact run",
+            fixture,
+            block,
+            0,
+            2,
+            4,
+            4);
+
+        SeedLine(fixture, block, 8, 0);
+        SeedLine(fixture, block, 9, 0);
+        SeedLine(fixture, block, 10, 0);
+        ExpectHole(
+            "second interior run",
+            fixture,
+            block,
+            4,
+            9,
+            11,
+            11);
+
+        SeedAllLines(fixture, block, 1);
+        SeedLine(fixture, block, 125, 0);
+        SeedLine(fixture, block, 126, 0);
+        SeedLine(fixture, block, 127, 0);
+        ExpectHole(
+            "trailing run",
+            fixture,
+            block,
+            0,
+            126,
+            128,
+            128);
+
+        SeedAllLines(fixture, block, 1);
+        SeedLine(fixture, block, 1, 0);
+        SeedLine(fixture, block, 2, 0);
+        ImmixHole hole = {};
+        size_t nextLine = 0;
+        ImmixAllocationStatus status =
+            ImmixAllocationStatus::InvalidRequest;
+        ExpectMetadata(
+            "short run result",
+            fixture.allocation.TryFindNextHole(
+                block,
+                0,
+                &hole,
+                &nextLine,
+                &status),
+            SideMetadataResult::Success);
+        Expect("short run exhausted", status == ImmixAllocationStatus::Exhausted);
+        Expect(
+            "short run next",
+            nextLine == ImmixBlockGeometry::LinesPerBlock);
+
+        ExpectMetadata(
+            "search past block rejected",
+            fixture.allocation.TryFindNextHole(
+                block,
+                ImmixBlockGeometry::LinesPerBlock + 1,
+                &hole,
+                &nextLine,
+                &status),
+            SideMetadataResult::InvalidArgument);
+        ExpectMetadata(
+            "unaligned block rejected",
+            fixture.allocation.TryFindNextHole(
+                block + 1,
+                0,
+                &hole,
+                &nextLine,
+                &status),
+            SideMetadataResult::AddressNotOwned);
+    }
+
+    void TestFreshAllocation()
+    {
+        Fixture fixture;
+        Expect("fresh fixture initialized", fixture.initialized);
+        if (!fixture.initialized)
+        {
+            return;
+        }
+
+        memset(
+            reinterpret_cast<void*>(fixture.data_start),
+            0x5a,
+            fixture.data_size);
+        ExpectMetadata(
+            "seed fresh object marks",
+            fixture.metadata.ResetRangeQuiescent(
+                LaxoriSideMetadataKind::ObjectMark,
+                fixture.data_start,
+                ImmixBlockGeometry::BlockBytes,
+                1),
+            SideMetadataResult::Success);
+        ImmixBumpAllocator allocator;
+        ExpectMetadata(
+            "fresh allocator initialize",
+            allocator.Initialize(&fixture.allocation, OwnerOne),
+            SideMetadataResult::Success);
+        ImmixAllocationStatus status =
+            ImmixAllocationStatus::InvalidRequest;
+        ExpectMetadata(
+            "fresh refill result",
+            allocator.TryRefill(
+                ImmixAllocationSource::MutatorFresh,
+                ImmixMarkingContext::Inactive,
+                &status),
+            SideMetadataResult::Success);
+        Expect("fresh refill ready", status == ImmixAllocationStatus::Ready);
+        Expect("fresh block selected", allocator.GetBlock() == fixture.data_start);
+
+        uint8_t* block = reinterpret_cast<uint8_t*>(fixture.data_start);
+        bool zero = true;
+        for (size_t i = 0; i < ImmixBlockGeometry::BlockBytes; i++)
+        {
+            zero &= block[i] == 0;
+        }
+        Expect("fresh block zeroed", zero);
+        Expect(
+            "fresh field log initialized",
+            LoadMetadata(
+                fixture,
+                LaxoriSideMetadataKind::FieldUnlogged,
+                fixture.data_start) == 0);
+        ExpectObjectMarkRange(
+            "fresh object mark cleared",
+            fixture,
+            fixture.data_start,
+            ImmixBlockGeometry::BlockBytes,
+            0);
+
+        ImmixAllocationRequest minimum = {
+            MIN_OBJECT_SIZE,
+            DATA_ALIGNMENT,
+            0,
+        };
+        uintptr_t object = 0;
+        ExpectMetadata(
+            "minimum allocation result",
+            allocator.TryAllocate(minimum, &object, &status),
+            SideMetadataResult::Success);
+        Expect(
+            "minimum allocation status",
+            status == ImmixAllocationStatus::Allocated);
+        Expect("minimum allocation address", object == fixture.data_start);
+
+        ImmixAllocationRequest alignedWithOffset = {
+            MIN_OBJECT_SIZE,
+            32,
+            8,
+        };
+        ExpectMetadata(
+            "offset-aligned allocation result",
+            allocator.TryAllocate(alignedWithOffset, &object, &status),
+            SideMetadataResult::Success);
+        Expect(
+            "offset-aligned allocation status",
+            status == ImmixAllocationStatus::Allocated);
+        Expect(
+            "offset-aligned allocation address",
+            ((object + alignedWithOffset.alignment_offset) &
+             (alignedWithOffset.alignment - 1)) == 0);
+
+        ImmixAllocationRequest aligned = {
+            MIN_OBJECT_SIZE,
+            32,
+            0,
+        };
+        ExpectMetadata(
+            "aligned allocation result",
+            allocator.TryAllocate(aligned, &object, &status),
+            SideMetadataResult::Success);
+        Expect(
+            "aligned allocation status",
+            status == ImmixAllocationStatus::Allocated);
+        Expect("aligned allocation address", (object & 31) == 0);
+
+        uintptr_t oldCursor = allocator.GetCursor();
+        ImmixAllocationRequest tooSmall = {
+            MIN_OBJECT_SIZE - 1,
+            DATA_ALIGNMENT,
+            0,
+        };
+        ExpectMetadata(
+            "too-small allocation result",
+            allocator.TryAllocate(tooSmall, &object, &status),
+            SideMetadataResult::Success);
+        Expect(
+            "too-small allocation rejected",
+            status == ImmixAllocationStatus::InvalidRequest);
+        Expect(
+            "too-small cursor unchanged",
+            allocator.GetCursor() == oldCursor);
+
+        ImmixAllocationRequest tooLarge = {
+            ImmixBlockGeometry::BlockBytes,
+            DATA_ALIGNMENT,
+            0,
+        };
+        ExpectMetadata(
+            "block-size allocation result",
+            allocator.TryAllocate(tooLarge, &object, &status),
+            SideMetadataResult::Success);
+        Expect(
+            "block-size allocation rejected",
+            status == ImmixAllocationStatus::InvalidRequest);
+        Expect(
+            "block-size cursor unchanged",
+            allocator.GetCursor() == oldCursor);
+
+        ImmixAllocationRequest badAlignment = {
+            MIN_OBJECT_SIZE,
+            12,
+            0,
+        };
+        ExpectMetadata(
+            "bad alignment result",
+            allocator.TryAllocate(badAlignment, &object, &status),
+            SideMetadataResult::Success);
+        Expect(
+            "bad alignment rejected",
+            status == ImmixAllocationStatus::InvalidRequest);
+        Expect(
+            "bad alignment cursor unchanged",
+            allocator.GetCursor() == oldCursor);
+
+        ImmixAllocationRequest badAlignmentOffset = {
+            MIN_OBJECT_SIZE,
+            16,
+            16,
+        };
+        ExpectMetadata(
+            "bad alignment offset result",
+            allocator.TryAllocate(badAlignmentOffset, &object, &status),
+            SideMetadataResult::Success);
+        Expect(
+            "bad alignment offset rejected",
+            status == ImmixAllocationStatus::InvalidRequest);
+        Expect(
+            "bad alignment offset cursor unchanged",
+            allocator.GetCursor() == oldCursor);
+
+        ExpectMetadata(
+            "fresh reset result",
+            allocator.Reset(&status),
+            SideMetadataResult::Success);
+        Expect("fresh reset ready", status == ImmixAllocationStatus::Ready);
+        Expect("fresh reset clears block", allocator.GetBlock() == 0);
+        Expect(
+            "fresh accounting",
+            fixture.allocation.GetFreshBlocksAcquired() == 1);
+    }
+
+    void TestRecycledAllocation(ImmixMarkingContext markingContext)
+    {
+        Fixture fixture;
+        Expect("recycled fixture initialized", fixture.initialized);
+        if (!fixture.initialized)
+        {
+            return;
+        }
+
+        uintptr_t block = fixture.data_start;
+        SeedReusableBlock(fixture, block);
+        SeedAllLines(fixture, block, 1);
+        SeedLine(fixture, block, 1, 0);
+        SeedLine(fixture, block, 2, 0);
+        SeedLine(fixture, block, 3, 0);
+        SeedLine(fixture, block, 8, 0);
+        SeedLine(fixture, block, 9, 0);
+        SeedLine(fixture, block, 10, 0);
+        memset(
+            reinterpret_cast<void*>(block),
+            0x6b,
+            ImmixBlockGeometry::BlockBytes);
+        ExpectMetadata(
+            "seed recycled object marks",
+            fixture.metadata.ResetRangeQuiescent(
+                LaxoriSideMetadataKind::ObjectMark,
+                block,
+                ImmixBlockGeometry::BlockBytes,
+                markingContext == ImmixMarkingContext::Inactive ? 1 : 0),
+            SideMetadataResult::Success);
+        for (size_t line = 2; line <= 3; line++)
+        {
+            uintptr_t lineAddress = LineAddress(block, line);
+            ExpectMetadata(
+                "seed line reuse",
+                fixture.metadata.Store(
+                    LaxoriSideMetadataKind::LineReuse,
+                    lineAddress,
+                    line == 2 ? UINT8_MAX : 9,
+                    SideMetadataMemoryOrder::SequentiallyConsistent),
+                SideMetadataResult::Success);
+        }
+
+        ImmixBumpAllocator allocator;
+        ExpectMetadata(
+            "recycled allocator initialize",
+            allocator.Initialize(&fixture.allocation, OwnerOne),
+            SideMetadataResult::Success);
+        ImmixAllocationStatus status =
+            ImmixAllocationStatus::InvalidRequest;
+        ExpectMetadata(
+            "recycled refill result",
+            allocator.TryRefill(
+                ImmixAllocationSource::MutatorRecycled,
+                markingContext,
+                &status),
+            SideMetadataResult::Success);
+        Expect(
+            "recycled refill ready",
+            status == ImmixAllocationStatus::Ready);
+        Expect(
+            "recycled cursor start",
+            allocator.GetCursor() == LineAddress(block, 2));
+        Expect(
+            "recycled cursor limit",
+            allocator.GetLimit() == LineAddress(block, 4));
+
+        uint8_t* bytes = reinterpret_cast<uint8_t*>(block);
+        bool holeZero = true;
+        for (size_t i = 2 * ImmixBlockGeometry::LineBytes;
+             i < 4 * ImmixBlockGeometry::LineBytes;
+             i++)
+        {
+            holeZero &= bytes[i] == 0;
+        }
+        Expect("recycled hole zeroed", holeZero);
+        Expect(
+            "recycled live prefix preserved",
+            bytes[ImmixBlockGeometry::LineBytes] == 0x6b);
+        Expect(
+            "recycled live suffix preserved",
+            bytes[4 * ImmixBlockGeometry::LineBytes] == 0x6b);
+
+        uintptr_t expectedFirstReuse =
+            markingContext == ImmixMarkingContext::ConcurrentOrFinalMark
+                ? 0
+                : UINT8_MAX;
+        uintptr_t expectedSecondReuse =
+            markingContext == ImmixMarkingContext::ConcurrentOrFinalMark
+                ? 10
+                : 9;
+        ExpectObjectMarkRange(
+            "recycled object mark",
+            fixture,
+            LineAddress(block, 2),
+            2 * ImmixBlockGeometry::LineBytes,
+            1);
+        uintptr_t adjacentObjectMark =
+            markingContext == ImmixMarkingContext::Inactive ? 1 : 0;
+        Expect(
+            "recycled object-mark prefix preserved",
+            LoadMetadata(
+                fixture,
+                LaxoriSideMetadataKind::ObjectMark,
+                LineAddress(block, 1)) == adjacentObjectMark);
+        Expect(
+            "recycled object-mark suffix preserved",
+            LoadMetadata(
+                fixture,
+                LaxoriSideMetadataKind::ObjectMark,
+                LineAddress(block, 4)) == adjacentObjectMark);
+        Expect(
+            "recycled first reuse value",
+            LoadMetadata(
+                fixture,
+                LaxoriSideMetadataKind::LineReuse,
+                LineAddress(block, 2)) == expectedFirstReuse);
+        Expect(
+            "recycled second reuse value",
+            LoadMetadata(
+                fixture,
+                LaxoriSideMetadataKind::LineReuse,
+                LineAddress(block, 3)) == expectedSecondReuse);
+
+        Expect(
+            "recycled line accounting",
+            fixture.allocation.GetRecycledLinesConsumed() ==
+                2);
+        Expect(
+            "recycled block accounting",
+            fixture.allocation.GetRecycledBlocksAcquired() == 1);
+
+        ImmixAllocationRequest exactHole = {
+            2 * ImmixBlockGeometry::LineBytes,
+            DATA_ALIGNMENT,
+            0,
+        };
+        uintptr_t object = 0;
+        ExpectMetadata(
+            "exact-hole allocation result",
+            allocator.TryAllocate(exactHole, &object, &status),
+            SideMetadataResult::Success);
+        Expect(
+            "exact-hole allocation status",
+            status == ImmixAllocationStatus::Allocated);
+        Expect(
+            "exact-hole allocation address",
+            object == LineAddress(block, 2));
+
+        uintptr_t oldCursor = allocator.GetCursor();
+        ImmixAllocationRequest overflowHole = {
+            MIN_OBJECT_SIZE,
+            DATA_ALIGNMENT,
+            0,
+        };
+        ExpectMetadata(
+            "hole overflow result",
+            allocator.TryAllocate(overflowHole, &object, &status),
+            SideMetadataResult::Success);
+        Expect(
+            "hole overflow exhausted",
+            status == ImmixAllocationStatus::Exhausted);
+        Expect(
+            "hole overflow cursor unchanged",
+            allocator.GetCursor() == oldCursor);
+        ExpectMetadata(
+            "next-hole refill result",
+            allocator.TryRefill(
+                ImmixAllocationSource::MutatorRecycled,
+                markingContext,
+                &status),
+            SideMetadataResult::Success);
+        Expect(
+            "next-hole refill ready",
+            status == ImmixAllocationStatus::Ready);
+        Expect(
+            "next-hole retains block",
+            allocator.GetBlock() == block);
+        Expect(
+            "next-hole cursor start",
+            allocator.GetCursor() == LineAddress(block, 9));
+        Expect(
+            "next-hole cursor limit",
+            allocator.GetLimit() == LineAddress(block, 11));
+        Expect(
+            "next-hole line accounting",
+            fixture.allocation.GetRecycledLinesConsumed() == 4);
+        ExpectMetadata(
+            "source-switch refill result",
+            allocator.TryRefill(
+                ImmixAllocationSource::MutatorFresh,
+                markingContext,
+                &status),
+            SideMetadataResult::Success);
+        Expect(
+            "source-switch refill ready",
+            status == ImmixAllocationStatus::Ready);
+        Expect(
+            "source-switch selects fresh block",
+            allocator.GetBlock() ==
+                (block + ImmixBlockGeometry::BlockBytes));
+        ExpectObjectMarkRange(
+            "source-switch fresh object mark",
+            fixture,
+            block + ImmixBlockGeometry::BlockBytes,
+            ImmixBlockGeometry::BlockBytes,
+            markingContext == ImmixMarkingContext::Inactive ? 0 : 1);
+        Expect(
+            "source-switch returns recycled owner",
+            LoadMetadata(
+                fixture,
+                LaxoriSideMetadataKind::BlockOwner,
+                block) == ImmixBlockManager::NoOwner);
+        ExpectMetadata(
+            "source-switch reset result",
+            allocator.Reset(&status),
+            SideMetadataResult::Success);
+    }
+
+    void TestGcCopyRecycledAllocation()
+    {
+        Fixture fixture(1, 2, 2);
+        Expect("copy recycled fixture initialized", fixture.initialized);
+        if (!fixture.initialized)
+        {
+            return;
+        }
+
+        uintptr_t block = fixture.data_start;
+        SeedReusableBlock(fixture, block);
+        SeedAllLines(fixture, block, 1);
+        SeedLine(fixture, block, 1, 0);
+        SeedLine(fixture, block, 2, 0);
+        SeedLine(fixture, block, 3, 0);
+        memset(
+            reinterpret_cast<void*>(block),
+            0x6b,
+            ImmixBlockGeometry::BlockBytes);
+        ExpectMetadata(
+            "clear copy recycled object marks",
+            fixture.metadata.ResetRangeQuiescent(
+                LaxoriSideMetadataKind::ObjectMark,
+                block,
+                ImmixBlockGeometry::BlockBytes,
+                0),
+            SideMetadataResult::Success);
+        ExpectMetadata(
+            "seed copy recycled reuse",
+            fixture.metadata.Store(
+                LaxoriSideMetadataKind::LineReuse,
+                LineAddress(block, 2),
+                9,
+                SideMetadataMemoryOrder::SequentiallyConsistent),
+            SideMetadataResult::Success);
+
+        ImmixBlockOperationStatus phaseStatus;
+        ExpectMetadata(
+            "start copy recycled GC phase",
+            fixture.blocks.StartGcPause(&phaseStatus),
+            SideMetadataResult::Success);
+        Expect(
+            "copy recycled GC phase updated",
+            phaseStatus == ImmixBlockOperationStatus::Updated);
+
+        ImmixBumpAllocator allocator;
+        ExpectMetadata(
+            "copy recycled allocator initialize",
+            allocator.Initialize(&fixture.allocation, OwnerOne),
+            SideMetadataResult::Success);
+        ImmixAllocationStatus status =
+            ImmixAllocationStatus::InvalidRequest;
+        ExpectMetadata(
+            "copy recycled refill result",
+            allocator.TryRefill(
+                ImmixAllocationSource::GcCopyRecycled,
+                ImmixMarkingContext::ConcurrentOrFinalMark,
+                &status),
+            SideMetadataResult::Success);
+        Expect(
+            "copy recycled refill ready",
+            status == ImmixAllocationStatus::Ready);
+        Expect(
+            "copy recycled cursor start",
+            allocator.GetCursor() == LineAddress(block, 2));
+        Expect(
+            "copy recycled bytes preserved",
+            reinterpret_cast<uint8_t*>(block)[
+                2 * ImmixBlockGeometry::LineBytes] == 0x6b);
+        Expect(
+            "copy recycled field log initialized",
+            LoadMetadata(
+                fixture,
+                LaxoriSideMetadataKind::FieldUnlogged,
+                LineAddress(block, 2)) == 1);
+        ExpectObjectMarkRange(
+            "copy recycled object mark",
+            fixture,
+            LineAddress(block, 2),
+            2 * ImmixBlockGeometry::LineBytes,
+            1);
+        Expect(
+            "copy recycled object-mark prefix preserved",
+            LoadMetadata(
+                fixture,
+                LaxoriSideMetadataKind::ObjectMark,
+                LineAddress(block, 1)) == 0);
+        Expect(
+            "copy recycled object-mark suffix preserved",
+            LoadMetadata(
+                fixture,
+                LaxoriSideMetadataKind::ObjectMark,
+                LineAddress(block, 4)) == 0);
+        Expect(
+            "copy recycled reuse incremented",
+            LoadMetadata(
+                fixture,
+                LaxoriSideMetadataKind::LineReuse,
+                LineAddress(block, 2)) == 10);
+        Expect(
+            "copy recycled accounting excluded",
+            fixture.allocation.GetRecycledLinesConsumed() == 0);
+
+        ExpectMetadata(
+            "copy recycled reset",
+            allocator.Reset(&status),
+            SideMetadataResult::Success);
+        ExpectMetadata(
+            "release copy recycled GC phase",
+            fixture.blocks.ReleaseGcPause(&phaseStatus),
+            SideMetadataResult::Success);
+    }
+
+    // ---- P28 (F9): the hole search and the refill as the Java LAXORI does them ----
+
+    struct F9Hole
+    {
+        size_t first;
+        size_t end;
+    };
+
+    // The search of the Java LAXORI (immixspace.rs: rc_get_next_available_lines), written again from its source over a
+    // table of live lines: the whole block is known, and the holes are listed in one pass. The first dead line after a live
+    // line is skipped (an object may end in it), a run shorter than the minimum is skipped, and the next search starts at
+    // the end of the hole.
+    std::vector<F9Hole> F9JavaHoles(const std::vector<bool>& live, size_t minimumLines)
+    {
+        std::vector<F9Hole> holes;
+        size_t search = 0;
+        const size_t limit = live.size();
+        while (search < limit)
+        {
+            size_t first = limit;
+            bool findFreeLine = false;
+            for (size_t i = search; i < limit; i++)
+            {
+                if (!live[i])
+                {
+                    if (i == 0)
+                    {
+                        first = i;
+                        break;
+                    }
+                    else if (!findFreeLine)
+                    {
+                        findFreeLine = true;
+                    }
+                    else
+                    {
+                        first = i;
+                        break;
+                    }
+                }
+                else
+                {
+                    findFreeLine = false;
+                }
+            }
+            if (first == limit)
+            {
+                break;
+            }
+            size_t end = first + 1;
+            while (end < limit && !live[end])
+            {
+                end++;
+            }
+            if (end - first >= minimumLines)
+            {
+                holes.push_back({first, end});
+            }
+            search = end;
+        }
+        return holes;
+    }
+
+    uint32_t F9Next(uint64_t* state)
+    {
+        *state = (*state * UINT64_C(6364136223846793005)) + UINT64_C(1442695040888963407);
+        return static_cast<uint32_t>(*state >> 33);
+    }
+
+    // Puts a count in one slot of a line, not always the first slot, so that every word of the counts of the line is used.
+    void F9SeedLiveLine(Fixture& fixture, uintptr_t block, size_t line, uint8_t logBits, uint64_t* state)
+    {
+        uintptr_t maximum = (static_cast<uintptr_t>(1) << (1u << logBits)) - 1;
+        uintptr_t value = F9Next(state) % 4 == 0 ? maximum : 1 + (F9Next(state) % maximum);
+        size_t slot = F9Next(state) % (ImmixBlockGeometry::LineBytes / sizeof(uintptr_t));
+        ExpectMetadata(
+            "f9 seed live slot",
+            fixture.metadata.Store(
+                LaxoriSideMetadataKind::ReferenceCount,
+                LineAddress(block, line) + (slot * sizeof(uintptr_t)),
+                value,
+                SideMetadataMemoryOrder::Relaxed),
+            SideMetadataResult::Success);
+    }
+
+    // The holes that the lazy search returns one by one are the holes that the eager search of the Java LAXORI lists, for counts
+    // of 2, 4 and 8 bits, for every minimum run length, and for random line patterns, with live lines of every density.
+    void TestF9ScanEquivalence()
+    {
+        constexpr double Densities[] = {0.0, 0.05, 0.3, 0.6, 0.9, 1.0};
+        uint64_t state = 28;
+        for (uint8_t logBits = 1; logBits <= 3; logBits++)
+        {
+            for (size_t minimumLines : {1, 2, 3, 7})
+            {
+                Fixture fixture(logBits, 4, minimumLines);
+                Expect("f9 scan fixture initialized", fixture.initialized);
+                if (!fixture.initialized)
+                {
+                    return;
+                }
+                size_t mismatches = 0;
+                size_t compared = 0;
+                for (size_t round = 0; round < 40; round++)
+                {
+                    for (size_t index = 0; index < 4; index++)
+                    {
+                        uintptr_t block = fixture.data_start + (index * ImmixBlockGeometry::BlockBytes);
+                        double density = Densities[(round + index) % 6];
+                        std::vector<bool> live(ImmixBlockGeometry::LinesPerBlock, false);
+                        SeedAllLines(fixture, block, 0);
+                        for (size_t line = 0; line < live.size(); line++)
+                        {
+                            live[line] = (F9Next(&state) % 1000) < static_cast<uint32_t>(density * 1000);
+                            if (live[line])
+                            {
+                                F9SeedLiveLine(fixture, block, line, logBits, &state);
+                            }
+                        }
+                        std::vector<F9Hole> expected = F9JavaHoles(live, minimumLines);
+                        std::vector<F9Hole> actual;
+                        size_t search = 0;
+                        for (size_t guard = 0; guard <= ImmixBlockGeometry::LinesPerBlock; guard++)
+                        {
+                            ImmixHole hole = {};
+                            size_t next = 0;
+                            ImmixAllocationStatus status = ImmixAllocationStatus::InvalidRequest;
+                            SideMetadataResult result =
+                                fixture.allocation.TryFindNextHole(block, search, &hole, &next, &status);
+                            if (result != SideMetadataResult::Success || status != ImmixAllocationStatus::Ready)
+                            {
+                                break;
+                            }
+                            actual.push_back({
+                                static_cast<size_t>(hole.start - block) / ImmixBlockGeometry::LineBytes,
+                                static_cast<size_t>(hole.end - block) / ImmixBlockGeometry::LineBytes});
+                            if (next != actual.back().end)
+                            {
+                                mismatches++;
+                            }
+                            search = next;
+                        }
+                        compared++;
+                        bool same = actual.size() == expected.size();
+                        for (size_t i = 0; same && i < actual.size(); i++)
+                        {
+                            same = actual[i].first == expected[i].first && actual[i].end == expected[i].end;
+                        }
+                        mismatches += same ? 0 : 1;
+                    }
+                }
+                Expect("f9 the lazy hole search returns the holes of the eager search of the Java LAXORI",
+                    mismatches == 0 && compared == 160);
+            }
+        }
+    }
+
+    // The search reads only the lines that one buffer needs: from the search line to the first live line after the hole.
+    void TestF9LazyScan()
+    {
+        uint64_t state = 7;
+        for (uint8_t logBits = 1; logBits <= 3; logBits++)
+        {
+            Fixture fixture(logBits, 2, 1);
+            Expect("f9 lazy fixture initialized", fixture.initialized);
+            if (!fixture.initialized)
+            {
+                return;
+            }
+            size_t wrong = 0;
+            size_t checked = 0;
+            for (size_t round = 0; round < 60; round++)
+            {
+                uintptr_t block = fixture.data_start;
+                std::vector<bool> live(ImmixBlockGeometry::LinesPerBlock, false);
+                SeedAllLines(fixture, block, 0);
+                for (size_t line = 0; line < live.size(); line++)
+                {
+                    live[line] = F9Next(&state) % 100 < 40;
+                    if (live[line])
+                    {
+                        F9SeedLiveLine(fixture, block, line, logBits, &state);
+                    }
+                }
+                size_t search = 0;
+                while (search < ImmixBlockGeometry::LinesPerBlock)
+                {
+                    ImmixHole hole = {};
+                    size_t next = 0;
+                    ImmixAllocationStatus status = ImmixAllocationStatus::InvalidRequest;
+                    uint64_t before = fixture.allocation.GetLineProbesForTest();
+                    SideMetadataResult result = fixture.allocation.TryFindNextHole(block, search, &hole, &next, &status);
+                    uint64_t probes = fixture.allocation.GetLineProbesForTest() - before;
+                    // The last line that is read: the line after the hole when the hole ends before the block end, else
+                    // the last line of the block.
+                    size_t lastRead = ImmixBlockGeometry::LinesPerBlock - 1;
+                    if (status == ImmixAllocationStatus::Ready)
+                    {
+                        size_t end = static_cast<size_t>(hole.end - block) / ImmixBlockGeometry::LineBytes;
+                        lastRead = end < ImmixBlockGeometry::LinesPerBlock ? end : ImmixBlockGeometry::LinesPerBlock - 1;
+                    }
+                    checked++;
+                    wrong += (result != SideMetadataResult::Success || probes != (lastRead - search + 1)) ? 1 : 0;
+                    if (status != ImmixAllocationStatus::Ready)
+                    {
+                        break;
+                    }
+                    search = next;
+                }
+            }
+            Expect("f9 one search reads only the lines from the search line to the end of the hole", wrong == 0 && checked != 0);
+        }
+    }
+
+    // The refill clears only what the Java LAXORI clears at a refill (the unlog table, and the mark table when a trace runs),
+    // plus the ValidObject plane (forced by .NET). It does not touch the count plane and the straddle plane: they are zero
+    // in a free range, and a range that is not zero is reported.
+    void TestF9RefillSchedule(uint8_t logBits)
+    {
+        Fixture fixture(logBits, 6, 1);
+        Expect("f9 refill fixture initialized", fixture.initialized);
+        if (!fixture.initialized)
+        {
+            return;
+        }
+        size_t arenaBytes = 6 * ImmixBlockGeometry::BlockBytes;
+        for (LaxoriSideMetadataKind kind : {LaxoriSideMetadataKind::ValidObject, LaxoriSideMetadataKind::FieldUnlogged,
+                 LaxoriSideMetadataKind::ObjectMark})
+        {
+            ExpectMetadata("f9 poison plane",
+                fixture.metadata.FillRangeBytes(kind, fixture.data_start, arenaBytes, 0xff), SideMetadataResult::Success);
+        }
+        for (size_t block = 0; block < 6; block++)
+        {
+            ExpectMetadata("f9 preset reuse count",
+                fixture.metadata.Store(LaxoriSideMetadataKind::LineReuse,
+                    LineAddress(fixture.data_start + (block * ImmixBlockGeometry::BlockBytes), 5), UINT8_MAX,
+                    SideMetadataMemoryOrder::SequentiallyConsistent),
+                SideMetadataResult::Success);
+        }
+        auto planeIs = [&](LaxoriSideMetadataKind kind, uintptr_t start, size_t size, uintptr_t expected)
+        {
+            for (uintptr_t address = start; address < start + size; address += sizeof(uintptr_t))
+            {
+                if (LoadMetadata(fixture, kind, address) != expected)
+                {
+                    return false;
+                }
+            }
+            return true;
+        };
+        auto countsAndStraddleZero = [&](uintptr_t start, size_t size)
+        {
+            bool zero = false;
+            bool straddleZero = false;
+            return fixture.metadata.IsRangeZero(LaxoriSideMetadataKind::ReferenceCount, start, size,
+                       SideMetadataMemoryOrder::Relaxed, &zero) == SideMetadataResult::Success && zero &&
+                fixture.metadata.IsRangeZero(LaxoriSideMetadataKind::ReferenceCountStraddle, start, size,
+                       SideMetadataMemoryOrder::Relaxed, &straddleZero) == SideMetadataResult::Success && straddleZero;
+        };
+
+        // A fresh block for a mutator outside a trace: the unlog table, the mark table and the ValidObject plane are clear.
+        ImmixBumpAllocator first;
+        ImmixAllocationStatus status = ImmixAllocationStatus::InvalidRequest;
+        ExpectMetadata("f9 first allocator", first.Initialize(&fixture.allocation, OwnerOne), SideMetadataResult::Success);
+        ExpectMetadata("f9 fresh refill", first.TryRefill(ImmixAllocationSource::MutatorFresh,
+            ImmixMarkingContext::Inactive, &status), SideMetadataResult::Success);
+        Expect("f9 fresh refill ready", status == ImmixAllocationStatus::Ready);
+        uintptr_t freshBlock = first.GetBlock();
+        Expect("f9 fresh block clears ValidObject", planeIs(LaxoriSideMetadataKind::ValidObject, freshBlock,
+            ImmixBlockGeometry::BlockBytes, 0));
+        Expect("f9 fresh block clears the unlog table", planeIs(LaxoriSideMetadataKind::FieldUnlogged, freshBlock,
+            ImmixBlockGeometry::BlockBytes, 0));
+        Expect("f9 fresh block clears the mark table", planeIs(LaxoriSideMetadataKind::ObjectMark, freshBlock,
+            ImmixBlockGeometry::BlockBytes, 0));
+        Expect("f9 fresh block keeps zero counts and no straddle mark",
+            countsAndStraddleZero(freshBlock, ImmixBlockGeometry::BlockBytes));
+        Expect("f9 fresh block outside a trace leaves the reuse counts",
+            LoadMetadata(fixture, LaxoriSideMetadataKind::LineReuse, LineAddress(freshBlock, 5)) == UINT8_MAX);
+        uintptr_t otherBlock = freshBlock == fixture.data_start ? fixture.data_start + ImmixBlockGeometry::BlockBytes
+                                                                 : fixture.data_start;
+        Expect("f9 a block that no buffer took keeps its planes",
+            planeIs(LaxoriSideMetadataKind::ValidObject, otherBlock, ImmixBlockGeometry::BlockBytes, 1) &&
+            planeIs(LaxoriSideMetadataKind::FieldUnlogged, otherBlock, ImmixBlockGeometry::BlockBytes, 1) &&
+            planeIs(LaxoriSideMetadataKind::ObjectMark, otherBlock, ImmixBlockGeometry::BlockBytes, 1));
+
+        // A fresh block during a trace: marked in bulk, and the reuse counts of its lines are incremented (255 wraps to 0).
+        ImmixBumpAllocator second;
+        ExpectMetadata("f9 second allocator", second.Initialize(&fixture.allocation, OwnerTwo), SideMetadataResult::Success);
+        ExpectMetadata("f9 marking fresh refill", second.TryRefill(ImmixAllocationSource::MutatorFresh,
+            ImmixMarkingContext::ConcurrentOrFinalMark, &status), SideMetadataResult::Success);
+        uintptr_t markedBlock = second.GetBlock();
+        Expect("f9 marking refill took another block", markedBlock != freshBlock && markedBlock != 0);
+        Expect("f9 a refill during a trace marks the whole block", planeIs(LaxoriSideMetadataKind::ObjectMark, markedBlock,
+            ImmixBlockGeometry::BlockBytes, 1));
+        Expect("f9 a refill during a trace clears the unlog table", planeIs(LaxoriSideMetadataKind::FieldUnlogged, markedBlock,
+            ImmixBlockGeometry::BlockBytes, 0));
+        bool reuseOk = LoadMetadata(fixture, LaxoriSideMetadataKind::LineReuse, LineAddress(markedBlock, 5)) == 0;
+        for (size_t line = 0; line < ImmixBlockGeometry::LinesPerBlock; line++)
+        {
+            reuseOk = reuseOk && (line == 5 ||
+                LoadMetadata(fixture, LaxoriSideMetadataKind::LineReuse, LineAddress(markedBlock, line)) == 1);
+        }
+        Expect("f9 a refill during a trace increments the reuse count of every line", reuseOk);
+        Expect("f9 the marking refill keeps zero counts and no straddle mark",
+            countsAndStraddleZero(markedBlock, ImmixBlockGeometry::BlockBytes));
+
+        // A recycled hole: only the hole is changed, and the lines after it are not read (the lazy search).
+        uintptr_t reusable = 0;
+        for (size_t index = 0; index < 6; index++)
+        {
+            uintptr_t candidate = fixture.data_start + (index * ImmixBlockGeometry::BlockBytes);
+            if (candidate != freshBlock && candidate != markedBlock)
+            {
+                reusable = candidate;
+                break;
+            }
+        }
+        SeedReusableBlock(fixture, reusable);
+        SeedAllLines(fixture, reusable, 1);
+        SeedLine(fixture, reusable, 6, 0);
+        SeedLine(fixture, reusable, 7, 0);
+        SeedLine(fixture, reusable, 8, 0);
+        ImmixBumpAllocator third;
+        ExpectMetadata("f9 third allocator", third.Initialize(&fixture.allocation, OwnerThree), SideMetadataResult::Success);
+        uint64_t before = fixture.allocation.GetLineProbesForTest();
+        ExpectMetadata("f9 recycled refill", third.TryRefill(ImmixAllocationSource::MutatorRecycled,
+            ImmixMarkingContext::Inactive, &status), SideMetadataResult::Success);
+        Expect("f9 recycled refill ready", status == ImmixAllocationStatus::Ready);
+        Expect("f9 the recycled hole is the run after the skipped line",
+            third.GetCursor() == LineAddress(reusable, 7) && third.GetLimit() == LineAddress(reusable, 9));
+        Expect("f9 the search of one hole read 10 lines of 128",
+            fixture.allocation.GetLineProbesForTest() - before == 10);
+        Expect("f9 the recycled hole clears ValidObject and the unlog table",
+            planeIs(LaxoriSideMetadataKind::ValidObject, LineAddress(reusable, 7), 2 * ImmixBlockGeometry::LineBytes, 0) &&
+            planeIs(LaxoriSideMetadataKind::FieldUnlogged, LineAddress(reusable, 7), 2 * ImmixBlockGeometry::LineBytes, 0));
+        Expect("f9 the recycled hole leaves its neighbours alone",
+            planeIs(LaxoriSideMetadataKind::ValidObject, LineAddress(reusable, 6), ImmixBlockGeometry::LineBytes, 1) &&
+            planeIs(LaxoriSideMetadataKind::ValidObject, LineAddress(reusable, 9), ImmixBlockGeometry::LineBytes, 1) &&
+            planeIs(LaxoriSideMetadataKind::FieldUnlogged, LineAddress(reusable, 9), ImmixBlockGeometry::LineBytes, 1));
+        Expect("f9 outside a trace the recycled hole keeps its mark bits",
+            planeIs(LaxoriSideMetadataKind::ObjectMark, LineAddress(reusable, 7), 2 * ImmixBlockGeometry::LineBytes, 1));
+
+        ImmixBumpAllocator* all[] = {&first, &second, &third};
+        for (ImmixBumpAllocator* allocator : all)
+        {
+            allocator->Reset(&status);
+        }
+    }
+
+    // A range that a mutator is about to take has zero counts and no straddle mark. When it has, the refill reports it
+    // (Debug builds and the test platform), and does not clear the planes.
+    void TestF9DirtyRangeIsReported()
+    {
+        for (bool straddle : {false, true})
+        {
+            Fixture fixture(2, 2, 1);
+            Expect("f9 dirty fixture initialized", fixture.initialized);
+            if (!fixture.initialized)
+            {
+                return;
+            }
+            uintptr_t block = fixture.data_start;
+            if (straddle)
+            {
+                ExpectMetadata("f9 dirty straddle",
+                    fixture.metadata.Store(LaxoriSideMetadataKind::ReferenceCountStraddle, LineAddress(block, 3), 1,
+                        SideMetadataMemoryOrder::SequentiallyConsistent), SideMetadataResult::Success);
+            }
+            else
+            {
+                SeedLine(fixture, block, 3, 1);
+            }
+            ImmixBumpAllocator allocator;
+            ExpectMetadata("f9 dirty allocator", allocator.Initialize(&fixture.allocation, OwnerOne),
+                SideMetadataResult::Success);
+            ImmixAllocationStatus status = ImmixAllocationStatus::InvalidRequest;
+            SideMetadataResult result = allocator.TryRefill(ImmixAllocationSource::MutatorFresh,
+                ImmixMarkingContext::Inactive, &status);
+            // The allocator takes the next block when this one fails, so look at the outcome for the dirty block.
+            uintptr_t taken = allocator.GetBlock();
+            Expect("f9 a dirty free block is reported and not handed out",
+                result == SideMetadataResult::InconsistentState || (result == SideMetadataResult::Success &&
+                    taken != block && taken != 0));
+            bool zero = true;
+            fixture.metadata.IsRangeZero(LaxoriSideMetadataKind::ReferenceCount, block, ImmixBlockGeometry::BlockBytes,
+                SideMetadataMemoryOrder::Relaxed, &zero);
+            Expect("f9 the refill does not clear a count that it found", straddle ? true : !zero);
+            allocator.Reset(&status);
+        }
+    }
+
+    // Item 4. A recycled refill that is given the size of the pending request passes over the holes that are too small
+    // for it: it does not zero them, clear their planes or count their lines, and it counts them as skipped.
+    void TestMinimumHoleBytes()
+    {
+        Fixture fixture(1, 6, 1);
+        Expect("item4 hole fixture initialized", fixture.initialized);
+        if (!fixture.initialized)
+        {
+            return;
+        }
+        size_t arenaBytes = 6 * ImmixBlockGeometry::BlockBytes;
+        for (LaxoriSideMetadataKind kind : {LaxoriSideMetadataKind::ValidObject, LaxoriSideMetadataKind::FieldUnlogged})
+        {
+            ExpectMetadata("item4 poison plane",
+                fixture.metadata.FillRangeBytes(kind, fixture.data_start, arenaBytes, 0xff), SideMetadataResult::Success);
+        }
+        auto planeIs = [&](LaxoriSideMetadataKind kind, uintptr_t start, size_t size, uintptr_t expected)
+        {
+            for (uintptr_t address = start; address < start + size; address += sizeof(uintptr_t))
+            {
+                if (LoadMetadata(fixture, kind, address) != expected)
+                {
+                    return false;
+                }
+            }
+            return true;
+        };
+        // Block B: holes of 2 lines ([4,6)), 6 lines ([9,15)) and 2 lines ([21,23)). Block C: one hole of 2 lines.
+        uintptr_t blockB = fixture.data_start + (2 * ImmixBlockGeometry::BlockBytes);
+        uintptr_t blockC = fixture.data_start + (4 * ImmixBlockGeometry::BlockBytes);
+        for (uintptr_t block : {blockB, blockC})
+        {
+            SeedReusableBlock(fixture, block);
+            SeedAllLines(fixture, block, 1);
+        }
+        for (size_t line : {3, 4, 5, 8, 9, 10, 11, 12, 13, 14, 20, 21, 22})
+        {
+            SeedLine(fixture, blockB, line, 0);
+        }
+        for (size_t line : {3, 4, 5})
+        {
+            SeedLine(fixture, blockC, line, 0);
+        }
+        constexpr size_t Request = 4 * ImmixBlockGeometry::LineBytes;
+        ImmixBumpAllocator first;
+        ImmixAllocationStatus status = ImmixAllocationStatus::InvalidRequest;
+        ExpectMetadata("item4 first allocator", first.Initialize(&fixture.allocation, OwnerOne), SideMetadataResult::Success);
+        ExpectMetadata("item4 refill for a request of 4 lines",
+            first.TryRefill(ImmixAllocationSource::MutatorRecycled, ImmixMarkingContext::Inactive, &status, Request),
+            SideMetadataResult::Success);
+        Expect("item4 the refill is ready", status == ImmixAllocationStatus::Ready);
+        Expect("item4 the refill passes over the hole of 2 lines and takes the hole of 6 lines",
+            first.GetBlock() == blockB && first.GetCursor() == LineAddress(blockB, 9) &&
+            first.GetLimit() == LineAddress(blockB, 15));
+        Expect("item4 one hole was skipped", fixture.allocation.GetHolesSkipped() == 1);
+        Expect("item4 only the lines of the hole that was taken are counted as consumed",
+            fixture.allocation.GetRecycledLinesConsumed() == 6);
+        Expect("item4 the hole that was passed over keeps its planes",
+            planeIs(LaxoriSideMetadataKind::ValidObject, LineAddress(blockB, 4), 2 * ImmixBlockGeometry::LineBytes, 1) &&
+            planeIs(LaxoriSideMetadataKind::FieldUnlogged, LineAddress(blockB, 4), 2 * ImmixBlockGeometry::LineBytes, 1));
+        Expect("item4 the hole that was taken has clear planes",
+            planeIs(LaxoriSideMetadataKind::ValidObject, LineAddress(blockB, 9), 6 * ImmixBlockGeometry::LineBytes, 0) &&
+            planeIs(LaxoriSideMetadataKind::FieldUnlogged, LineAddress(blockB, 9), 6 * ImmixBlockGeometry::LineBytes, 0));
+
+        ExpectMetadata("item4 second refill for a request of 4 lines",
+            first.TryRefill(ImmixAllocationSource::MutatorRecycled, ImmixMarkingContext::Inactive, &status, Request),
+            SideMetadataResult::Success);
+        Expect("item4 no hole of 4 lines is left", status == ImmixAllocationStatus::Exhausted && first.GetBlock() == 0);
+        Expect("item4 the holes of 2 lines of both blocks were skipped", fixture.allocation.GetHolesSkipped() == 3);
+        Expect("item4 nothing more was counted as consumed", fixture.allocation.GetRecycledLinesConsumed() == 6);
+        Expect("item4 the holes of 2 lines keep their planes",
+            planeIs(LaxoriSideMetadataKind::ValidObject, LineAddress(blockB, 21), 2 * ImmixBlockGeometry::LineBytes, 1) &&
+            planeIs(LaxoriSideMetadataKind::ValidObject, LineAddress(blockC, 4), 2 * ImmixBlockGeometry::LineBytes, 1) &&
+            planeIs(LaxoriSideMetadataKind::FieldUnlogged, LineAddress(blockC, 4), 2 * ImmixBlockGeometry::LineBytes, 1));
+
+    }
+
+    // Item 4. Without a size every hole is taken, as before, and a fresh refill ignores the size. A new fixture: a block
+    // that was taken is not taken again in the epoch.
+    void TestMinimumHoleBytesUnsized()
+    {
+        ImmixAllocationStatus status = ImmixAllocationStatus::InvalidRequest;
+        Fixture other(1, 6, 1);
+        Expect("item4 second fixture initialized", other.initialized);
+        if (!other.initialized)
+        {
+            return;
+        }
+        uintptr_t otherBlock = other.data_start + (2 * ImmixBlockGeometry::BlockBytes);
+        SeedReusableBlock(other, otherBlock);
+        SeedAllLines(other, otherBlock, 1);
+        for (size_t line : {3, 4, 5, 8, 9, 10, 11, 12, 13, 14})
+        {
+            SeedLine(other, otherBlock, line, 0);
+        }
+        ImmixBumpAllocator second;
+        ExpectMetadata("item4 second allocator", second.Initialize(&other.allocation, OwnerTwo), SideMetadataResult::Success);
+        ExpectMetadata("item4 refill without a size",
+            second.TryRefill(ImmixAllocationSource::MutatorRecycled, ImmixMarkingContext::Inactive, &status),
+            SideMetadataResult::Success);
+        Expect("item4 the refill without a size takes the first hole",
+            status == ImmixAllocationStatus::Ready && second.GetBlock() == otherBlock &&
+            second.GetCursor() == LineAddress(otherBlock, 4) && second.GetLimit() == LineAddress(otherBlock, 6));
+        Expect("item4 the refill without a size counts the hole and skips none",
+            other.allocation.GetRecycledLinesConsumed() == 2 && other.allocation.GetHolesSkipped() == 0);
+        second.Reset(&status);
+
+        // A fresh refill ignores the size.
+        ImmixBumpAllocator third;
+        ExpectMetadata("item4 third allocator", third.Initialize(&other.allocation, OwnerThree), SideMetadataResult::Success);
+        ExpectMetadata("item4 fresh refill with a size",
+            third.TryRefill(ImmixAllocationSource::MutatorFresh, ImmixMarkingContext::Inactive, &status,
+                12 * ImmixBlockGeometry::LineBytes),
+            SideMetadataResult::Success);
+        Expect("item4 a fresh refill gives the whole block",
+            status == ImmixAllocationStatus::Ready && third.GetLimit() - third.GetCursor() == ImmixBlockGeometry::BlockBytes);
+        third.Reset(&status);
+    }
+
+    // The search for a hole of a given length (the search of a medium request) lists the holes of the lazy search, in the same
+    // order, and returns the first of at least that length: for counts of 2, 4 and 8 bits, every minimum run length, many
+    // required lengths and start lines, and random line patterns. The sum of the lines of all holes (the free lines of a
+    // block that a sweep counts) is the same as the sum over the lazy search.
+    void TestFittingHoleSearch()
+    {
+        constexpr double Densities[] = {0.0, 0.05, 0.3, 0.6, 0.9, 1.0};
+        constexpr size_t Lengths[] = {0, 1, 2, 3, 5, 16, 63, 64, 65, 100, 127, 128, 129};
+        constexpr size_t Starts[] = {0, 1, 2, 7, 62, 63, 64, 65, 100, 126, 127, 128};
+        uint64_t state = 91;
+        size_t mismatches = 0;
+        size_t compared = 0;
+        size_t fits = 0;
+        size_t sumMismatches = 0;
+        for (uint8_t logBits = 1; logBits <= 3; logBits++)
+        {
+            for (size_t minimumReuse : {1, 2, 3})
+            {
+                Fixture fixture(logBits, 4, minimumReuse);
+                Expect("fitting fixture initialized", fixture.initialized);
+                if (!fixture.initialized)
+                {
+                    return;
+                }
+                for (size_t round = 0; round < 24; round++)
+                {
+                    for (size_t index = 0; index < 4; index++)
+                    {
+                        uintptr_t block = fixture.data_start + (index * ImmixBlockGeometry::BlockBytes);
+                        double density = Densities[(round + index) % 6];
+                        SeedAllLines(fixture, block, 0);
+                        for (size_t line = 0; line < ImmixBlockGeometry::LinesPerBlock; line++)
+                        {
+                            if ((F9Next(&state) % 1000) < static_cast<uint32_t>(density * 1000))
+                            {
+                                F9SeedLiveLine(fixture, block, line, logBits, &state);
+                            }
+                        }
+
+                        size_t lazyTotal = 0;
+                        for (size_t search = 0; search < ImmixBlockGeometry::LinesPerBlock;)
+                        {
+                            ImmixHole hole = {};
+                            size_t next = 0;
+                            ImmixAllocationStatus status = ImmixAllocationStatus::InvalidRequest;
+                            fixture.allocation.TryFindNextHole(block, search, &hole, &next, &status);
+                            if (status != ImmixAllocationStatus::Ready)
+                            {
+                                break;
+                            }
+                            lazyTotal += hole.line_count;
+                            search = next;
+                        }
+                        size_t counted = SIZE_MAX;
+                        SideMetadataResult countResult = fixture.allocation.CountHoleLines(block, &counted);
+                        sumMismatches += (countResult != SideMetadataResult::Success || counted != lazyTotal) ? 1 : 0;
+
+                        for (size_t length : Lengths)
+                        {
+                            for (size_t start : Starts)
+                            {
+                                size_t expectedSkipped = 0;
+                                size_t expectedNext = start;
+                                ImmixHole expectedHole = {};
+                                ImmixAllocationStatus expectedStatus = ImmixAllocationStatus::Exhausted;
+                                size_t search = start;
+                                for (;;)
+                                {
+                                    ImmixHole hole = {};
+                                    size_t next = 0;
+                                    ImmixAllocationStatus status = ImmixAllocationStatus::InvalidRequest;
+                                    fixture.allocation.TryFindNextHole(block, search, &hole, &next, &status);
+                                    if (status != ImmixAllocationStatus::Ready)
+                                    {
+                                        expectedNext = next;
+                                        break;
+                                    }
+                                    if (hole.line_count >= length)
+                                    {
+                                        expectedHole = hole;
+                                        expectedNext = next;
+                                        expectedStatus = ImmixAllocationStatus::Ready;
+                                        break;
+                                    }
+                                    expectedSkipped++;
+                                    search = next;
+                                }
+
+                                ImmixHole actualHole = {};
+                                size_t actualNext = SIZE_MAX;
+                                ImmixAllocationStatus actualStatus = ImmixAllocationStatus::InvalidRequest;
+                                size_t actualSkipped = SIZE_MAX;
+                                SideMetadataResult result = fixture.allocation.TryFindFittingHole(
+                                    block, start, length, &actualHole, &actualNext, &actualStatus, &actualSkipped);
+                                compared++;
+                                fits += actualStatus == ImmixAllocationStatus::Ready ? 1 : 0;
+                                bool same = result == SideMetadataResult::Success && actualStatus == expectedStatus &&
+                                    actualNext == expectedNext && actualSkipped == expectedSkipped;
+                                if (same && expectedStatus == ImmixAllocationStatus::Ready)
+                                {
+                                    same = actualHole.start == expectedHole.start && actualHole.end == expectedHole.end &&
+                                        actualHole.line_count == expectedHole.line_count;
+                                }
+                                if (same && expectedStatus != ImmixAllocationStatus::Ready)
+                                {
+                                    same = actualHole.start == block && actualHole.end == block && actualHole.line_count == 0;
+                                }
+                                mismatches += same ? 0 : 1;
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        Expect("fitting the search for a hole of a given length lists the holes of the lazy search",
+            mismatches == 0 && compared > 100000 && fits > 1000);
+        Expect("fitting the count of the lines of the holes is the sum over the lazy search", sumMismatches == 0);
+
+        // Arguments and blocks that are not valid.
+        Fixture fixture(1, 2, 1);
+        Expect("fitting error fixture initialized", fixture.initialized);
+        if (!fixture.initialized)
+        {
+            return;
+        }
+        ImmixHole hole = {};
+        size_t next = 5;
+        size_t skipped = 5;
+        ImmixAllocationStatus status = ImmixAllocationStatus::Ready;
+        ExpectMetadata("fitting a block that is not aligned",
+            fixture.allocation.TryFindFittingHole(
+                fixture.data_start + ImmixBlockGeometry::LineBytes, 3, 2, &hole, &next, &status, &skipped),
+            SideMetadataResult::AddressNotOwned);
+        Expect("fitting a block that is not aligned leaves the search line and no hole",
+            next == 3 && skipped == 0 && status == ImmixAllocationStatus::Exhausted && hole.line_count == 0);
+        ExpectMetadata("fitting a block outside of the arena",
+            fixture.allocation.TryFindFittingHole(
+                fixture.data_start + (2 * ImmixBlockGeometry::BlockBytes), 0, 2, &hole, &next, &status, &skipped),
+            SideMetadataResult::AddressNotOwned);
+        ExpectMetadata("fitting a search line after the end of the block",
+            fixture.allocation.TryFindFittingHole(
+                fixture.data_start, ImmixBlockGeometry::LinesPerBlock + 1, 2, &hole, &next, &status, &skipped),
+            SideMetadataResult::InvalidArgument);
+        ExpectMetadata("fitting without a hole",
+            fixture.allocation.TryFindFittingHole(fixture.data_start, 0, 2, nullptr, &next, &status, &skipped),
+            SideMetadataResult::InvalidArgument);
+        ExpectMetadata("fitting without a skip count",
+            fixture.allocation.TryFindFittingHole(fixture.data_start, 0, 2, &hole, &next, &status, nullptr),
+            SideMetadataResult::InvalidArgument);
+        size_t lines = 5;
+        ExpectMetadata("counting the lines of a block that is not aligned",
+            fixture.allocation.CountHoleLines(fixture.data_start + ImmixBlockGeometry::LineBytes, &lines),
+            SideMetadataResult::AddressNotOwned);
+        Expect("counting the lines of a block that is not aligned gives zero", lines == 0);
+        ExpectMetadata("counting without a result",
+            fixture.allocation.CountHoleLines(fixture.data_start, nullptr), SideMetadataResult::InvalidArgument);
+    }
+
+    // The search for a hole of a given length reads the count words in halves of 64 lines, and each half at most once.
+    void TestFittingHoleReadsHalves()
+    {
+        Fixture fixture(1, 2, 1);
+        Expect("halves fixture initialized", fixture.initialized);
+        if (!fixture.initialized)
+        {
+            return;
+        }
+        uintptr_t block = fixture.data_start;
+        SeedAllLines(fixture, block, 1);
+        // Holes of 3 lines at [4,7), 2 lines at [10,12) and 5 lines at [70,75).
+        for (size_t line : {3, 4, 5, 6, 9, 10, 11, 69, 70, 71, 72, 73, 74})
+        {
+            SeedLine(fixture, block, line, 0);
+        }
+        ImmixHole hole = {};
+        size_t next = 0;
+        size_t skipped = 0;
+        ImmixAllocationStatus status = ImmixAllocationStatus::InvalidRequest;
+        uint64_t before = fixture.allocation.GetLineProbesForTest();
+        fixture.allocation.TryFindFittingHole(block, 0, 2, &hole, &next, &status, &skipped);
+        Expect("halves a hole in the first half reads 64 lines",
+            fixture.allocation.GetLineProbesForTest() - before == 64 && status == ImmixAllocationStatus::Ready &&
+            hole.start == LineAddress(block, 4) && hole.end == LineAddress(block, 7) && skipped == 0);
+        before = fixture.allocation.GetLineProbesForTest();
+        fixture.allocation.TryFindFittingHole(block, 0, 4, &hole, &next, &status, &skipped);
+        Expect("halves a hole in the second half reads both halves once",
+            fixture.allocation.GetLineProbesForTest() - before == 128 && status == ImmixAllocationStatus::Ready &&
+            hole.start == LineAddress(block, 70) && hole.end == LineAddress(block, 75) && next == 75 && skipped == 2);
+        before = fixture.allocation.GetLineProbesForTest();
+        fixture.allocation.TryFindFittingHole(block, 0, 6, &hole, &next, &status, &skipped);
+        Expect("halves a search with no hole reads both halves once",
+            fixture.allocation.GetLineProbesForTest() - before == 128 && status == ImmixAllocationStatus::Exhausted &&
+            next == ImmixBlockGeometry::LinesPerBlock && skipped == 3);
+        before = fixture.allocation.GetLineProbesForTest();
+        fixture.allocation.TryFindFittingHole(block, 64, 4, &hole, &next, &status, &skipped);
+        Expect("halves a search from the second half reads only that half",
+            fixture.allocation.GetLineProbesForTest() - before == 64 && status == ImmixAllocationStatus::Ready &&
+            hole.start == LineAddress(block, 70));
+    }
+
+    // A refill for a request of more than one line passes over a Reusable block that has fewer free lines than the request
+    // needs, without taking the block, and passes over a block whose counts show no hole of that length (the holes that it
+    // has are counted as skipped). A block that is not Reusable has no known count of free lines, and is searched.
+    void TestFreeLineFilter()
+    {
+        Fixture fixture(1, 6, 1);
+        Expect("filter fixture initialized", fixture.initialized);
+        if (!fixture.initialized)
+        {
+            return;
+        }
+        // The state says 127 free lines, and the counts show holes of 2 and 3 lines only.
+        uintptr_t fragmented = fixture.data_start + (4 * ImmixBlockGeometry::BlockBytes);
+        SeedReusableBlock(fixture, fragmented, 1);
+        SeedAllLines(fixture, fragmented, 1);
+        for (size_t line : {3, 4, 5, 20, 21, 22, 23})
+        {
+            SeedLine(fixture, fragmented, line, 0);
+        }
+        ImmixBumpAllocator probe;
+        ImmixAllocationStatus probeStatus = ImmixAllocationStatus::InvalidRequest;
+        ExpectMetadata("filter probe allocator", probe.Initialize(&fixture.allocation, OwnerTwo), SideMetadataResult::Success);
+        ExpectMetadata("filter request of 4 lines for a fragmented block",
+            probe.TryRefill(ImmixAllocationSource::MutatorRecycled, ImmixMarkingContext::Inactive, &probeStatus,
+                4 * ImmixBlockGeometry::LineBytes),
+            SideMetadataResult::Success);
+        Expect("filter a block with no hole of 4 lines is not taken",
+            probeStatus == ImmixAllocationStatus::Exhausted && probe.GetBlock() == 0 &&
+            fixture.allocation.GetRecycledBlocksAcquired() == 0);
+        Expect("filter the holes of the block that was not taken are counted as skipped",
+            fixture.allocation.GetHolesSkipped() == 2);
+        fixture.allocation.ResetCursors();
+        ExpectMetadata("filter request of 3 lines for a fragmented block",
+            probe.TryRefill(ImmixAllocationSource::MutatorRecycled, ImmixMarkingContext::Inactive, &probeStatus,
+                3 * ImmixBlockGeometry::LineBytes),
+            SideMetadataResult::Success);
+        Expect("filter a block with a hole of 3 lines is taken for a request of 3 lines",
+            probeStatus == ImmixAllocationStatus::Ready && probe.GetBlock() == fragmented &&
+            probe.GetCursor() == LineAddress(fragmented, 21) && probe.GetLimit() == LineAddress(fragmented, 24));
+        probe.Reset(&probeStatus);
+        SeedReusableBlock(fixture, fragmented, 0);
+        fixture.allocation.ResetCursors();
+        const size_t acquiredBefore = fixture.allocation.GetRecycledBlocksAcquired();
+        uintptr_t reusable = fixture.data_start;
+        uintptr_t marked = fixture.data_start + (2 * ImmixBlockGeometry::BlockBytes);
+        // The state says 8 free lines. The counts show that every line is free: lines only become free after the count.
+        SeedReusableBlock(fixture, reusable, ImmixBlockGeometry::LinesPerBlock - 8);
+        SeedAllLines(fixture, reusable, 0);
+        ImmixBumpAllocator allocator;
+        ImmixAllocationStatus status = ImmixAllocationStatus::InvalidRequest;
+        ExpectMetadata("filter allocator", allocator.Initialize(&fixture.allocation, OwnerOne), SideMetadataResult::Success);
+        ExpectMetadata("filter request of 9 lines",
+            allocator.TryRefill(ImmixAllocationSource::MutatorRecycled, ImmixMarkingContext::Inactive, &status,
+                9 * ImmixBlockGeometry::LineBytes),
+            SideMetadataResult::Success);
+        Expect("filter a block with 8 free lines is not taken for a request of 9 lines",
+            status == ImmixAllocationStatus::Exhausted && allocator.GetBlock() == 0 &&
+            fixture.allocation.GetRecycledBlocksAcquired() == acquiredBefore);
+
+        fixture.allocation.ResetCursors();
+        ExpectMetadata("filter request of 8 lines",
+            allocator.TryRefill(ImmixAllocationSource::MutatorRecycled, ImmixMarkingContext::Inactive, &status,
+                8 * ImmixBlockGeometry::LineBytes),
+            SideMetadataResult::Success);
+        Expect("filter a block with 8 free lines is taken for a request of 8 lines",
+            status == ImmixAllocationStatus::Ready && allocator.GetBlock() == reusable &&
+            fixture.allocation.GetRecycledBlocksAcquired() == acquiredBefore + 1);
+        allocator.Reset(&status);
+
+        // Marked and Unmarked blocks have no count of free lines.
+        for (uint8_t raw : {static_cast<uint8_t>(UINT8_MAX - 1), static_cast<uint8_t>(UINT8_MAX)})
+        {
+            SeedReusableBlock(fixture, marked, raw);
+            SeedAllLines(fixture, marked, 0);
+            SeedReusableBlock(fixture, reusable, 0);
+            fixture.allocation.ResetCursors();
+            ExpectMetadata("filter request of 100 lines for a block that is not Reusable",
+                allocator.TryRefill(ImmixAllocationSource::MutatorRecycled, ImmixMarkingContext::Inactive, &status,
+                    100 * ImmixBlockGeometry::LineBytes),
+                SideMetadataResult::Success);
+            Expect("filter a block that is not Reusable is taken",
+                status == ImmixAllocationStatus::Ready && allocator.GetBlock() == marked &&
+                allocator.GetLimit() - allocator.GetCursor() == ImmixBlockGeometry::BlockBytes);
+            allocator.Reset(&status);
+            ExpectMetadata("filter put back the state",
+                fixture.metadata.Store(LaxoriSideMetadataKind::BlockMark, marked, 0, SideMetadataMemoryOrder::SequentiallyConsistent),
+                SideMetadataResult::Success);
+        }
+    }
+
+    // P28 (F10). The metadata loads are plain acquire loads. Sequential consistency between a store and a later load of
+    // another location comes from the store (a compare-exchange loop, a full barrier). This is the store-buffer test: two
+    // threads each store to their own location and then load the location of the other. Both loads returning zero would be
+    // the reordering that a plain store allows. The Java LAXORI relies on the same property (SeqCst load = plain load on x64).
+    void TestF10LoadOrder()
+    {
+        Fixture fixture(1, 2, 1);
+        Expect("f10 order fixture initialized", fixture.initialized);
+        if (!fixture.initialized)
+        {
+            return;
+        }
+        SideMetadataAccessor accessor = fixture.metadata.GetAccessor(LaxoriSideMetadataKind::ObjectMark);
+        Expect("f10 order accessor", accessor.IsValid());
+        if (!accessor.IsValid())
+        {
+            return;
+        }
+        constexpr int Iterations = 300000;
+        const uintptr_t first = fixture.data_start;
+        const uintptr_t second = fixture.data_start + 4096;
+        std::vector<uint8_t> seenFirst(Iterations, 1);
+        std::vector<uint8_t> seenSecond(Iterations, 1);
+        std::atomic<int> go{-1};
+        std::atomic<int> finished{0};
+        auto worker = [&](uintptr_t mine, uintptr_t other, std::vector<uint8_t>* seen)
+        {
+            for (int i = 0; i < Iterations; i++)
+            {
+                while (go.load(std::memory_order_acquire) < i)
+                {
+                }
+                accessor.Store(mine, 1, SideMetadataMemoryOrder::SequentiallyConsistent);
+                (*seen)[i] = static_cast<uint8_t>(accessor.Load(other, SideMetadataMemoryOrder::SequentiallyConsistent));
+                finished.fetch_add(1, std::memory_order_acq_rel);
+            }
+        };
+        std::thread a(worker, first, second, &seenFirst);
+        std::thread b(worker, second, first, &seenSecond);
+        for (int i = 0; i < Iterations; i++)
+        {
+            accessor.Store(first, 0, SideMetadataMemoryOrder::Relaxed);
+            accessor.Store(second, 0, SideMetadataMemoryOrder::Relaxed);
+            go.store(i, std::memory_order_release);
+            while (finished.load(std::memory_order_acquire) < 2 * (i + 1))
+            {
+            }
+        }
+        a.join();
+        b.join();
+        size_t both = 0;
+        for (int i = 0; i < Iterations; i++)
+        {
+            both += (seenFirst[i] == 0 && seenSecond[i] == 0) ? 1 : 0;
+        }
+        if (both != 0)
+        {
+            printf("DETAIL: f10 store-buffer outcomes (both loads zero): %zu of %d\n", both, Iterations);
+        }
+        Expect("f10 a store followed by a load of another location is not reordered (no both-zero outcome)", both == 0);
+    }
+
+    // P28 (F9). The block cursors of the Java LAXORI: they move forward only, a block that becomes a candidate behind the cursor
+    // is found after the cursors are set back (the pause does it), and concurrent callers take every block exactly once.
+    void TestF9Cursors()
+    {
+        {
+            Fixture fixture(1, 4, 1);
+            Expect("f9 cursor fixture initialized", fixture.initialized);
+            if (!fixture.initialized)
+            {
+                return;
+            }
+            ImmixBumpAllocator allocator;
+            ExpectMetadata("f9 cursor allocator", allocator.Initialize(&fixture.allocation, OwnerOne),
+                SideMetadataResult::Success);
+            ImmixAllocationStatus status = ImmixAllocationStatus::InvalidRequest;
+            ExpectMetadata("f9 first recycled refill", allocator.TryRefill(ImmixAllocationSource::MutatorRecycled,
+                ImmixMarkingContext::Inactive, &status), SideMetadataResult::Success);
+            Expect("f9 no recycled block while every block is free", status == ImmixAllocationStatus::Exhausted);
+            uintptr_t block = fixture.data_start + (2 * ImmixBlockGeometry::BlockBytes);
+            SeedReusableBlock(fixture, block);
+            SeedAllLines(fixture, block, 1);
+            SeedLine(fixture, block, 4, 0);
+            SeedLine(fixture, block, 5, 0);
+            SeedLine(fixture, block, 6, 0);
+            ExpectMetadata("f9 second recycled refill", allocator.TryRefill(ImmixAllocationSource::MutatorRecycled,
+                ImmixMarkingContext::Inactive, &status), SideMetadataResult::Success);
+            Expect("f9 a block that becomes a candidate behind the cursor is not found before the cursors are reset",
+                status == ImmixAllocationStatus::Exhausted);
+            fixture.allocation.ResetCursors();
+            ExpectMetadata("f9 third recycled refill", allocator.TryRefill(ImmixAllocationSource::MutatorRecycled,
+                ImmixMarkingContext::Inactive, &status), SideMetadataResult::Success);
+            Expect("f9 the block is found after the cursors are reset",
+                status == ImmixAllocationStatus::Ready && allocator.GetBlock() == block);
+            allocator.Reset(&status);
+        }
+        {
+            constexpr size_t BlockCount = 64;
+            constexpr size_t ThreadCount = 8;
+            Fixture fixture(1, BlockCount, 1);
+            Expect("f9 concurrent fixture initialized", fixture.initialized);
+            if (!fixture.initialized)
+            {
+                return;
+            }
+            std::vector<std::vector<uintptr_t>> taken(ThreadCount);
+            std::vector<std::thread> threads;
+            for (size_t thread = 0; thread < ThreadCount; thread++)
+            {
+                threads.emplace_back([&, thread]()
+                {
+                    ImmixBumpAllocator allocator;
+                    if (allocator.Initialize(&fixture.allocation, 0x3000 + thread) != SideMetadataResult::Success)
+                    {
+                        return;
+                    }
+                    ImmixAllocationStatus status = ImmixAllocationStatus::InvalidRequest;
+                    while (allocator.TryRefill(ImmixAllocationSource::MutatorFresh, ImmixMarkingContext::Inactive,
+                               &status) == SideMetadataResult::Success && status == ImmixAllocationStatus::Ready)
+                    {
+                        taken[thread].push_back(allocator.GetBlock());
+                    }
+                });
+            }
+            for (std::thread& thread : threads)
+            {
+                thread.join();
+            }
+            std::vector<size_t> seen(BlockCount, 0);
+            size_t total = 0;
+            for (const std::vector<uintptr_t>& blocks : taken)
+            {
+                for (uintptr_t block : blocks)
+                {
+                    seen[(block - fixture.data_start) / ImmixBlockGeometry::BlockBytes]++;
+                    total++;
+                }
+            }
+            bool once = total == BlockCount;
+            for (size_t count : seen)
+            {
+                once = once && count == 1;
+            }
+            Expect("f9 concurrent callers take every block exactly once", once);
+        }
+    }
+
+    // P28 (F10). The counts are updated with a compare-exchange on one byte. Neighbouring counts share the byte (four 2-bit counts,
+    // two 4-bit counts), so a lost update of one thread shows in the count of another. Each thread adds one to its own count and
+    // takes it away again, many times; the counts must end as they started. The control writes the byte with a plain store.
+    void TestF10ByteCompareExchange(uint8_t logBits)
+    {
+        Fixture fixture(logBits, 2, 1);
+        Expect("f10 byte fixture initialized", fixture.initialized);
+        if (!fixture.initialized)
+        {
+            return;
+        }
+        SideMetadataAccessor accessor = fixture.metadata.GetAccessor(LaxoriSideMetadataKind::ReferenceCount);
+        Expect("f10 byte accessor", accessor.IsValid());
+        if (!accessor.IsValid())
+        {
+            return;
+        }
+        const size_t entries = 8;
+        for (size_t entry = 0; entry < entries; entry++)
+        {
+            ExpectMetadata("f10 byte seed", fixture.metadata.Store(LaxoriSideMetadataKind::ReferenceCount,
+                fixture.data_start + (entry * sizeof(uintptr_t)), 1, SideMetadataMemoryOrder::Relaxed),
+                SideMetadataResult::Success);
+        }
+        std::atomic<bool> go{false};
+        std::vector<std::thread> threads;
+        for (size_t entry = 0; entry < entries; entry++)
+        {
+            threads.emplace_back([&, entry]()
+            {
+                while (!go.load(std::memory_order_acquire))
+                {
+                }
+                uintptr_t address = fixture.data_start + (entry * sizeof(uintptr_t));
+                for (int round = 0; round < 200000; round++)
+                {
+                    uintptr_t previous;
+                    accessor.IncrementSaturating(address, SideMetadataMemoryOrder::Relaxed, &previous);
+                    accessor.DecrementNonZeroNonSaturated(address, SideMetadataMemoryOrder::Relaxed, &previous);
+                }
+            });
+        }
+        go.store(true, std::memory_order_release);
+        for (std::thread& thread : threads)
+        {
+            thread.join();
+        }
+        bool same = true;
+        for (size_t entry = 0; entry < entries; entry++)
+        {
+            same = same && LoadMetadata(fixture, LaxoriSideMetadataKind::ReferenceCount,
+                fixture.data_start + (entry * sizeof(uintptr_t))) == 1;
+        }
+        Expect("f10 counts that share a byte keep their values under concurrent updates", same);
+        // A count saturates at its maximum and then stays.
+        uintptr_t maximum = (static_cast<uintptr_t>(1) << (1u << logBits)) - 1;
+        uintptr_t address = fixture.data_start + (3 * sizeof(uintptr_t));
+        uintptr_t previous = 0;
+        SideMetadataUpdateStatus status = SideMetadataUpdateStatus::Updated;
+        for (uintptr_t value = 1; value < maximum; value++)
+        {
+            status = accessor.IncrementSaturating(address, SideMetadataMemoryOrder::Relaxed, &previous);
+        }
+        bool saturated = status == SideMetadataUpdateStatus::Updated &&
+            accessor.IncrementSaturating(address, SideMetadataMemoryOrder::Relaxed, &previous) ==
+                SideMetadataUpdateStatus::Saturated && previous == maximum;
+        saturated = saturated && accessor.DecrementNonZeroNonSaturated(address, SideMetadataMemoryOrder::Relaxed, &previous) ==
+            SideMetadataUpdateStatus::Saturated && LoadMetadata(fixture, LaxoriSideMetadataKind::ReferenceCount, address) == maximum;
+        Expect("f10 a count at its maximum is sticky: no increment, no decrement", saturated);
+        Expect("f10 the neighbours of a saturated count are unchanged",
+            LoadMetadata(fixture, LaxoriSideMetadataKind::ReferenceCount, address - sizeof(uintptr_t)) == 1 &&
+            LoadMetadata(fixture, LaxoriSideMetadataKind::ReferenceCount, address + sizeof(uintptr_t)) == 1);
+    }
+
+    // P28 (F10). The prefetch of the Java LAXORI loops: while entry i is processed, the object of entry i + 8 is prefetched; nothing past
+    // the end, nothing for a null reference; a slot is read for its reference. The hook records the addresses that are prefetched.
+    std::vector<const void*> s_prefetched;
+    void RecordPrefetch(const void* address)
+    {
+        s_prefetched.push_back(address);
+    }
+
+    void TestF10Prefetch()
+    {
+        LaxoriPrefetch::HookRef() = RecordPrefetch;
+        constexpr size_t Count = 40;
+        std::vector<uintptr_t> cells(Count + 1);
+        std::vector<uintptr_t> objects(Count);
+        std::vector<uintptr_t> slots(Count);
+        for (size_t i = 0; i < Count; i++)
+        {
+            objects[i] = i % 11 == 9 ? 0 : reinterpret_cast<uintptr_t>(&cells[i]);
+            cells[i] = objects[i];
+            slots[i] = reinterpret_cast<uintptr_t>(&cells[i]);
+        }
+        auto run = [&](const std::vector<uintptr_t>& entries, size_t count, bool slotEntries, uintptr_t mask)
+        {
+            s_prefetched.clear();
+            for (size_t i = 0; i < count; i++)
+            {
+                LaxoriPrefetch::Ahead(entries.data(), count, i, slotEntries, mask);
+            }
+            return s_prefetched;
+        };
+        auto expected = [&](size_t count)
+        {
+            std::vector<const void*> list;
+            for (size_t i = LaxoriPrefetch::Step; i < count; i++)
+            {
+                if (objects[i] != 0)
+                {
+                    list.push_back(reinterpret_cast<const void*>(objects[i]));
+                }
+            }
+            return list;
+        };
+        Expect("f10 prefetch step is 8", LaxoriPrefetch::Step == 8);
+        Expect("f10 prefetch of object entries: the object of entry i + 8, none past the end, none for null",
+            run(objects, Count, false, 0) == expected(Count));
+        Expect("f10 prefetch of slot entries: the object that the slot of entry i + 8 holds",
+            run(slots, Count, true, 0) == expected(Count));
+        std::vector<uintptr_t> flagged = objects;
+        for (uintptr_t& entry : flagged)
+        {
+            entry |= entry != 0 ? 1 : 0;
+        }
+        Expect("f10 prefetch of flagged entries (roots): the flag bit is removed",
+            run(flagged, Count, false, 1) == expected(Count));
+        Expect("f10 a packet of 8 entries or less prefetches nothing", run(objects, LaxoriPrefetch::Step, false, 0).empty() &&
+            run(objects, 3, false, 0).empty());
+        Expect("f10 a packet of 9 entries prefetches the ninth", run(objects, 9, false, 0) == expected(9));
+        LaxoriPrefetch::HookRef() = nullptr;
+    }
+
+    void TestPhaseAndContention()
+    {
+        {
+            Fixture fixture;
+            Expect("phase fixture initialized", fixture.initialized);
+            if (fixture.initialized)
+            {
+                ImmixBumpAllocator allocator;
+                ExpectMetadata(
+                    "phase allocator initialize",
+                    allocator.Initialize(&fixture.allocation, OwnerOne),
+                    SideMetadataResult::Success);
+                ImmixAllocationStatus status =
+                    ImmixAllocationStatus::InvalidRequest;
+                ExpectMetadata(
+                    "GC fresh wrong phase result",
+                    allocator.TryRefill(
+                        ImmixAllocationSource::GcCopyFresh,
+                        ImmixMarkingContext::ConcurrentOrFinalMark,
+                        &status),
+                    SideMetadataResult::Success);
+                Expect(
+                    "GC fresh wrong phase",
+                    status == ImmixAllocationStatus::InvalidPhase);
+                ImmixBlockOperationStatus phaseStatus;
+                ExpectMetadata(
+                    "start GC phase after rejection",
+                    fixture.blocks.StartGcPause(&phaseStatus),
+                    SideMetadataResult::Success);
+                Expect(
+                    "start GC phase updated",
+                    phaseStatus == ImmixBlockOperationStatus::Updated);
+                ExpectMetadata(
+                    "GC fresh retry result",
+                    allocator.TryRefill(
+                        ImmixAllocationSource::GcCopyFresh,
+                        ImmixMarkingContext::ConcurrentOrFinalMark,
+                        &status),
+                    SideMetadataResult::Success);
+                Expect(
+                    "GC fresh retry ready",
+                    status == ImmixAllocationStatus::Ready);
+                Expect(
+                    "GC phase rejection preserves candidate",
+                    allocator.GetBlock() == fixture.data_start);
+                ExpectMetadata(
+                    "GC fresh retry reset",
+                    allocator.Reset(&status),
+                    SideMetadataResult::Success);
+                ExpectMetadata(
+                    "release GC phase after retry",
+                    fixture.blocks.ReleaseGcPause(&phaseStatus),
+                    SideMetadataResult::Success);
+            }
+        }
+
+        {
+            Fixture fixture(1, 1);
+            Expect("contention fixture initialized", fixture.initialized);
+            if (!fixture.initialized)
+            {
+                return;
+            }
+            SeedReusableBlock(fixture, fixture.data_start);
+            SeedAllLines(fixture, fixture.data_start, 0);
+
+            ImmixBumpAllocator first;
+            ImmixBumpAllocator second;
+            ExpectMetadata(
+                "first contender initialize",
+                first.Initialize(&fixture.allocation, OwnerOne),
+                SideMetadataResult::Success);
+            ExpectMetadata(
+                "second contender initialize",
+                second.Initialize(&fixture.allocation, OwnerTwo),
+                SideMetadataResult::Success);
+
+            std::atomic<bool> start(false);
+            ImmixAllocationStatus firstStatus =
+                ImmixAllocationStatus::InvalidRequest;
+            ImmixAllocationStatus secondStatus =
+                ImmixAllocationStatus::InvalidRequest;
+            SideMetadataResult firstResult =
+                SideMetadataResult::InvalidArgument;
+            SideMetadataResult secondResult =
+                SideMetadataResult::InvalidArgument;
+            std::thread firstThread([&]()
+            {
+                while (!start.load(std::memory_order_acquire))
+                {
+                    YieldProcessor();
+                }
+                firstResult = first.TryRefill(
+                    ImmixAllocationSource::MutatorRecycled,
+                    ImmixMarkingContext::Inactive,
+                    &firstStatus);
+            });
+            std::thread secondThread([&]()
+            {
+                while (!start.load(std::memory_order_acquire))
+                {
+                    YieldProcessor();
+                }
+                secondResult = second.TryRefill(
+                    ImmixAllocationSource::MutatorRecycled,
+                    ImmixMarkingContext::Inactive,
+                    &secondStatus);
+            });
+            start.store(true, std::memory_order_release);
+            firstThread.join();
+            secondThread.join();
+
+            ExpectMetadata(
+                "first contention result",
+                firstResult,
+                SideMetadataResult::Success);
+            ExpectMetadata(
+                "second contention result",
+                secondResult,
+                SideMetadataResult::Success);
+            int readyCount =
+                (firstStatus == ImmixAllocationStatus::Ready ? 1 : 0) +
+                (secondStatus == ImmixAllocationStatus::Ready ? 1 : 0);
+            Expect("one contention winner", readyCount == 1);
+
+            ImmixAllocationStatus resetStatus;
+            if (firstStatus == ImmixAllocationStatus::Ready)
+            {
+                ExpectMetadata(
+                    "first contention reset",
+                    first.Reset(&resetStatus),
+                    SideMetadataResult::Success);
+            }
+            if (secondStatus == ImmixAllocationStatus::Ready)
+            {
+                ExpectMetadata(
+                    "second contention reset",
+                    second.Reset(&resetStatus),
+                    SideMetadataResult::Success);
+            }
+        }
+    }
+
+    void TestFreshReclamation()
+    {
+        Fixture fixture(1, 1, 1);
+        Expect("reclamation fixture initialized", fixture.initialized);
+        if (!fixture.initialized)
+        {
+            return;
+        }
+
+        ImmixBumpAllocator allocator;
+        ExpectMetadata(
+            "reclamation allocator initialize",
+            allocator.Initialize(&fixture.allocation, OwnerOne),
+            SideMetadataResult::Success);
+        ImmixAllocationStatus status =
+            ImmixAllocationStatus::InvalidRequest;
+        ExpectMetadata(
+            "initial fresh refill",
+            allocator.TryRefill(
+                ImmixAllocationSource::MutatorFresh,
+                ImmixMarkingContext::Inactive,
+                &status),
+            SideMetadataResult::Success);
+        Expect(
+            "initial fresh refill ready",
+            status == ImmixAllocationStatus::Ready);
+        ExpectMetadata(
+            "return nursery block",
+            allocator.Reset(&status),
+            SideMetadataResult::Success);
+        ExpectMetadata(
+            "same-phase fresh retry",
+            allocator.TryRefill(
+                ImmixAllocationSource::MutatorFresh,
+                ImmixMarkingContext::Inactive,
+                &status),
+            SideMetadataResult::Success);
+        Expect(
+            "same-phase nursery is not clean",
+            status == ImmixAllocationStatus::Exhausted);
+
+        ImmixBlockOperationStatus blockStatus;
+        ExpectMetadata(
+            "reclamation start GC",
+            fixture.blocks.StartGcPause(&blockStatus),
+            SideMetadataResult::Success);
+        Expect(
+            "reclamation start GC updated",
+            blockStatus == ImmixBlockOperationStatus::Updated);
+        ExpectMetadata(
+            "GC acquires nursery for release",
+            fixture.blocks.TryAcquire(
+                fixture.data_start,
+                OwnerTwo,
+                ImmixBlockAcquireKind::GcMatureEvacuationFresh,
+                &blockStatus),
+            SideMetadataResult::Success);
+        Expect(
+            "GC nursery acquisition updated",
+            blockStatus == ImmixBlockOperationStatus::Updated);
+        ExpectMetadata(
+            "GC releases empty block",
+            fixture.blocks.TryRelease(
+                fixture.data_start,
+                OwnerTwo,
+                &blockStatus),
+            SideMetadataResult::Success);
+        Expect(
+            "GC empty release updated",
+            blockStatus == ImmixBlockOperationStatus::Updated);
+        ExpectMetadata(
+            "reclamation release GC",
+            fixture.blocks.ReleaseGcPause(&blockStatus),
+            SideMetadataResult::Success);
+        Expect(
+            "reclamation release GC updated",
+            blockStatus == ImmixBlockOperationStatus::Updated);
+        // P28 (F9). The block cursors only move forward; the engine sets them back to 0 at the end of a pause (as the Java LAXORI does).
+        fixture.allocation.ResetCursors();
+
+        ExpectMetadata(
+            "reclaimed fresh refill",
+            allocator.TryRefill(
+                ImmixAllocationSource::MutatorFresh,
+                ImmixMarkingContext::Inactive,
+                &status),
+            SideMetadataResult::Success);
+        Expect(
+            "reclaimed fresh refill ready",
+            status == ImmixAllocationStatus::Ready);
+        Expect(
+            "reclaimed block selected",
+            allocator.GetBlock() == fixture.data_start);
+        ExpectMetadata(
+            "reclaimed fresh reset",
+            allocator.Reset(&status),
+            SideMetadataResult::Success);
+    }
+
+    void TestRejectedReusableBlocks()
+    {
+        {
+            Fixture fixture(1, 3, 3);
+            Expect("rejected-block fixture initialized", fixture.initialized);
+            if (!fixture.initialized)
+            {
+                return;
+            }
+
+            uintptr_t prefiltered = fixture.data_start;
+            uintptr_t scanned =
+                fixture.data_start + ImmixBlockGeometry::BlockBytes;
+            SeedReusableBlock(
+                fixture,
+                prefiltered,
+                static_cast<uint8_t>(
+                    ImmixBlockGeometry::LinesPerBlock - 1));
+            SeedAllLines(fixture, prefiltered, 1);
+
+            SeedReusableBlock(fixture, scanned);
+            SeedAllLines(fixture, scanned, 1);
+            SeedLine(fixture, scanned, 1, 0);
+            SeedLine(fixture, scanned, 2, 0);
+
+            ImmixBumpAllocator allocator;
+            ExpectMetadata(
+                "rejected-block allocator initialize",
+                allocator.Initialize(&fixture.allocation, OwnerOne),
+                SideMetadataResult::Success);
+            ImmixAllocationStatus status =
+                ImmixAllocationStatus::InvalidRequest;
+            ExpectMetadata(
+                "rejected-block refill result",
+                allocator.TryRefill(
+                    ImmixAllocationSource::MutatorRecycled,
+                    ImmixMarkingContext::Inactive,
+                    &status),
+                SideMetadataResult::Success);
+            Expect(
+                "rejected-block refill exhausted",
+                status == ImmixAllocationStatus::Exhausted);
+            // P28 (F9). Every block that is not free is a candidate, as in the Java LAXORI (block_is_available): its counts are read when
+            // it is taken, and a block without a hole of the minimum length is given back.
+            Expect(
+                "prefiltered block remains unowned",
+                LoadMetadata(
+                    fixture,
+                    LaxoriSideMetadataKind::BlockOwner,
+                    prefiltered) == ImmixBlockManager::NoOwner);
+            Expect(
+                "scanned block owner returned",
+                LoadMetadata(
+                    fixture,
+                    LaxoriSideMetadataKind::BlockOwner,
+                    scanned) == ImmixBlockManager::NoOwner);
+            Expect(
+                "every block that is not free is taken and given back",
+                fixture.allocation.GetRecycledBlocksAcquired() == 2);
+        }
+
+        {
+            Fixture fixture(1, 2, 2);
+            Expect("defrag fixture initialized", fixture.initialized);
+            if (!fixture.initialized)
+            {
+                return;
+            }
+
+            uintptr_t defrag = fixture.data_start;
+            uintptr_t reusable =
+                fixture.data_start + ImmixBlockGeometry::BlockBytes;
+            SeedReusableBlock(fixture, defrag);
+            SeedAllLines(fixture, defrag, 0);
+            ExpectMetadata(
+                "seed defrag source",
+                fixture.metadata.Store(
+                    LaxoriSideMetadataKind::BlockDefrag,
+                    defrag,
+                    1,
+                    SideMetadataMemoryOrder::SequentiallyConsistent),
+                SideMetadataResult::Success);
+            SeedReusableBlock(fixture, reusable);
+            SeedAllLines(fixture, reusable, 0);
+
+            ImmixBumpAllocator allocator;
+            ExpectMetadata(
+                "defrag allocator initialize",
+                allocator.Initialize(&fixture.allocation, OwnerOne),
+                SideMetadataResult::Success);
+            ImmixAllocationStatus status =
+                ImmixAllocationStatus::InvalidRequest;
+            ExpectMetadata(
+                "defrag skip refill result",
+                allocator.TryRefill(
+                    ImmixAllocationSource::MutatorRecycled,
+                    ImmixMarkingContext::Inactive,
+                    &status),
+                SideMetadataResult::Success);
+            Expect(
+                "defrag skip refill ready",
+                status == ImmixAllocationStatus::Ready);
+            Expect(
+                "defrag candidate skipped",
+                allocator.GetBlock() == reusable);
+            Expect(
+                "defrag candidate unowned",
+                LoadMetadata(
+                    fixture,
+                    LaxoriSideMetadataKind::BlockOwner,
+                    defrag) == ImmixBlockManager::NoOwner);
+            ExpectMetadata(
+                "defrag skip reset",
+                allocator.Reset(&status),
+                SideMetadataResult::Success);
+        }
+    }
+
+    // Pre-zeroing of clean blocks (laxori_immix_zeroing.cpp). The zero state is one byte per block. The blocks start clean (committed
+    // memory is zero); an allocator that takes a block makes it Taken; the clearer claims a free block (Active), clears it and
+    // publishes it as Clean.
+    constexpr size_t PreZeroMaxBlocks = 64;
+
+    struct PreZeroFixture
+    {
+        Fixture fixture;
+        std::atomic<uint8_t> states[PreZeroMaxBlocks]{};
+
+        explicit PreZeroFixture(size_t blockCount, size_t minimumReuseLines = 1)
+            : fixture(1, blockCount, minimumReuseLines)
+        {
+            ImmixAllocationManager::AcquireNotes notes{};
+            notes.zero_state = states;
+            fixture.allocation.SetAcquireNotes(notes);
+        }
+
+        uint8_t* Block(size_t index)
+        {
+            return reinterpret_cast<uint8_t*>(fixture.data_start + index * ImmixBlockGeometry::BlockBytes);
+        }
+
+        bool Holds(size_t index, uint8_t value)
+        {
+            const uint8_t* block = Block(index);
+            for (size_t i = 0; i < ImmixBlockGeometry::BlockBytes; i++)
+            {
+                if (block[i] != value)
+                {
+                    return false;
+                }
+            }
+            return true;
+        }
+
+        uint64_t Metric(size_t metric)
+        {
+            return fixture.allocation.GetZeroingMetric(metric);
+        }
+    };
+
+    void TestPreZeroTakeBlock()
+    {
+        PreZeroFixture z(8);
+        Expect("prezero fixture initialized", z.fixture.initialized);
+        if (!z.fixture.initialized)
+        {
+            return;
+        }
+        bool allClean = true;
+        for (size_t index = 0; index < 8; index++)
+        {
+            allClean = allClean && z.states[index].load() == ImmixAllocationManager::ZeroStateClean;
+        }
+        Expect("prezero blocks start clean", allClean);
+        Expect("prezero is enabled", z.fixture.allocation.IsPreZeroEnabled());
+
+        memset(z.Block(0), 0x5a, z.fixture.data_size);
+        ImmixBumpAllocator allocator;
+        ExpectMetadata("prezero allocator initialize", allocator.Initialize(&z.fixture.allocation, OwnerOne),
+            SideMetadataResult::Success);
+        ImmixAllocationStatus status = ImmixAllocationStatus::InvalidRequest;
+
+        // A block that says Clean is not cleared again. Its memory is not zero here (the state is wrong on purpose), and the
+        // check of the test build reports it.
+        ExpectMetadata("prezero first refill", allocator.TryRefill(
+            ImmixAllocationSource::MutatorFresh, ImmixMarkingContext::Inactive, &status), SideMetadataResult::Success);
+        Expect("prezero first refill ready", status == ImmixAllocationStatus::Ready && allocator.GetBlock() == z.fixture.data_start);
+        Expect("prezero clean block taken without a clear", z.Metric(3) == 1 && z.Metric(0) == 0);
+        Expect("prezero clean block is not cleared", z.Holds(0, 0x5a));
+        Expect("prezero verification reports a clean block that is not zero", z.Metric(9) == 1);
+        Expect("prezero taken block is marked", z.states[0].load() == ImmixAllocationManager::ZeroStateTaken);
+
+        // A block that is not known to be zero is cleared.
+        z.states[1].store(ImmixAllocationManager::ZeroStateDirty);
+        ExpectMetadata("prezero second refill", allocator.TryRefill(
+            ImmixAllocationSource::MutatorFresh, ImmixMarkingContext::Inactive, &status), SideMetadataResult::Success);
+        Expect("prezero second refill ready", status == ImmixAllocationStatus::Ready &&
+            allocator.GetBlock() == reinterpret_cast<uintptr_t>(z.Block(1)));
+        Expect("prezero dirty block cleared by the allocator", z.Holds(1, 0) && z.Metric(0) == 1 && z.Metric(3) == 1);
+        Expect("prezero dirty block is marked taken", z.states[1].load() == ImmixAllocationManager::ZeroStateTaken);
+
+        // A block that is zero and says Clean is taken without a clear and without a report.
+        memset(z.Block(2), 0, ImmixBlockGeometry::BlockBytes);
+        ExpectMetadata("prezero third refill", allocator.TryRefill(
+            ImmixAllocationSource::MutatorFresh, ImmixMarkingContext::Inactive, &status), SideMetadataResult::Success);
+        Expect("prezero zero block taken without a clear", z.Metric(3) == 2 && z.Metric(0) == 1 && z.Metric(9) == 1);
+        Expect("prezero zero block is marked taken", z.states[2].load() == ImmixAllocationManager::ZeroStateTaken);
+
+        // A block that was used before (Taken) is cleared again.
+        z.states[3].store(ImmixAllocationManager::ZeroStateTaken);
+        ExpectMetadata("prezero fourth refill", allocator.TryRefill(
+            ImmixAllocationSource::MutatorFresh, ImmixMarkingContext::Inactive, &status), SideMetadataResult::Success);
+        Expect("prezero used block cleared by the allocator", z.Holds(3, 0) && z.Metric(0) == 2 && z.Metric(3) == 2);
+
+        // A block that the clearer is clearing is waited for, and is zero when the allocator gets it.
+        z.states[4].store(ImmixAllocationManager::ZeroStateActive);
+        std::atomic<bool> finished(false);
+        std::thread taker([&]()
+        {
+            ImmixAllocationStatus takerStatus = ImmixAllocationStatus::InvalidRequest;
+            allocator.TryRefill(ImmixAllocationSource::MutatorFresh, ImmixMarkingContext::Inactive, &takerStatus);
+            finished.store(true);
+        });
+        std::this_thread::sleep_for(std::chrono::milliseconds(50));
+        Expect("prezero an allocator waits for the claim of the clearer", !finished.load());
+        memset(z.Block(4), 0, ImmixBlockGeometry::BlockBytes);
+        z.states[4].store(ImmixAllocationManager::ZeroStateClean);
+        taker.join();
+        Expect("prezero the allocator goes on when the claim ends",
+            finished.load() && z.Metric(3) == 3 && z.Metric(0) == 2 && z.Metric(6) == 1 &&
+            z.states[4].load() == ImmixAllocationManager::ZeroStateTaken && z.Metric(9) == 1);
+        ExpectMetadata("prezero allocator reset", allocator.Reset(&status), SideMetadataResult::Success);
+    }
+
+    void TestPreZeroStep()
+    {
+        PreZeroFixture z(16);
+        Expect("prezero step fixture initialized", z.fixture.initialized);
+        if (!z.fixture.initialized)
+        {
+            return;
+        }
+        memset(z.Block(0), 0x5a, z.fixture.data_size);
+        for (size_t index = 0; index < 16; index++)
+        {
+            z.states[index].store(ImmixAllocationManager::ZeroStateDirty);
+        }
+        ImmixAllocationManager::PreZeroPass pass{};
+        size_t cleared = z.fixture.allocation.PreZeroStep(2, 3, 16, &pass);
+        Expect("prezero window of three blocks after a margin of two", cleared == 3 && pass.cleared == 3 && pass.caughtUp);
+        bool window = true;
+        for (size_t index = 0; index < 16; index++)
+        {
+            bool inside = index >= 2 && index < 5;
+            window = window && z.Holds(index, inside ? 0 : 0x5a) &&
+                z.states[index].load() == (inside ? ImmixAllocationManager::ZeroStateClean :
+                    ImmixAllocationManager::ZeroStateDirty);
+        }
+        Expect("prezero clears the blocks of the window and no others", window);
+        Expect("prezero counts the blocks that it cleared", z.Metric(4) == 3);
+        Expect("prezero an unchanged window has nothing to clear",
+            z.fixture.allocation.PreZeroStep(2, 3, 16, &pass) == 0 && pass.caughtUp);
+        cleared = z.fixture.allocation.PreZeroStep(2, 8, 2, &pass);
+        Expect("prezero a budget limits the pass", cleared == 2 && !pass.caughtUp && z.Holds(5, 0) && z.Holds(6, 0) &&
+            z.Holds(7, 0x5a));
+        cleared = z.fixture.allocation.PreZeroStep(2, 8, 16, &pass);
+        Expect("prezero the next pass goes on where the last one stopped",
+            cleared == 3 && pass.caughtUp && z.Holds(7, 0) && z.Holds(9, 0) && z.Holds(10, 0x5a));
+
+        // A pause holds the clearer back, and after it the clearer looks at the blocks behind its frontier again.
+        z.fixture.allocation.SuspendPreZero();
+        z.states[3].store(ImmixAllocationManager::ZeroStateDirty);
+        memset(z.Block(3), 0x5a, ImmixBlockGeometry::BlockBytes);
+        cleared = z.fixture.allocation.PreZeroStep(2, 8, 16, &pass);
+        Expect("prezero clears nothing during a pause", cleared == 0 && pass.gated && z.Holds(3, 0x5a));
+        z.fixture.allocation.ResumePreZero();
+        cleared = z.fixture.allocation.PreZeroStep(2, 8, 16, &pass);
+        Expect("prezero looks behind the old frontier after a pause", cleared == 1 && !pass.gated && z.Holds(3, 0) &&
+            z.states[3].load() == ImmixAllocationManager::ZeroStateClean);
+    }
+
+    std::atomic<int> s_prezeroWakes;
+
+    // The clearer sleeps until an allocator takes a block at the index that the clearer asked for, and the allocator calls
+    // the wake callback once.
+    void TestPreZeroWake()
+    {
+        PreZeroFixture z(8);
+        Expect("prezero wake fixture initialized", z.fixture.initialized);
+        if (!z.fixture.initialized)
+        {
+            return;
+        }
+        s_prezeroWakes = 0;
+        z.fixture.allocation.SetPreZeroWake([](void* context)
+        {
+            static_cast<std::atomic<int>*>(context)->fetch_add(1);
+        }, &s_prezeroWakes);
+        ImmixBumpAllocator allocator;
+        Expect("prezero wake allocator initialize",
+            allocator.Initialize(&z.fixture.allocation, OwnerOne) == SideMetadataResult::Success);
+        ImmixAllocationStatus status = ImmixAllocationStatus::InvalidRequest;
+        Expect("prezero the clearer may sleep while the allocators are behind the wake index",
+            z.fixture.allocation.ArmPreZeroWake(3));
+        for (size_t block = 0; block < 3; block++)
+        {
+            allocator.TryRefill(ImmixAllocationSource::MutatorFresh, ImmixMarkingContext::Inactive, &status);
+        }
+        Expect("prezero blocks below the wake index do not wake the clearer", s_prezeroWakes.load() == 0);
+        allocator.TryRefill(ImmixAllocationSource::MutatorFresh, ImmixMarkingContext::Inactive, &status);
+        Expect("prezero the block at the wake index wakes the clearer", s_prezeroWakes.load() == 1);
+        allocator.TryRefill(ImmixAllocationSource::MutatorFresh, ImmixMarkingContext::Inactive, &status);
+        Expect("prezero the clearer is woken once", s_prezeroWakes.load() == 1);
+        Expect("prezero the clearer must not sleep when the allocators are past the wake index",
+            !z.fixture.allocation.ArmPreZeroWake(2));
+        z.fixture.allocation.DisarmPreZeroWake();
+        allocator.TryRefill(ImmixAllocationSource::MutatorFresh, ImmixMarkingContext::Inactive, &status);
+        Expect("prezero a disarmed wake does not wake the clearer", s_prezeroWakes.load() == 1);
+        allocator.Reset(&status);
+    }
+
+    void TestPreZeroEligibility()
+    {
+        PreZeroFixture z(8);
+        Expect("prezero eligibility fixture initialized", z.fixture.initialized);
+        if (!z.fixture.initialized)
+        {
+            return;
+        }
+        memset(z.Block(0), 0x5a, z.fixture.data_size);
+        for (size_t index = 0; index < 8; index++)
+        {
+            z.states[index].store(ImmixAllocationManager::ZeroStateDirty);
+        }
+        // Block 0 is held by an allocator, block 1 was taken and returned in this epoch (a nursery block), block 2 is a
+        // reusable block.
+        ImmixBumpAllocator holder;
+        ImmixBumpAllocator returned;
+        Expect("prezero allocators initialize",
+            holder.Initialize(&z.fixture.allocation, OwnerOne) == SideMetadataResult::Success &&
+            returned.Initialize(&z.fixture.allocation, OwnerTwo) == SideMetadataResult::Success);
+        ImmixAllocationStatus status = ImmixAllocationStatus::InvalidRequest;
+        Expect("prezero holder refill", holder.TryRefill(
+            ImmixAllocationSource::MutatorFresh, ImmixMarkingContext::Inactive, &status) == SideMetadataResult::Success &&
+            status == ImmixAllocationStatus::Ready && holder.GetBlock() == z.fixture.data_start);
+        Expect("prezero returned refill", returned.TryRefill(
+            ImmixAllocationSource::MutatorFresh, ImmixMarkingContext::Inactive, &status) == SideMetadataResult::Success &&
+            status == ImmixAllocationStatus::Ready &&
+            returned.GetBlock() == z.fixture.data_start + ImmixBlockGeometry::BlockBytes);
+        Expect("prezero returned reset", returned.Reset(&status) == SideMetadataResult::Success);
+        memset(z.Block(0), 0x77, ImmixBlockGeometry::BlockBytes);
+        memset(z.Block(1), 0x77, ImmixBlockGeometry::BlockBytes);
+        SeedReusableBlock(z.fixture, z.fixture.data_start + 2 * ImmixBlockGeometry::BlockBytes);
+        z.fixture.allocation.ResetCursors();
+        ImmixAllocationManager::PreZeroPass pass{};
+        size_t cleared = z.fixture.allocation.PreZeroStep(0, 8, 16, &pass);
+        Expect("prezero clears the five free blocks", cleared == 5 && pass.caughtUp);
+        Expect("prezero leaves the block of an allocator alone", z.Holds(0, 0x77) &&
+            z.states[0].load() == ImmixAllocationManager::ZeroStateTaken);
+        Expect("prezero leaves a nursery block alone", z.Holds(1, 0x77) &&
+            z.states[1].load() == ImmixAllocationManager::ZeroStateTaken);
+        Expect("prezero leaves a reusable block alone", z.Holds(2, 0x5a) &&
+            z.states[2].load() == ImmixAllocationManager::ZeroStateDirty);
+        bool free = true;
+        for (size_t index = 3; index < 8; index++)
+        {
+            free = free && z.Holds(index, 0) && z.states[index].load() == ImmixAllocationManager::ZeroStateClean;
+        }
+        Expect("prezero clears the free blocks", free);
+        Expect("prezero a nursery block is not claimed", z.Metric(5) == 0);
+        Expect("prezero holder reset", holder.Reset(&status) == SideMetadataResult::Success);
+    }
+
+    // The clearer runs on its own thread while allocators take every block, check that it is zero, fill it with a pattern and
+    // check the pattern again at the end of the round. A pause (every thread stopped, the clearer gated) releases the nursery
+    // blocks, and the next round starts. No block may be cleared while an allocator uses it, and none may be taken as zero
+    // while it is not.
+    void TestPreZeroConcurrent()
+    {
+        constexpr size_t BlockCount = 48;
+        constexpr size_t ThreadCount = 4;
+        constexpr size_t Rounds = 150;
+        PreZeroFixture z(BlockCount);
+        Expect("prezero concurrent fixture initialized", z.fixture.initialized);
+        if (!z.fixture.initialized)
+        {
+            return;
+        }
+        memset(z.Block(0), 0xe1, z.fixture.data_size);
+        for (size_t index = 0; index < BlockCount; index++)
+        {
+            z.states[index].store(ImmixAllocationManager::ZeroStateDirty);
+        }
+        std::atomic<bool> stop(false);
+        std::thread clearer([&]()
+        {
+            ImmixAllocationManager::PreZeroPass pass;
+            while (!stop.load())
+            {
+                z.fixture.allocation.PreZeroStep(1, 24, 3, &pass);
+                if (pass.caughtUp || pass.gated)
+                {
+                    std::this_thread::sleep_for(std::chrono::microseconds(20));
+                }
+            }
+        });
+        std::atomic<size_t> notZero(0);
+        std::atomic<size_t> lostPattern(0);
+        std::atomic<size_t> taken(0);
+        bool pauses = true;
+        for (size_t round = 0; round < Rounds; round++)
+        {
+            std::vector<std::thread> threads;
+            for (size_t thread = 0; thread < ThreadCount; thread++)
+            {
+                threads.emplace_back([&, thread]()
+                {
+                    ImmixBumpAllocator allocator;
+                    if (allocator.Initialize(&z.fixture.allocation, 0x4000 + thread) != SideMetadataResult::Success)
+                    {
+                        return;
+                    }
+                    std::vector<std::pair<uint8_t*, uint8_t>> mine;
+                    ImmixAllocationStatus status = ImmixAllocationStatus::InvalidRequest;
+                    while (allocator.TryRefill(ImmixAllocationSource::MutatorFresh, ImmixMarkingContext::Inactive,
+                               &status) == SideMetadataResult::Success && status == ImmixAllocationStatus::Ready)
+                    {
+                        uint8_t* block = reinterpret_cast<uint8_t*>(allocator.GetBlock());
+                        uint8_t pattern = static_cast<uint8_t>(0x10 + thread);
+                        bool zero = true;
+                        for (size_t i = 0; i < ImmixBlockGeometry::BlockBytes; i++)
+                        {
+                            zero &= block[i] == 0;
+                        }
+                        if (!zero)
+                        {
+                            notZero++;
+                        }
+                        memset(block, pattern, ImmixBlockGeometry::BlockBytes);
+                        mine.emplace_back(block, pattern);
+                        taken++;
+                    }
+                    for (const auto& entry : mine)
+                    {
+                        for (size_t i = 0; i < ImmixBlockGeometry::BlockBytes; i++)
+                        {
+                            if (entry.first[i] != entry.second)
+                            {
+                                lostPattern++;
+                                break;
+                            }
+                        }
+                    }
+                    allocator.Reset(&status);
+                });
+            }
+            for (std::thread& thread : threads)
+            {
+                thread.join();
+            }
+            // The pause.
+            z.fixture.allocation.SuspendPreZero();
+            ImmixBlockOperationStatus blockStatus;
+            pauses = pauses && z.fixture.blocks.StartGcPause(&blockStatus) == SideMetadataResult::Success;
+            for (size_t index = 0; index < BlockCount; index++)
+            {
+                pauses = pauses && z.fixture.blocks.TryReleaseNursery(
+                    z.fixture.data_start + index * ImmixBlockGeometry::BlockBytes, &blockStatus) ==
+                    SideMetadataResult::Success && blockStatus == ImmixBlockOperationStatus::Updated;
+            }
+            pauses = pauses && z.fixture.blocks.ReleaseGcPause(&blockStatus) == SideMetadataResult::Success;
+            z.fixture.allocation.ResetCursors();
+            z.fixture.allocation.ResumePreZero();
+            // Give the clearer a chance to get ahead of the allocators in some of the rounds.
+            if (round % 3 == 0)
+            {
+                std::this_thread::sleep_for(std::chrono::microseconds(300));
+            }
+        }
+        stop.store(true);
+        clearer.join();
+        Expect("prezero concurrent pauses released every block", pauses);
+        Expect("prezero concurrent allocators took every block of every round", taken.load() == BlockCount * Rounds);
+        Expect("prezero concurrent every block was zero when it was taken", notZero.load() == 0);
+        Expect("prezero concurrent no block was cleared while it was in use", lostPattern.load() == 0);
+        Expect("prezero concurrent verification found no block that was taken as zero and was not",
+            z.Metric(9) == 0);
+        Expect("prezero concurrent the clearer cleared blocks that allocators took as zero",
+            z.Metric(4) > 0 && z.Metric(3) > 0);
+        printf("DETAIL: prezero concurrent cleared by clearer=%llu taken zero=%llu cleared by allocators=%llu waits=%llu\n",
+            static_cast<unsigned long long>(z.Metric(4)), static_cast<unsigned long long>(z.Metric(3)),
+            static_cast<unsigned long long>(z.Metric(0)), static_cast<unsigned long long>(z.Metric(6)));
+    }
+
+    void TestConfigurationFailures()
+    {
+        {
+            LaxoriSideMetadataLayout layout;
+            SideMetadataManager metadata;
+            ImmixBlockManager blocks;
+            ImmixAllocationManager allocation;
+            uint64_t mask =
+                ((UINT64_C(1) <<
+                  static_cast<uint8_t>(LaxoriSideMetadataKind::Count)) - 1) &
+                ~KindMask(LaxoriSideMetadataKind::ObjectMark);
+            ExpectMetadata(
+                "missing object-mark layout",
+                LaxoriSideMetadataLayout::Create(1, &layout),
+                SideMetadataResult::Success);
+            ExpectMetadata(
+                "missing object-mark metadata",
+                metadata.Initialize(&layout, mask),
+                SideMetadataResult::Success);
+            ExpectMetadata(
+                "missing object-mark blocks",
+                blocks.Initialize(&metadata),
+                SideMetadataResult::Success);
+            ExpectMetadata(
+                "missing object-mark allocator",
+                allocation.Initialize(
+                    &metadata,
+                    &blocks,
+                    DataStart,
+                    ImmixBlockGeometry::BlockBytes,
+                    2),
+                SideMetadataResult::InvalidArgument);
+            blocks.Shutdown();
+            metadata.Shutdown();
+        }
+
+        Fixture fixture;
+        Expect("configuration fixture initialized", fixture.initialized);
+        if (!fixture.initialized)
+        {
+            return;
+        }
+
+        ImmixAllocationManager allocation;
+        ExpectMetadata(
+            "zero minimum reuse rejected",
+            allocation.Initialize(
+                &fixture.metadata,
+                &fixture.blocks,
+                fixture.data_start,
+                fixture.data_size,
+                0),
+            SideMetadataResult::InvalidArgument);
+        ExpectMetadata(
+            "over-block minimum reuse rejected",
+            allocation.Initialize(
+                &fixture.metadata,
+                &fixture.blocks,
+                fixture.data_start,
+                fixture.data_size,
+                ImmixBlockGeometry::LinesPerBlock + 1),
+            SideMetadataResult::InvalidArgument);
+
+        ImmixBumpAllocator allocator;
+        ExpectMetadata(
+            "zero owner rejected",
+            allocator.Initialize(
+                &fixture.allocation,
+                ImmixBlockManager::NoOwner),
+            SideMetadataResult::InvalidArgument);
+    }
+#endif
+}
+
+int main()
+{
+#ifndef HOST_64BIT
+    LaxoriSideMetadataLayout layout;
+    ExpectMetadata(
+        "32-bit fails closed",
+        LaxoriSideMetadataLayout::Create(1, &layout),
+        SideMetadataResult::UnsupportedAddressSpace);
+#else
+    TestHoleDiscovery(1);
+    TestHoleDiscovery(2);
+    TestHoleDiscovery(3);
+    TestFreshAllocation();
+    TestRecycledAllocation(ImmixMarkingContext::Inactive);
+    TestRecycledAllocation(
+        ImmixMarkingContext::ConcurrentOrFinalMark);
+    TestGcCopyRecycledAllocation();
+    TestF9ScanEquivalence();
+    TestF9LazyScan();
+    TestF9RefillSchedule(1);
+    TestF9RefillSchedule(3);
+    TestF9DirtyRangeIsReported();
+    TestF9Cursors();
+    TestMinimumHoleBytes();
+    TestMinimumHoleBytesUnsized();
+    TestFittingHoleSearch();
+    TestFittingHoleReadsHalves();
+    TestFreeLineFilter();
+    TestF10LoadOrder();
+    TestF10Prefetch();
+    TestF10ByteCompareExchange(1);
+    TestF10ByteCompareExchange(2);
+    TestF10ByteCompareExchange(3);
+    TestPhaseAndContention();
+    TestFreshReclamation();
+    TestRejectedReusableBlocks();
+    TestPreZeroTakeBlock();
+    TestPreZeroStep();
+    TestPreZeroWake();
+    TestPreZeroWake();
+    TestPreZeroEligibility();
+    TestPreZeroConcurrent();
+    TestConfigurationFailures();
+#endif
+
+    if (s_failures != 0)
+    {
+        printf(
+            "%d/%d immix allocation checks failed\n",
+            s_failures,
+            s_checks);
+        return 1;
+    }
+
+    printf(
+        "%d/%d immix allocation checks passed\n",
+        s_checks,
+        s_checks);
+    return 0;
+}

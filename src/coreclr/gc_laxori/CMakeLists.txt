@@ -35,6 +35,7 @@ set(LAXORI_SOURCES
   laxori_immix_block.cpp
   laxori_reference_count.cpp
   laxori_immix_allocation.cpp
+  laxori_immix_zeroing.cpp
   laxori_large_object_space.cpp
   laxori_work_packet.cpp
   laxori_work_scheduler.cpp
@@ -51,6 +52,7 @@ set(LAXORI_SOURCES
   laxori_gcload.cpp
   laxori_write_barrier.cpp
   laxori_write_barrier.h
+  laxori_block_zeroer.h
   laxori_worker_policy.h
   laxori_prefetch.h)
 

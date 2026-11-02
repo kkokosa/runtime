@@ -343,6 +343,12 @@ HRESULT LaxoriGcHeap::Initialize()
     size_t nurseryCapMB = 0;
     bool immixReserveSpecified = false;
     bool largeReserveSpecified = false;
+    // A block that was never used is zero already (committed memory is zero), so an allocator does not clear it. The
+    // background clearer (LAXORIPrezeroThread) is off by default: it moves the clear of reused blocks to another thread, but the
+    // program thread then pays the cache misses of the first write to every line (see laxori_immix_zeroing.cpp), and the total
+    // CPU time rises.
+    configuration.prezero = true;
+    configuration.prezeroThread = false;
     if (!ReadBooleanSetting("LAXORILegacyCapacity", &legacy) ||
         !ReadSetting("LAXORIImmixInitialMB", &immixInitial, 10, LaxoriSideMetadataLayout::AddressLimit >> 20) ||
         !ReadSetting("LAXORILOSInitialMB", &largeInitial, 10, LaxoriSideMetadataLayout::AddressLimit >> 20) ||
@@ -385,6 +391,10 @@ HRESULT LaxoriGcHeap::Initialize()
         !ReadBooleanSetting("LAXORIHeapSizing", &m_sizing_configuration.enabled) ||
         !ReadSetting("LAXORINurseryCapMB", &nurseryCapMB, 10, SIZE_MAX >> 20) ||
         !ReadBooleanSetting("LAXORIPolicyTrace", &m_policy_trace) ||
+        !ReadBooleanSetting("LAXORIPrezero", &configuration.prezero) ||
+        !ReadBooleanSetting("LAXORIPrezeroThread", &configuration.prezeroThread) ||
+        !ReadSetting("LAXORIPrezeroMarginBlocks", &configuration.prezeroMarginBlocks, 10, 4096) ||
+        !ReadSetting("LAXORIPrezeroWindowBlocks", &configuration.prezeroWindowBlocks, 10, 65536) ||
         !ReadBooleanSetting("LAXORIRequests", &m_requests_enabled))
     {
         return E_FAIL;
@@ -2586,6 +2596,10 @@ void LaxoriGcHeap::EnumerateConfigurationValues(void* context, ConfigurationValu
         static_cast<int64_t>(m_heap_configuration.workers));
     callback(context, "LAXORIConcGCThreads", "System.GC.LAXORIConcGCThreads", GCConfigurationType::Int64,
         static_cast<int64_t>(m_heap_configuration.concurrentTraceWorkers));
+    callback(context, "LAXORIPrezero", "System.GC.LAXORIPrezero", GCConfigurationType::Boolean,
+        m_heap_configuration.prezero);
+    callback(context, "LAXORIPrezeroThread", "System.GC.LAXORIPrezeroThread", GCConfigurationType::Boolean,
+        m_heap_configuration.prezeroThread);
     callback(context, "GCConcurrent", "System.GC.Concurrent", GCConfigurationType::Boolean, IsConcurrentGCEnabled());
 }
 
@@ -3329,6 +3343,10 @@ uint64_t LaxoriGcHeap::GetPrototypeMetric(uint32_t metric) const
             if (metric >= 640 && metric < 648)
             {
                 return m_engine.GetMediumOverflowMetric(metric - 640);
+            }
+            if (metric >= 670 && metric < 680)
+            {
+                return m_engine.GetZeroingMetric(metric - 670);
             }
             Unsupported("LAXORI prototype metric index is invalid.");
             return UINT64_MAX;
