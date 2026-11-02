@@ -64,9 +64,15 @@ them back when one fails.
 | 2 MiB (64 blocks, Satori size) | under 1 % | no (cold after the fill) | 256 KiB | 32 KiB + 4 KiB | 2 MiB | amortizes best. Many threads hold a lot of memory (1000 threads: 2 GiB). The block run is hard to find in a fragmented 8 MiB arena. |
 
 The region size is a setting (`DOTNET_LAXORIRegionKB`, a power of two from 32 to 4096) and the barrier reads its shift from a
-patchable slot. L1 measures 32, 128, 256, 512 and 2048 KiB on the six workloads and `STATUS.md` records the result.
-The largest object that goes into a region is `min(8 KiB, R/8)`. Larger objects use the shared allocator (the LXR medium
-allocator and the large object space).
+patchable slot. The largest object that goes into a region is `min(8 KiB, R/8)`. Larger objects use the shared allocator (the
+LXR medium allocator and the large object space).
+
+**Measured** (L2, 5 interleaved runs, medians, `results/region-size.txt`). 32 KiB is clearly worse: on `requests` it makes 17463
+thread-local collections instead of 3040 (wall 629 ms against 376 ms), on `binarytrees` 24180 (1481 ms against 1238 ms), on
+`mixedmedium` 1676 ms against 1399 ms. From 128 KiB on the results are close: `requests` 402, 376, 365 and 377 ms (128, 256, 512,
+2048 KiB), `binarytrees` 1229, 1238, 1215, 1212 ms, `listsuffix` 1503, 1508, 1517, 1447 ms. 512 KiB is marginally better than 256
+KiB and 2 MiB is best on pauses of `binarytrees` (23 collections against 41), but the differences are inside the run-to-run noise
+of this machine. The default stays 256 KiB (the smallest memory per thread that is not clearly worse).
 
 ## 4. Metadata of the private tier
 
@@ -247,45 +253,56 @@ The user may want a new implementation. The lookup stays behind **one function**
 
 L1 and L2 use option A unchanged. The private tier does not use any of these (it has the index of section 4).
 
-## 10. Expected benefit (to be checked by the benchmark; no number is promised)
+## 10. Expected benefit and what was measured
 
 LXR already treats a dead young object as free (it is never visited) and zeroes a 32 KiB block when it hands it out. So Laxori
 does not save the "cost of dead objects". What it can save: **LXR pauses and the work they cause** (the root scan, the promotion
 of whatever is alive at that instant, the concurrent CPU of the workers: LXR uses 712 CPU ms for 477 of WKS on `requests`), and
 it keeps the working set inside a region of 256 KiB (cache) instead of cycling through the nursery. What it costs: the barrier
-(a few instructions on every reference store), the escape work, the stack scan of every thread-local collection, and the tail
-zeroing.
+(a few instructions on every reference store), the escape work, the stack scan of every thread-local collection, and the
+zeroing of the reused gaps.
 
-| workload | what happens | expectation |
-|---|---|---|
-| `requests` | each request builds 24 items (about 4.4 KB) that die at the end of the request. Every eighth request stores a new `Entry` (about 0.5 KB) into a shared table. | **should gain**: the temporary lists never reach an LXR pause. Escapes are few and small (L2 keeps them in place; L1 would dissolve the region at every collection, and gives no gain). The CPU time should fall most. |
-| `binarytrees` | a tree is built bottom-up and is alive during its construction and check. A tree of depth d is `2^(d+1)` nodes of 32 bytes (d=8: 16 KiB, d=12: 256 KiB, d=18: 16 MiB). Depths 4 to 18 step 2, equal allocation volume for each depth. | **partial gain.** With a 256 KiB region the survivors limit is 32 KiB: trees up to depth 9 (3 of the 8 levels, 3/8 of the allocation) are collectable. Trees above that survive entirely, the thread-local collection is skipped, and the region is dissolved: LXR works as today (+ barrier cost). With 2 MiB regions, depth up to 12 (5/8). The two big trees (depth 18, 19) are LXR only. |
-| `listsuffix` | every new node is linked behind an old node of a list that is shared (an array of 8192 lists). | **no gain, a loss is likely**: every node escapes (the destination is shared or exposed), the region fills with escaped objects, the escape limit dissolves it. The cost is the slow path per store plus the region churn. |
-| `mixedmedium` | objects of 512 B to 16 KiB stored into a shared array. | **little or no gain.** Objects above 8 KiB bypass the region. The rest escape when stored. |
-| `losarrays`, `mediumarrays` | large and medium arrays. | no gain (arrays above the limit go to the engine). Only the barrier cost. `mediumarrays` fails in the LXR base for a memory reason. |
+**Measured** (final build, frame-c4, 9 interleaved runs, medians; full tables in `results/` and `STATUS.md`):
+the expectation below was right about the direction in every case, and wrong about the wall time. Laxori saves CPU and pauses on
+`requests` and `binarytrees`, but the saved work was done by parallel GC workers, so the **wall time did not improve** (`requests`
+364 ms against 356 ms of LXR; `binarytrees` 1201 ms against 1127 ms). `listsuffix` is 25 to 29 percent slower, as predicted.
+
+| workload | what happens | expectation | measured (Laxori L2 against LXR) |
+|---|---|---|---|
+| `requests` | each request builds 24 items (about 4.4 KB) that die at the end of the request. Every eighth request stores a new `Entry` (about 0.5 KB) into a shared table. | **should gain**: the temporary lists never reach an LXR pause. Escapes are few and small. The CPU time should fall most. | CPU 453 against 496 ms (-9%), pauses 25 against 98 collections, pause time 9 against 29 ms, copied 7 against 12 MB. Wall equal. |
+| `binarytrees` | a tree is built bottom-up and is alive during its construction and check. | **partial gain.** With a 256 KiB region the survivors limit is 32 KiB. | L1: CPU 2107 against 3616 ms (-42%), collections 42 against 103, p99 pause 21 against 30 ms; L2: CPU 2572 (-29%). Wall 1175 to 1201 against 1127 ms (+4 to 7%): the program thread does the thread-local collections (233 ms) that the workers did before. |
+| `listsuffix` | every new node is linked behind an old node of a list that is shared. | **no gain, a loss is likely.** | wall 1450 to 1504 against 1166 ms (+25 to 29%), CPU +36%. Every node escapes (43 to 49 MB of escaped objects), the barrier slow path doubles (170 against 86 ms in the profile), and the workers do 570 ms more. The private tier off (`laxori:0`) is equal to LXR (1221 ms). |
+| `mixedmedium` | objects of 512 B to 16 KiB stored into a shared array. | little or no gain. | equal to LXR within noise (1376 to 1385 against 1376 ms). |
+| `losarrays`, `mediumarrays` | large and medium arrays. | no gain. | equal within noise (the arrays bypass the region). `mediumarrays` needs `LAXORIImmixInitialMB=200 LAXORIImmixReserveMB=400`, as in LXR. |
 
 ## 11. Milestones
 
 * **L0** (done): the engine copy re-synced with `lxr-gc-review` 3db3b488e29; the native engine tests of LXR, renamed, pass (10 programs).
-* **L1**: automatic private regions, owner table, private bitmap, per-object escape, the new barrier, thread-local mark/plan/
-  update/compact for a region with no escaped and no pinned object, stack roots only; the dissolve path; the shared tier unchanged; the
-  request hooks removed from the default path. Tests: native (barrier, escape closure, thread-local collection with mutation checks) and
+* **L1** (done, commit `bf394ec`): automatic private regions, owner table, private bitmap, per-object escape, the new barrier, thread-local mark/plan/
+  update/compact for a region with no escaped object, stack roots only; the dissolve path; the shared tier unchanged; the
+  request hooks removed from the default path. Tests: native (barrier, thread-local collection with mutation checks) and
   managed (stores, arrays, struct copies, `Array.Copy`, CAS, handles, finalizers, thread exit, `GC.Collect` inside, deep graphs, sync).
-* **L2**: escaped objects stay in place, regions with escapes are reused, the plan skips unmovable objects, the escape limit.
-* **Benchmarks**, **crash hunts** (at least 100 runs per milestone at 13/3, 4/2 and 1/1 workers), **perf profile** of the program
-  thread, **pause statistics**.
+* **L2** (done, default): escaped objects stay in place, regions with escapes are reused, the plan skips unmovable objects, the escape limit.
+  `DOTNET_LAXORIEscapedInPlace=0` selects L1 behaviour.
+* **Benchmarks**, **crash hunts** (126 runs for each milestone at 13/3, 4/2 and 1/1 workers), **perf profile** of the program
+  thread, **pause statistics**: done, see `STATUS.md` and `results/`.
 
 Laxori stays off by default: CMake option `CLR_CMAKE_ENABLE_LAXORI_GC` OFF, and it runs only with `DOTNET_GCPath`.
 
-## 12. Risks
+## 12. Risks (state after L2)
 
-1. **Stack scan cost** of a thread-local collection (deep stacks, many frames): measured in L1; the region size is the lever.
-2. **Barrier cost** on every reference store; measured with a micro benchmark and in the profile.
-3. **Sync blocks** and other native tables that hold raw object pointers (section 7).
-4. **`GcScanCurrentStackRoots` inside `Alloc`** works in Satori in this runtime. The frame of the allocation helper must report no
-   stale object. To be checked by the mutation tests.
-5. **Free objects in a span** reach engine code that expects live objects only (section 8, a).
-6. **Block runs** may not be available in a fragmented small arena: fall back to a smaller region, then to the shared allocator.
+1. **Stack scan cost** of a thread-local collection: measured. `LocalMark` is 20 percent of the CPU of the `requests` program thread
+   (about 70 ms in 3000 collections), mostly the rescan of the escaped objects of the region. A collection of a region with
+   escapes is therefore allowed only when the escaped bytes are at most 1/16 of the region (`LAXORIEscapedCollectDiv`).
+2. **Barrier cost** on every reference store: visible only in `listsuffix` (170 against 86 ms of the program thread in the profile).
+3. **Sync blocks** and other native tables that hold raw object pointers: the sync-block table was a real bug (fixed, section 7).
+   The handle table, the finalizer registry and the thread statics were checked and are covered; others that the runtime keeps
+   outside the heap were not enumerated exhaustively.
+4. **`GcScanCurrentStackRoots` inside `Alloc`** works (tests and 252 hunt runs). Stack roots in registers and tail-call buffers
+   were not tested with GC stress.
+5. **Block crossing** was the main correctness finding of L1 (section 6).
+6. **Block runs** may not be available in a fragmented small arena: the thread falls back to the shared allocator with the fast
+   buffer of the engine, and asks again after the next pause (or after 512 slow allocations).
 7. **Handles to private objects** hold raw pointers: handled only by escaping at creation. A handle created by code that does not
    go through the handle wrapper would be a stale pointer.
 8. **R2R and the JIT** must route every reference store through the helpers (`CrossgenOldValueWriteBarriers=true`); a store that

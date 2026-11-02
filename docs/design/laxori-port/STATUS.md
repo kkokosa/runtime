@@ -1,102 +1,178 @@
-# Laxori: status
+# Laxori: status after L2
 
-Everything below was run in this worktree on WSL2 Ubuntu 22.04 (16 CPUs), against the benchmark frame `/root/prof/frame-p`
-(R2R built with `CrossgenOldValueWriteBarriers=true`). Other sessions used the machine at the same time. Nothing here is
-pushed. Laxori is **off by default** at two levels: the CMake option `CLR_CMAKE_ENABLE_LAXORI_GC` is OFF, and the request
-regions need `DOTNET_LAXORIRequests=1` plus a program that calls the request hooks.
+Laxori is our Satori + LXR: every thread allocates into its own private region and collects it alone; the shared heap is the LXR
+engine. Design: `DESIGN-v2.md`. Everything below was built and run in this worktree on WSL2 Ubuntu 22.04 (16 CPUs) against the
+benchmark frame `/root/prof/frame-c4` (the merged LXR of `lxr-gc-review` 3db3b488e29, R2R with `CrossgenOldValueWriteBarriers=true`).
+Nothing is pushed. Laxori is **off by default**: the CMake option `CLR_CMAKE_ENABLE_LAXORI_GC` is OFF, and the library runs only
+with `DOTNET_GCPath`.
 
-## Summary
+## Summary (honest)
 
-| Milestone | State |
+| Item | State |
 |---|---|
-| M0 scaffold | Done. `gc_laxori` builds and runs. It is a renamed copy of the LXR engine. |
-| M1 request-private regions | Done and stable in the tests listed below. **It is not faster** than the LXR engine on the benchmark set (section 4). |
-| M2 shared reclamation and cycles | No new mechanism. Tests of published request data (rings with back pointers) run and the memory stays bounded. Trial deletion is **not** implemented; cycles are reclaimed by the LXR trace. |
+| L0 engine re-sync (LOS rewrite, medium allocator, zeroing) | Done. The 10 native engine programs pass (section 2). With `DOTNET_LAXORIPrivate=0` Laxori equals LXR within noise on all six workloads. |
+| L1 automatic private regions, per-object escape, thread-local GC (regions with no escapes) | Done, stable in the tests and in 126 hunt runs. |
+| L2 escaped objects stay in place, regions with escapes are reused, escape limit | Done, **default**, stable in the tests and in 126 hunt runs. `DOTNET_LAXORIEscapedInPlace=0` gives L1. |
+| Speed | **No wall-time gain.** CPU and pauses fall on `requests` and `binarytrees`; `listsuffix` is 25 to 29 percent slower; the other workloads are equal to LXR. |
+| Cycle recovery by trial deletion (item i of the description) | **Not implemented.** The shared heap uses the LXR trace (inherited). |
 
-## 1. Build
+## 1. Build and run
 
 ```
 export CC=/usr/bin/clang-14 CXX=/usr/bin/clang++-14 CLR_OBJCOPY=/usr/bin/objcopy
 bash src/coreclr/build-runtime.sh -release -x64 -ninja -component clrlaxorigc -subdir <name> -numproc 4 \
      -cmakeargs "-DCLR_CMAKE_ENABLE_LAXORI_GC=ON"
+DOTNET_gcServer=1 DOTNET_GCPath=<so> corerun ...
 ```
 
-The output is `artifacts/obj/coreclr/linux.x64.Release/<name>/gc_laxori/libclrlaxorigc.so`. It was built twice (M0, and M1
-in the same build directory). `gc_lxr` and `gc_satori` are not changed. Only `src/coreclr/CMakeLists.txt` has two small
-additions (option and `add_subdirectory`).
+The output is `artifacts/obj/coreclr/linux.x64.Release/<name>/gc_laxori/libclrlaxorigc.so`. `gc_lxr` and `gc_satori` are not
+changed. Keys: the LXR keys with the prefix `LAXORI` (for example `DOTNET_LAXORIGCThreads`), plus `LAXORIPrivate` (default 1),
+`LAXORIRegionKB` (default 256, a power of two from 32 to 4096), `LAXORIEscapedInPlace` (default 1), `LAXORIEscapedCollectDiv`
+(default 16), and the debug switches `DOTNET_LAXORIVerifyPrivate=1` (region verifier) and `DOTNET_LAXORITestControl=1..5` (mutation
+checks; test only). `mediumarrays` needs `DOTNET_LAXORIImmixInitialMB=200 DOTNET_LAXORIImmixReserveMB=400`, as it does for LXR (OOM
+otherwise; inherited).
 
-Run: `DOTNET_gcServer=1 DOTNET_GCPath=<so> DOTNET_LAXORIRequests=1 corerun ...`. The configuration keys of the engine are
-the LXR keys with the prefix `LAXORI` (for example `DOTNET_LAXORIGCThreads`).
+In an incremental build, a configure on the Windows file system failed twice with a spurious "Permission denied" in CMake's
+`CMakeScratch`; building with `ninja` in an already configured directory (`scripts/ninja-laxori.sh`, `scripts/cyc.sh`) avoids it.
 
-## 2. Tests that were run
+## 2. Tests that were run (final build, commit after `3465502`)
 
 | Test | Result |
 |---|---|
-| Native barrier test (`BarrierTest/`): the assembly barrier copied to an executable page, with a fake heap, block table and metadata. 15 checks: private dst, shared/shared with clear and set unlog bit, shared dst with private reference (escape once, then log, then store), null and non-heap references, checked helper outside and inside the heap, xmm state preserved across both slow paths. | 15 of 15 PASS |
-| Request tests (`RequestTests/`): stores into arrays, a struct array, a static, a large array, `Array.Copy`, `Interlocked.CompareExchange`, a `Dictionary`; strong, weak, weak-track and pinned `GCHandle`s; `ConditionalWeakTable`; finalizable objects; `GC.Collect` inside a request; a result object passed to `EndRequest`; nested `BeginRequest`; `EndRequest` without a body; 40 threads that exit inside a request; objects above the private size limit; large arrays. Every published object carries a checksum that is validated all the time and at the end. | M1: 24 of 24 runs PASS (1, 2, 4 and 8 threads, 6 rounds, 40000 requests per thread); also 2, 4, 8 threads with 60000 requests. The same tests PASS on WKS and on the M0 build. |
-| Cycle test (`RequestTests ... cycles`): 1.5 million requests, each publishes a ring of 16 nodes with `Next` and `Prev` and replaces an old ring. | PASS. Peak working set 201 MB (WKS: 65 MB). Rings validated during the run and after a full GC. |
-| Crash hunt M0 (`scripts/hunt-m0.log`): 6 workloads, worker settings default, 1/1, 2/1, 4/2, 8/4 | 102 runs: 85 OK, 17 FAIL. **All 17 failures are `mediumarrays` with an `OutOfMemoryException`.** The frame's LXR (`libclrlxrgc.so`) fails the same workload in the same way, so this is inherited from the base, not new. |
-| Crash hunt M1 (`scripts/hunt-m1.log`): `DOTNET_LAXORIRequests=1`, five workloads (without `mediumarrays`), same worker settings, scaled-down sizes, checksums compared with a WKS run of the same size | 135 runs: 135 OK. |
+| Native engine programs (`run-native-all.sh`: P2.1 to P2.5, P3.1 to P3.4, P4), copies of the LXR validation of 3db3b488e29 | 10 of 10 PASS (P3.1 641/641, P3.2 395/395, P3.3 357/357, P3.4 70/70, P4 105380/105380). |
+| Native barrier test (`BarrierTest/`): the v2 assembly barrier copied to an executable page, fake heap, owner table, private bitmap, unlog bits. Private store, exposed slot, escape, escape then log then store, other region, shared source, foreign owner, null, non-heap, checked helper, dissolve, xmm state | 19 of 19 checks PASS |
+| Managed `PrivateTests` (10 tests: stack roots, interior pointers and `fixed`/`Span`, deep and big graphs, escape into statics, arrays, dictionaries, bulk copies and struct copies, handles (strong, weak, pinned, dependent, `ConditionalWeakTable`), finalizers, `GC.Collect` inside, sync blocks, hand-off between threads and thread exit) | PASS at 1, 2, 4, 8 and 13 threads with the verifier on, in L1 and L2 mode; also scale 6 at 8 threads and scale 4 at 13 threads. |
+| Mutation checks (`DOTNET_LAXORITestControl`): 1 skip the update of the stack roots, 2 skip the update of object references, 3 skip the children in an escape, 4 skip the clearing of a gap | all four make the managed tests fail (segfault or abort); the unmodified build passes. Control 5 (skip the sync-block walk) is a cost measurement, not a check. |
+| Crash hunt L1 (`results/hunt-L1.txt`): 126 runs, 7 for each of 6 jobs (5 scaled workloads + `PrivateTests`) x 3 worker settings (default 13/3, 4/2, 1/1), checksums against a WKS run of the same size | 126 OK, 0 failures |
+| Crash hunt L2 (`results/hunt-L2.txt`), same matrix, default settings | 126 OK, 0 failures |
+| Full-size benchmark runs (section 3): 378 runs | 378 OK, all checksums equal |
 
-The hunts and the request tests ran with `nice -n 19` and **without** the benchmark lock, because the lock was held by long
-runs of other sessions for hours. The benchmark itself ran under `flock /tmp/lxr-bench.lock`.
+The hunts used scaled-down workload sizes and ran with `nice -n 19` **without** the benchmark lock (the lock was held for hours by
+other sessions earlier); the two hunts ran at the same time. The benchmark, the profiles and the pause statistics ran under
+`flock /tmp/lxr-bench.lock`.
 
-## 3. What M1 does (as built)
+**What the tests found** (the bugs of this work, all fixed):
 
-* A thread is "in a request" between `GC_Laxori_BeginRequest()` and `GC_Laxori_EndRequest(result)` (exported from the
-  library, called through `SuppressGCTransition` function pointers). The first small allocation of the request takes a clean
-  32 KiB Immix block as the private region and hands the rest of it to the runtime as the allocation buffer of the thread.
-* The block table (one byte per block) and `amd64/laxori_writebarrier.S` implement the owner check and the escape publication.
-  Bulk copies, `pre_store`, GC handles and `GC.ReRegisterForFinalize` also publish. Finalizable, pinned, large and
-  objects of more than 8 KiB are allocated in the shared heap.
-* `EndRequest` with no escape zeroes the used bytes of the region and moves the cursor back. No span, no count, no pause.
-* A pause, a full region, a thread exit and a nested `BeginRequest` publish the region (it becomes a normal young span).
-* Metrics 700 to 709 of `GC_Laxori_GetMetric` count requests, resets, publications by cause, and escape slow calls.
+1. The private bitmap was cleared for 1/8 of the region (`>> 9` words against bytes). Found by the first run.
+2. **Objects crossed the 32 KiB blocks of a multi-block region.** The Immix engine promotes and sweeps by the block of the start
+   of an object, so a pause released the tail block of a live object. It showed only above 32 KiB regions and at 4 and more
+   threads (null method tables and non-pointer values in reference fields found at a pause). The fix changed the layout (block
+   rule, gap list, one span for each stretch of live objects, see `DESIGN-v2.md` section 6). Verified with the 8-thread graph test
+   (about 100 percent failures before, 0 of 20 after) and the region verifier.
+3. **Sync blocks.** The sync-block table of the runtime holds raw pointers that only a pause updates; a thread-local collection that
+   reclaimed or moved an object with a sync block left a stale entry (found by the `sync` test in L2). Objects with a sync block
+   are now pinned roots of the thread-local mark (a walk of the region).
+4. When a region could not be taken, every allocation went through the slow shared path (millions of failed acquisitions, 3 to 4
+   times slower on `listsuffix` and `mixedmedium`). Fixed with the fast buffer of the engine and a back-off.
 
-## 4. Benchmark (5 interleaved runs, median; `scripts/bench-m1.log`)
+## 3. Benchmark (9 interleaved runs, medians; `results/bench-final.txt`)
 
-Wall ms / CPU ms / pause ms / peak RSS MB. All checksums equal the expected ones. `lxr` is the `libclrlxrgc.so` of the frame
-(built from a newer commit than the base of this branch). `laxori0` is the M1 build with requests off (the hooks do nothing),
-`laxori1` is the M1 build with `DOTNET_LAXORIRequests=1`. Only the `requests` workload calls the hooks (one request per loop
-iteration); for the other workloads `laxori1` is the same program as `laxori0`. `mediumarrays` is not in the table: LXR and
-Laxori fail it with an out-of-memory error.
+Wall ms / CPU ms / pause ms / peak RSS MB. All checksums equal the expected ones (requests 27134172608, binarytrees 68332294,
+listsuffix 159636632672, mixedmedium 40586599707, losarrays 13936826922, mediumarrays 7032863679). `lxr` is `libclrlxrgc.so` of the
+frame. `Laxori off` is Laxori with `LAXORIPrivate=0` (the LXR engine of the copy); `L1` and `L2` have the private tier on.
 
-| workload | WKS | SVR | LXR | Satori | Laxori requests off | Laxori requests on |
-|---|---|---|---|---|---|---|
-| requests | 476 / 477 / 81 / 67 | 764 / 1183 / 316 / 99 | 533 / 712 / 40 / 172 | 814 / 934 / 28 / 88 | 563 / 744 / 40 / 172 | 552 / 705 / 39 / 165 |
-| binarytrees | 1213 / 1217 / 355 / 91 | 1632 / 2470 / 690 / 202 | 1135 / 2632 / 117 / 195 | 1135 / 1762 / 69 / 162 | 1221 / 2222 / 99 / 195 | 1219 / 2394 / 100 / 195 |
-| listsuffix | 2774 / 2917 / 1515 / 99 | 1445 / 3429 / 392 / 209 | 1716 / 4751 / 212 / 203 | 1109 / 2579 / 115 / 228 | 1782 / 5009 / 221 / 203 | 1699 / 4653 / 200 / 200 |
-| mixedmedium | 1414 / 1429 / 610 / 181 | 1363 / 2318 / 409 / 503 | 2398 / 5785 / 347 / 193 | 839 / 1827 / 164 / 360 | 2543 / 6363 / 366 / 193 | 2507 / 6304 / 348 / 193 |
-| losarrays | 2388 / 2507 / 1441 / 313 | 3133 / 6634 / 1589 / 488 | 12462 / 85185 / 1757 / 329 | 856 / 1508 / 112 / 533 | 13284 / 97516 / 1696 / 329 | 12637 / 94471 / 1865 / 332 |
+| workload | WKS | SVR | LXR | Satori | Laxori off | Laxori L1 | Laxori L2 |
+|---|---|---|---|---|---|---|---|
+| requests | 315 / 313 / 65 / 67 | 552 / 868 / 260 / 100 | 356 / 496 / 29 / 172 | 570 / 644 / 18 / 94 | 361 / 502 / 29 / 172 | 366 / 509 / 30 / 174 | 364 / **453** / **9** / 167 |
+| binarytrees | 1033 / 1039 / 304 / 121 | 1407 / 2152 / 623 / 177 | 1127 / 3616 / 172 / 210 | 982 / 1648 / 61 / 164 | 1129 / 3383 / 142 / 208 | 1175 / **2107** / **70** / 194 | 1201 / **2572** / **85** / 205 |
+| listsuffix | 2043 / 2131 / 1166 / 100 | 983 / 2514 / 323 / 165 | 1166 / 3684 / 181 / 201 | 800 / 1995 / 90 / 228 | 1221 / 3826 / 190 / 202 | 1504 / 5005 / 216 / 204 | 1450 / 5057 / 216 / 204 |
+| mixedmedium | 1003 / 1014 / 427 / 183 | 1140 / 1918 / 314 / 497 | 1376 / 2417 / 187 / 195 | 688 / 1426 / 119 / 368 | 1385 / 2419 / 188 / 195 | 1381 / 2384 / 186 / 197 | 1376 / 2384 / 188 / 197 |
+| losarrays | 1914 / 2003 / 1155 / 317 | 2742 / 5707 / 1340 / 512 | 1157 / 2452 / 464 / 110 | 740 / 1318 / 98 / 504 | 1175 / 2513 / 477 / 110 | 1173 / 2493 / 476 / 111 | 1201 / 2531 / 464 / 110 |
+| mediumarrays | 1219 / 1218 / 522 / 232 | 1110 / 2032 / 322 / 510 | 980 / 1735 / 85 / 489 | 649 / 1533 / 154 / 526 | 958 / 1706 / 86 / 489 | 1004 / 1727 / 91 / 491 | 1018 / 1756 / 93 / 492 |
 
-Checksums (all collectors, all rows equal): requests 27134172608, binarytrees 68332294, listsuffix 159636632672,
-mixedmedium 40586599707, losarrays 13936826922.
+Private-tier counters of L2 (median of the 9 runs): thread-local collections `requests` 3041, `binarytrees` 5075, the others 0;
+escaped MB `requests` 15, `binarytrees` 27, `listsuffix` 43, `mixedmedium` 10, `mediumarrays` 331; MB that the pauses copied
+(survivors that reached an LXR pause): `requests` 7.2 (LXR 12.4), `binarytrees` 57.1 for L2 and 39.0 for L1 (LXR 45.5), `listsuffix` 41.6 (LXR
+39.4); collections `requests` 25 (LXR 98), `binarytrees` 41 (LXR 103). `acquireFailures` (a region was not available): 2 to 10
+on `requests` and `binarytrees`, about 320 on `listsuffix`, about 1000 on `mixedmedium`.
 
-What the numbers say (honestly):
+**What the numbers say:**
 
-* On `requests`, request regions give **about 2% less wall time** than the same engine with requests off (552 against 563
-  ms). This is inside the noise of this shared machine. Laxori is **slower than the frame's LXR (533 ms) and than WKS (476 ms)**
-  on this workload. The engines differ in age (the frame's LXR is newer), so the part of the gap between `laxori0` and `lxr`
-  is not caused by Laxori.
-* In that run, 12% of the requests store a new object into a shared table, so their region escapes. Each escape takes a new
-  block: the engine zeroes 32 KiB and the unused tail of the old block is wasted until the next pause. The number of pauses
-  therefore did not go down (9 pauses with and without requests). Of 1.92 million requests (warm-up included), 1.69 million
-  were retired in place (7.8 GB of request data zeroed and reused); 233 thousand escaped.
-* For the other workloads, `laxori0` is equal to LXR within noise. The barrier has not been measured separately.
-* No claim of a speed-up is made.
+* **Wall time is not better than LXR on any workload.** `requests` and `binarytrees` use less CPU (-9 percent and -29 to -42 percent) and
+  have fewer collections and shorter total pause time, but the work that was saved ran on parallel GC workers, while the thread-local
+  collections run on the program thread. The program thread of `binarytrees` spends 233 ms in thread-local GC; the workers spend 1172 ms against 2459 ms of LXR (profile below).
+* **`binarytrees`: L1 is better than L2** (CPU 2107 against 2572 ms). L2 collects regions with some escapes and rescans their
+  escaped objects each time.
+* **`listsuffix` is the loss that was predicted.** Everything escapes into the shared array. The slow path of the barrier is
+  twice as costly (170 against 86 ms of the program thread), the escape tracking costs 29 ms, and the workers run 570 ms longer.
+* `mixedmedium`, `losarrays`, `mediumarrays`: equal to LXR within noise (the objects bypass the region or escape at once).
+  `mediumarrays` copies more at pauses (425 against 275 MB), with equal time.
+* Satori is faster than all of them on `mixedmedium`, `losarrays`, `mediumarrays` and `listsuffix`; this was not changed by Laxori.
+
+### Region size (L2, 5 runs, `results/region-size.txt`)
+
+32 KiB is clearly worse (`requests` 629 ms and 17463 thread-local collections, against 376 ms and 3040 at 256 KiB; `binarytrees` 1481
+against 1238 ms). 128, 256, 512 and 2048 KiB are close (`requests` 402, 376, 365, 377 ms; `binarytrees` 1229, 1238, 1215, 1212 ms).
+The default stays 256 KiB.
+
+### Perf profile of the program thread (cpu-clock, 4000 Hz, `results/profile-summary.txt`)
+
+| workload | collector | program thread | other threads | main parts of the program thread |
+|---|---|---|---|---|
+| requests | LXR | 399 ms | 110 ms | managed 175, memset 84, allocation 66, kernel 22 |
+| requests | Laxori L2 | 413 ms | 44 ms | managed 172, **thread-local GC 106** (`LocalMark` 69), memset 28, allocation 32 |
+| binarytrees | LXR | 1123 ms | 2459 ms | managed 409, allocation 261, memset 193 |
+| binarytrees | Laxori L2 | 1226 ms | 1172 ms | managed 434, **thread-local GC 233** (`LocalMark` 211), allocation 223, memset 89 |
+| listsuffix | LXR | 1303 ms | 3317 ms | managed 884, GC work 159, allocation 135 |
+| listsuffix | Laxori L2 | 1484 ms | 3912 ms | managed 975, allocation 175, GC work 153, **write barrier 170 (LXR 86)**, escape 29 |
+
+### Pause statistics (3 runs, GC suspend and restart events of the runtime, `results/pause-stats.txt`)
+
+Pauses per run / p50 / p99 / max in ms:
+
+| workload | LXR | Satori | Laxori L1 | Laxori L2 |
+|---|---|---|---|---|
+| requests | 9.3 / 3.6 / 6.1 / 6.1 | 16 / 0.5 / 8.0 / 8.0 | 9.0 / 3.4 / 5.0 / 5.0 | 2.0 / 5.4 / 8.2 / 8.2 |
+| binarytrees | 30 / 1.9 / 30.1 / 30.1 | 119 / 0.5 / 2.3 / 4.3 | 9.3 / 6.1 / 20.8 / 20.8 | 10 / 6.6 / 24.7 / 24.7 |
+| listsuffix | 6.7 / 29.2 / 34.1 / 34.1 | 34 / 1.7 / 30.9 / 37.6 | 8 / 30.0 / 32.9 / 32.9 | 8 / 28.2 / 41.7 / 41.7 |
+| mixedmedium | 225 / 0.9 / 4.1 / 11.1 | 68 / 0.5 / 16.4 / 43.0 | 226 / 0.9 / 3.7 / 9.7 | 228 / 0.9 / 3.2 / 10.0 |
+| losarrays | 49 / 9.7 / 13.7 / 16.1 | 149 / 0.3 / 3.3 / 3.8 | 49 / 9.7 / 34.2 / 66.0 | 49 / 9.4 / 13.4 / 13.7 |
+| mediumarrays | 14 / 4.5 / 21.3 / 21.3 | 75 / 0.5 / 31.6 / 83.2 | 16 / 4.9 / 19.4 / 19.4 | 16 / 5.0 / 15.5 / 15.5 |
+
+(With 3 runs the p99 and the max are the worst pauses of the runs; `losarrays` L1 has one 66 ms pause.) A thread-local
+collection is not in this table: it stops only its own thread. From the profile it costs about 35 to 45 us on average (106 ms for
+3041 collections of `requests`, 233 ms for 5075 of `binarytrees`); a single collection was not timed.
+
+## 4. What the implementation does (as built)
+
+* A thread takes a region of 256 KiB (8 aligned Immix blocks, `AcquireRun`) on its first allocation of a size up to
+  `min(8 KiB, R/8)` that is not finalizable, pinned or large. The owner table (8 bytes for each block) holds the thread tag.
+* The write barrier (`amd64/laxori_writebarrier.S`) tests the owner of the source, the same-region and the exposed bit. A store of a
+  private reference into a place that is not private (or into an exposed slot) calls the escape routine: the target and the
+  objects that it reaches in the region get the Escaped bit, their slots get the exposed bit. `pre_store`, bulk copies, GC handles
+  and `ReRegisterForFinalize` escape too.
+* A full region is collected by its thread: mark from the stack (`GcScanCurrentStackRoots`) and the escaped objects, plan, update,
+  compact. Objects that are escaped, pinned or have a sync block stay. Survivors above region/8, or a gain below region/4, skip the
+  collection (the region goes to the shared heap and the thread skips the next 1, 3, 7, 15 regions). Above `escaped > region/4`
+  the region is dissolved. A region with escapes is collected only when the escaped bytes are at most 1/16 of the region.
+* An LXR pause dissolves all regions: the owner entries are cleared and the engine gets one span for each stretch of live objects.
+* The shared heap is the LXR engine of `gc_laxori` (a renamed copy; no new reclamation mechanism).
 
 ## 5. Not verified / known gaps
 
-* No speed-up was shown. A request that escapes pays a 32 KiB block acquisition; the tail of the block is not reused.
-* Sync blocks (hash code then `lock` on a request object) are not detected; a retired object could leave a stale pointer in
-  the sync block table. There is no test for it.
-* The stack contract of `EndRequest` is not checked (no poison/verify mode).
-* The hooks write `ee_alloc_context::m_CombinedLimit` by its layout (see risk 10 in `DESIGN.md`).
-* Windows is not ported (the barrier assembly exists only for Linux x64). ARM64 is not ported.
-* Async code in a request is not supported. Only thread-affine scopes were tested.
-* Trial deletion (item i of the description) is not implemented. The shared heap uses the LXR trace.
-* Crash hunts of M1 used scaled-down workload sizes (135 runs). Full-size runs of M1 were: the benchmark matrix (5 runs for
-  each workload and collector, no failures) and 2 hand runs. Full-size M0 hunt had 85 OK and 17 inherited `mediumarrays` OOMs.
-* `GC.GetTotalAllocatedBytes` accounting for request regions was not checked against the runtime.
-* Profilers, debugger heap walks (`DiagWalkHeap`) and the DAC were not tested with request regions.
-* The request tests use a Release frame without GC stress.
+* **No speed-up in wall time**, and a 25 to 29 percent loss on `listsuffix`. The program thread pays for the thread-local
+  collection (`LocalMark` rescans the escaped objects of the region every time; a block-level retirement of escape-heavy blocks is
+  not done).
+* Trial deletion for cycles is **not implemented** (item i). Cyclic data of the shared heap is reclaimed by the LXR trace.
+* Native tables of the runtime that keep raw object pointers: the sync-block table (fixed), the handle table and the finalizer
+  registry (covered) were checked; other tables were not enumerated. A raw pointer outside these would be a stale pointer after a
+  thread-local collection.
+* No GC stress, no stress with the debugger, a profiler or the DAC; `DiagWalkHeap` is not tested with regions. Async code is covered
+  only by the hand-off test (threads and a queue).
+* `GC.GetTotalAllocatedBytes` and the per-thread allocation accounting were not compared with the runtime.
+* The hunts used scaled-down sizes (126 runs per mode, run in parallel with each other and without the lock). The full-size
+  benchmark matrix (378 runs) had no failure. Hunts of intermediate builds are not counted; the only failures found by tests are the
+  four bugs in section 2.
+* Region size differences above 128 KiB are inside the noise of this shared machine; the default was not tuned further.
+* The barrier cost was not measured separately (a micro benchmark was not written); only the `listsuffix` profile shows it.
+* The metadata of the shared tier is unchanged (the ValidObject bitmap); options are in `DESIGN-v2.md` section 9, not implemented.
+* Linux x64 only (the barrier is assembly). Windows and ARM64 are not ported.
+* Each thread holds a 256 KiB region (a program with 1000 threads holds 256 MiB of regions).
+
+## 6. Files
+
+* `src/coreclr/gc_laxori/`: the GC (`laxori_private.{h,cpp}` is the private tier; `amd64/laxori_writebarrier.S`, `laxori_write_barrier.*`
+  the barrier; `laxori_immix_allocation.*` has `TryAcquireRun`; `laxori_reference_counting.*` has the region API).
+* `docs/design/laxori-port/`: `DESIGN-v2.md`, this file, `BarrierTest/`, `PrivateTests/`, `P2.1..P4/` (native engine tests),
+  `driver/` (benchmark driver with the region counters and `DRV_PAUSES=1`), `scripts/` (build, test, hunt, benchmark, pause,
+  profile), `results/` (the tables above).

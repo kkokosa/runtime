@@ -1,0 +1,422 @@
+0 requests wks 324 27134172608 
+0 requests svr 561 27134172608 
+0 requests lxr 346 27134172608 
+0 requests satori 574 27134172608 
+0 requests laxori:0:256 363 27134172608 
+0 requests laxori:1:256 369 27134172608 
+0 requests laxori:2:256 359 27134172608 
+0 binarytrees wks 946 68332294 
+0 binarytrees svr 1323 68332294 
+0 binarytrees lxr 1151 68332294 
+0 binarytrees satori 982 68332294 
+0 binarytrees laxori:0:256 1101 68332294 
+0 binarytrees laxori:1:256 1157 68332294 
+0 binarytrees laxori:2:256 1186 68332294 
+0 listsuffix wks 1915 159636632672 
+0 listsuffix svr 903 159636632672 
+0 listsuffix lxr 1118 159636632672 
+0 listsuffix satori 809 159636632672 
+0 listsuffix laxori:0:256 1354 159636632672 
+0 listsuffix laxori:1:256 1514 159636632672 
+0 listsuffix laxori:2:256 1420 159636632672 
+0 mixedmedium wks 994 40586599707 
+0 mixedmedium svr 1047 40586599707 
+0 mixedmedium lxr 1526 40586599707 
+0 mixedmedium satori 688 40586599707 
+0 mixedmedium laxori:0:256 1390 40586599707 
+0 mixedmedium laxori:1:256 1440 40586599707 
+0 mixedmedium laxori:2:256 1428 40586599707 
+0 losarrays wks 1897 13936826922 
+0 losarrays svr 2742 13936826922 
+0 losarrays lxr 1126 13936826922 
+0 losarrays satori 810 13936826922 
+0 losarrays laxori:0:256 1400 13936826922 
+0 losarrays laxori:1:256 1218 13936826922 
+0 losarrays laxori:2:256 1217 13936826922 
+0 mediumarrays wks 1161 7032863679 
+0 mediumarrays svr 1187 7032863679 
+0 mediumarrays lxr 995 7032863679 
+0 mediumarrays satori 639 7032863679 
+0 mediumarrays laxori:0:256 966 7032863679 
+0 mediumarrays laxori:1:256 974 7032863679 
+0 mediumarrays laxori:2:256 1048 7032863679 
+1 requests wks 311 27134172608 
+1 requests svr 542 27134172608 
+1 requests lxr 356 27134172608 
+1 requests satori 572 27134172608 
+1 requests laxori:0:256 362 27134172608 
+1 requests laxori:1:256 360 27134172608 
+1 requests laxori:2:256 353 27134172608 
+1 binarytrees wks 1043 68332294 
+1 binarytrees svr 1443 68332294 
+1 binarytrees lxr 1267 68332294 
+1 binarytrees satori 1451 68332294 
+1 binarytrees laxori:0:256 1133 68332294 
+1 binarytrees laxori:1:256 1143 68332294 
+1 binarytrees laxori:2:256 1213 68332294 
+1 listsuffix wks 2050 159636632672 
+1 listsuffix svr 1063 159636632672 
+1 listsuffix lxr 1210 159636632672 
+1 listsuffix satori 806 159636632672 
+1 listsuffix laxori:0:256 1221 159636632672 
+1 listsuffix laxori:1:256 1548 159636632672 
+1 listsuffix laxori:2:256 1438 159636632672 
+1 mixedmedium wks 1003 40586599707 
+1 mixedmedium svr 1508 40586599707 
+1 mixedmedium lxr 1412 40586599707 
+1 mixedmedium satori 736 40586599707 
+1 mixedmedium laxori:0:256 1409 40586599707 
+1 mixedmedium laxori:1:256 1370 40586599707 
+1 mixedmedium laxori:2:256 1353 40586599707 
+1 losarrays wks 1914 13936826922 
+1 losarrays svr 2653 13936826922 
+1 losarrays lxr 1144 13936826922 
+1 losarrays satori 725 13936826922 
+1 losarrays laxori:0:256 1232 13936826922 
+1 losarrays laxori:1:256 1161 13936826922 
+1 losarrays laxori:2:256 1145 13936826922 
+1 mediumarrays wks 1299 7032863679 
+1 mediumarrays svr 1062 7032863679 
+1 mediumarrays lxr 980 7032863679 
+1 mediumarrays satori 650 7032863679 
+1 mediumarrays laxori:0:256 982 7032863679 
+1 mediumarrays laxori:1:256 1012 7032863679 
+1 mediumarrays laxori:2:256 1009 7032863679 
+2 requests wks 329 27134172608 
+2 requests svr 555 27134172608 
+2 requests lxr 348 27134172608 
+2 requests satori 570 27134172608 
+2 requests laxori:0:256 361 27134172608 
+2 requests laxori:1:256 368 27134172608 
+2 requests laxori:2:256 357 27134172608 
+2 binarytrees wks 950 68332294 
+2 binarytrees svr 1393 68332294 
+2 binarytrees lxr 1139 68332294 
+2 binarytrees satori 1020 68332294 
+2 binarytrees laxori:0:256 1142 68332294 
+2 binarytrees laxori:1:256 1176 68332294 
+2 binarytrees laxori:2:256 1194 68332294 
+2 listsuffix wks 1935 159636632672 
+2 listsuffix svr 1095 159636632672 
+2 listsuffix lxr 1210 159636632672 
+2 listsuffix satori 848 159636632672 
+2 listsuffix laxori:0:256 1168 159636632672 
+2 listsuffix laxori:1:256 1426 159636632672 
+2 listsuffix laxori:2:256 1452 159636632672 
+2 mixedmedium wks 1016 40586599707 
+2 mixedmedium svr 1207 40586599707 
+2 mixedmedium lxr 1363 40586599707 
+2 mixedmedium satori 706 40586599707 
+2 mixedmedium laxori:0:256 1405 40586599707 
+2 mixedmedium laxori:1:256 1443 40586599707 
+2 mixedmedium laxori:2:256 1383 40586599707 
+2 losarrays wks 1941 13936826922 
+2 losarrays svr 2730 13936826922 
+2 losarrays lxr 1118 13936826922 
+2 losarrays satori 758 13936826922 
+2 losarrays laxori:0:256 1175 13936826922 
+2 losarrays laxori:1:256 1173 13936826922 
+2 losarrays laxori:2:256 1156 13936826922 
+2 mediumarrays wks 1219 7032863679 
+2 mediumarrays svr 1511 7032863679 
+2 mediumarrays lxr 994 7032863679 
+2 mediumarrays satori 632 7032863679 
+2 mediumarrays laxori:0:256 963 7032863679 
+2 mediumarrays laxori:1:256 1043 7032863679 
+2 mediumarrays laxori:2:256 1018 7032863679 
+3 requests wks 315 27134172608 
+3 requests svr 573 27134172608 
+3 requests lxr 391 27134172608 
+3 requests satori 587 27134172608 
+3 requests laxori:0:256 355 27134172608 
+3 requests laxori:1:256 359 27134172608 
+3 requests laxori:2:256 364 27134172608 
+3 binarytrees wks 1033 68332294 
+3 binarytrees svr 1555 68332294 
+3 binarytrees lxr 1104 68332294 
+3 binarytrees satori 942 68332294 
+3 binarytrees laxori:0:256 1122 68332294 
+3 binarytrees laxori:1:256 1158 68332294 
+3 binarytrees laxori:2:256 1211 68332294 
+3 listsuffix wks 2113 159636632672 
+3 listsuffix svr 962 159636632672 
+3 listsuffix lxr 1154 159636632672 
+3 listsuffix satori 789 159636632672 
+3 listsuffix laxori:0:256 1167 159636632672 
+3 listsuffix laxori:1:256 1395 159636632672 
+3 listsuffix laxori:2:256 1450 159636632672 
+3 mixedmedium wks 1022 40586599707 
+3 mixedmedium svr 1304 40586599707 
+3 mixedmedium lxr 1354 40586599707 
+3 mixedmedium satori 669 40586599707 
+3 mixedmedium laxori:0:256 1385 40586599707 
+3 mixedmedium laxori:1:256 1355 40586599707 
+3 mixedmedium laxori:2:256 1358 40586599707 
+3 losarrays wks 1923 13936826922 
+3 losarrays svr 2670 13936826922 
+3 losarrays lxr 1218 13936826922 
+3 losarrays satori 763 13936826922 
+3 losarrays laxori:0:256 1172 13936826922 
+3 losarrays laxori:1:256 1169 13936826922 
+3 losarrays laxori:2:256 1245 13936826922 
+3 mediumarrays wks 1229 7032863679 
+3 mediumarrays svr 1523 7032863679 
+3 mediumarrays lxr 995 7032863679 
+3 mediumarrays satori 649 7032863679 
+3 mediumarrays laxori:0:256 1005 7032863679 
+3 mediumarrays laxori:1:256 1012 7032863679 
+3 mediumarrays laxori:2:256 1014 7032863679 
+4 requests wks 335 27134172608 
+4 requests svr 526 27134172608 
+4 requests lxr 357 27134172608 
+4 requests satori 577 27134172608 
+4 requests laxori:0:256 370 27134172608 
+4 requests laxori:1:256 362 27134172608 
+4 requests laxori:2:256 364 27134172608 
+4 binarytrees wks 1078 68332294 
+4 binarytrees svr 1483 68332294 
+4 binarytrees lxr 1112 68332294 
+4 binarytrees satori 1001 68332294 
+4 binarytrees laxori:0:256 1093 68332294 
+4 binarytrees laxori:1:256 1187 68332294 
+4 binarytrees laxori:2:256 1201 68332294 
+4 listsuffix wks 2032 159636632672 
+4 listsuffix svr 969 159636632672 
+4 listsuffix lxr 1166 159636632672 
+4 listsuffix satori 779 159636632672 
+4 listsuffix laxori:0:256 1202 159636632672 
+4 listsuffix laxori:1:256 1494 159636632672 
+4 listsuffix laxori:2:256 1450 159636632672 
+4 mixedmedium wks 1031 40586599707 
+4 mixedmedium svr 1063 40586599707 
+4 mixedmedium lxr 1376 40586599707 
+4 mixedmedium satori 693 40586599707 
+4 mixedmedium laxori:0:256 1406 40586599707 
+4 mixedmedium laxori:1:256 1428 40586599707 
+4 mixedmedium laxori:2:256 1398 40586599707 
+4 losarrays wks 1989 13936826922 
+4 losarrays svr 2856 13936826922 
+4 losarrays lxr 1157 13936826922 
+4 losarrays satori 740 13936826922 
+4 losarrays laxori:0:256 1160 13936826922 
+4 losarrays laxori:1:256 1159 13936826922 
+4 losarrays laxori:2:256 1151 13936826922 
+4 mediumarrays wks 1130 7032863679 
+4 mediumarrays svr 1019 7032863679 
+4 mediumarrays lxr 941 7032863679 
+4 mediumarrays satori 672 7032863679 
+4 mediumarrays laxori:0:256 952 7032863679 
+4 mediumarrays laxori:1:256 1004 7032863679 
+4 mediumarrays laxori:2:256 999 7032863679 
+5 requests wks 307 27134172608 
+5 requests svr 564 27134172608 
+5 requests lxr 365 27134172608 
+5 requests satori 556 27134172608 
+5 requests laxori:0:256 355 27134172608 
+5 requests laxori:1:256 366 27134172608 
+5 requests laxori:2:256 348 27134172608 
+5 binarytrees wks 1171 68332294 
+5 binarytrees svr 1407 68332294 
+5 binarytrees lxr 1130 68332294 
+5 binarytrees satori 969 68332294 
+5 binarytrees laxori:0:256 1158 68332294 
+5 binarytrees laxori:1:256 1175 68332294 
+5 binarytrees laxori:2:256 1211 68332294 
+5 listsuffix wks 2043 159636632672 
+5 listsuffix svr 983 159636632672 
+5 listsuffix lxr 1142 159636632672 
+5 listsuffix satori 801 159636632672 
+5 listsuffix laxori:0:256 1235 159636632672 
+5 listsuffix laxori:1:256 1504 159636632672 
+5 listsuffix laxori:2:256 1466 159636632672 
+5 mixedmedium wks 1024 40586599707 
+5 mixedmedium svr 1122 40586599707 
+5 mixedmedium lxr 1387 40586599707 
+5 mixedmedium satori 686 40586599707 
+5 mixedmedium laxori:0:256 1332 40586599707 
+5 mixedmedium laxori:1:256 1333 40586599707 
+5 mixedmedium laxori:2:256 1346 40586599707 
+5 losarrays wks 1832 13936826922 
+5 losarrays svr 2917 13936826922 
+5 losarrays lxr 1222 13936826922 
+5 losarrays satori 716 13936826922 
+5 losarrays laxori:0:256 1173 13936826922 
+5 losarrays laxori:1:256 1202 13936826922 
+5 losarrays laxori:2:256 1201 13936826922 
+5 mediumarrays wks 1210 7032863679 
+5 mediumarrays svr 1110 7032863679 
+5 mediumarrays lxr 951 7032863679 
+5 mediumarrays satori 669 7032863679 
+5 mediumarrays laxori:0:256 945 7032863679 
+5 mediumarrays laxori:1:256 987 7032863679 
+5 mediumarrays laxori:2:256 1020 7032863679 
+6 requests wks 312 27134172608 
+6 requests svr 536 27134172608 
+6 requests lxr 367 27134172608 
+6 requests satori 570 27134172608 
+6 requests laxori:0:256 360 27134172608 
+6 requests laxori:1:256 376 27134172608 
+6 requests laxori:2:256 378 27134172608 
+6 binarytrees wks 1023 68332294 
+6 binarytrees svr 1438 68332294 
+6 binarytrees lxr 1117 68332294 
+6 binarytrees satori 979 68332294 
+6 binarytrees laxori:0:256 1096 68332294 
+6 binarytrees laxori:1:256 1211 68332294 
+6 binarytrees laxori:2:256 1175 68332294 
+6 listsuffix wks 2076 159636632672 
+6 listsuffix svr 1034 159636632672 
+6 listsuffix lxr 1313 159636632672 
+6 listsuffix satori 800 159636632672 
+6 listsuffix laxori:0:256 1248 159636632672 
+6 listsuffix laxori:1:256 1372 159636632672 
+6 listsuffix laxori:2:256 1640 159636632672 
+6 mixedmedium wks 995 40586599707 
+6 mixedmedium svr 1189 40586599707 
+6 mixedmedium lxr 1361 40586599707 
+6 mixedmedium satori 688 40586599707 
+6 mixedmedium laxori:0:256 1374 40586599707 
+6 mixedmedium laxori:1:256 1381 40586599707 
+6 mixedmedium laxori:2:256 1369 40586599707 
+6 losarrays wks 1887 13936826922 
+6 losarrays svr 2850 13936826922 
+6 losarrays lxr 1140 13936826922 
+6 losarrays satori 717 13936826922 
+6 losarrays laxori:0:256 1163 13936826922 
+6 losarrays laxori:1:256 1243 13936826922 
+6 losarrays laxori:2:256 1347 13936826922 
+6 mediumarrays wks 1229 7032863679 
+6 mediumarrays svr 1034 7032863679 
+6 mediumarrays lxr 987 7032863679 
+6 mediumarrays satori 649 7032863679 
+6 mediumarrays laxori:0:256 946 7032863679 
+6 mediumarrays laxori:1:256 1029 7032863679 
+6 mediumarrays laxori:2:256 1019 7032863679 
+7 requests wks 302 27134172608 
+7 requests svr 552 27134172608 
+7 requests lxr 342 27134172608 
+7 requests satori 566 27134172608 
+7 requests laxori:0:256 373 27134172608 
+7 requests laxori:1:256 364 27134172608 
+7 requests laxori:2:256 391 27134172608 
+7 binarytrees wks 1092 68332294 
+7 binarytrees svr 1398 68332294 
+7 binarytrees lxr 1127 68332294 
+7 binarytrees satori 1012 68332294 
+7 binarytrees laxori:0:256 1144 68332294 
+7 binarytrees laxori:1:256 1170 68332294 
+7 binarytrees laxori:2:256 1185 68332294 
+7 listsuffix wks 1967 159636632672 
+7 listsuffix svr 1084 159636632672 
+7 listsuffix lxr 1243 159636632672 
+7 listsuffix satori 754 159636632672 
+7 listsuffix laxori:0:256 1343 159636632672 
+7 listsuffix laxori:1:256 1524 159636632672 
+7 listsuffix laxori:2:256 1398 159636632672 
+7 mixedmedium wks 994 40586599707 
+7 mixedmedium svr 1029 40586599707 
+7 mixedmedium lxr 1356 40586599707 
+7 mixedmedium satori 668 40586599707 
+7 mixedmedium laxori:0:256 1323 40586599707 
+7 mixedmedium laxori:1:256 1426 40586599707 
+7 mixedmedium laxori:2:256 1430 40586599707 
+7 losarrays wks 1872 13936826922 
+7 losarrays svr 2871 13936826922 
+7 losarrays lxr 1199 13936826922 
+7 losarrays satori 742 13936826922 
+7 losarrays laxori:0:256 1229 13936826922 
+7 losarrays laxori:1:256 1204 13936826922 
+7 losarrays laxori:2:256 1176 13936826922 
+7 mediumarrays wks 1250 7032863679 
+7 mediumarrays svr 1131 7032863679 
+7 mediumarrays lxr 961 7032863679 
+7 mediumarrays satori 698 7032863679 
+7 mediumarrays laxori:0:256 958 7032863679 
+7 mediumarrays laxori:1:256 997 7032863679 
+7 mediumarrays laxori:2:256 994 7032863679 
+8 requests wks 326 27134172608 
+8 requests svr 549 27134172608 
+8 requests lxr 348 27134172608 
+8 requests satori 569 27134172608 
+8 requests laxori:0:256 349 27134172608 
+8 requests laxori:1:256 393 27134172608 
+8 requests laxori:2:256 364 27134172608 
+8 binarytrees wks 975 68332294 
+8 binarytrees svr 1337 68332294 
+8 binarytrees lxr 1095 68332294 
+8 binarytrees satori 975 68332294 
+8 binarytrees laxori:0:256 1129 68332294 
+8 binarytrees laxori:1:256 1193 68332294 
+8 binarytrees laxori:2:256 1242 68332294 
+8 listsuffix wks 2096 159636632672 
+8 listsuffix svr 972 159636632672 
+8 listsuffix lxr 1114 159636632672 
+8 listsuffix satori 764 159636632672 
+8 listsuffix laxori:0:256 1217 159636632672 
+8 listsuffix laxori:1:256 1615 159636632672 
+8 listsuffix laxori:2:256 1408 159636632672 
+8 mixedmedium wks 996 40586599707 
+8 mixedmedium svr 1140 40586599707 
+8 mixedmedium lxr 1393 40586599707 
+8 mixedmedium satori 677 40586599707 
+8 mixedmedium laxori:0:256 1381 40586599707 
+8 mixedmedium laxori:1:256 1353 40586599707 
+8 mixedmedium laxori:2:256 1376 40586599707 
+8 losarrays wks 1950 13936826922 
+8 losarrays svr 2716 13936826922 
+8 losarrays lxr 1161 13936826922 
+8 losarrays satori 731 13936826922 
+8 losarrays laxori:0:256 1283 13936826922 
+8 losarrays laxori:1:256 1130 13936826922 
+8 losarrays laxori:2:256 1322 13936826922 
+8 mediumarrays wks 1164 7032863679 
+8 mediumarrays svr 1026 7032863679 
+8 mediumarrays lxr 971 7032863679 
+8 mediumarrays satori 641 7032863679 
+8 mediumarrays laxori:0:256 958 7032863679 
+8 mediumarrays laxori:1:256 994 7032863679 
+8 mediumarrays laxori:2:256 1043 7032863679 
+
+medians: wall ms / cpu ms / pause ms / peak RSS MB / GCs / copied MB | TLGC / escaped MB / acquire failures
+requests     wks                315     313     65     67   378    0.0 n=9 bad=0
+requests     svr                552     868    260    100   190    0.0 n=9 bad=0
+requests     lxr                356     496     29    172    98   12.4 n=9 bad=0
+requests     satori             570     644     18     94  4227    0.0 n=9 bad=0
+requests     laxori:0:256       361     502     29    172    97   12.4 n=9 bad=0
+requests     laxori:1:256       366     509     30    174    97   12.7 |       0    15.1       35 n=9 bad=0
+requests     laxori:2:256       364     453      9    167    25    7.2 |    3041    15.1        2 n=9 bad=0
+binarytrees  wks               1033    1039    304    121   377    0.0 n=9 bad=0
+binarytrees  svr               1407    2152    623    177   354    0.0 n=9 bad=0
+binarytrees  lxr               1127    3616    172    210   103   45.5 n=9 bad=0
+binarytrees  satori             982    1648     61    164  4635    0.0 n=9 bad=0
+binarytrees  laxori:0:256      1129    3383    142    208   100   38.8 n=9 bad=0
+binarytrees  laxori:1:256      1175    2107     70    194    42   39.0 |    5076    27.1       10 n=9 bad=0
+binarytrees  laxori:2:256      1201    2572     85    205    41   57.1 |    5075    27.4       10 n=9 bad=0
+listsuffix   wks               2043    2131   1166    100   159    0.0 n=9 bad=0
+listsuffix   svr                983    2514    323    165   130    0.0 n=9 bad=0
+listsuffix   lxr               1166    3684    181    201    39   39.4 n=9 bad=0
+listsuffix   satori             800    1995     90    228   235    0.0 n=9 bad=0
+listsuffix   laxori:0:256      1221    3826    190    202    38   43.1 n=9 bad=0
+listsuffix   laxori:1:256      1504    5005    216    204    34   42.7 |       0    48.8      322 n=9 bad=0
+listsuffix   laxori:2:256      1450    5057    216    204    34   41.6 |       0    43.2      324 n=9 bad=0
+mixedmedium  wks               1003    1014    427    183   464    0.0 n=9 bad=0
+mixedmedium  svr               1140    1918    314    497   168    0.0 n=9 bad=0
+mixedmedium  lxr               1376    2417    187    195   344   28.3 n=9 bad=0
+mixedmedium  satori             688    1426    119    368  2685    0.0 n=9 bad=0
+mixedmedium  laxori:0:256      1385    2419    188    195   343   37.1 n=9 bad=0
+mixedmedium  laxori:1:256      1381    2384    186    197   343   35.3 |       0    11.4     1007 n=9 bad=0
+mixedmedium  laxori:2:256      1376    2384    188    197   347   33.3 |       0     9.9     1023 n=9 bad=0
+losarrays    wks               1914    2003   1155    317   666    0.0 n=9 bad=0
+losarrays    svr               2742    5707   1340    512   271    0.0 n=9 bad=0
+losarrays    lxr               1157    2452    464    110   300    0.0 n=9 bad=0
+losarrays    satori             740    1318     98    504   333    0.0 n=9 bad=0
+losarrays    laxori:0:256      1175    2513    477    110   256    0.0 n=9 bad=0
+losarrays    laxori:1:256      1173    2493    476    111   300    0.0 |       0     0.0        0 n=9 bad=0
+losarrays    laxori:2:256      1201    2531    464    110   292    0.0 |       0     0.0        0 n=9 bad=0
+mediumarrays wks               1219    1218    522    232   587    0.0 n=9 bad=0
+mediumarrays svr               1110    2032    322    510   192    0.0 n=9 bad=0
+mediumarrays lxr                980    1735     85    489    73  277.5 n=9 bad=0
+mediumarrays satori             649    1533    154    526   722    0.0 n=9 bad=0
+mediumarrays laxori:0:256       958    1706     86    489    74  274.5 n=9 bad=0
+mediumarrays laxori:1:256      1004    1727     91    491    87  424.3 |       0   319.2      562 n=9 bad=0
+mediumarrays laxori:2:256      1018    1756     93    492    87  425.5 |       0   331.0      548 n=9 bad=0

@@ -10,6 +10,24 @@ using System.Text.Json;
 
 internal static class CompareDriver
 {
+    // DRV_PAUSES=1: collects the GC start/stop events of the runtime in the measured window and writes pauses.csv.
+    private sealed class PauseListener : System.Diagnostics.Tracing.EventListener
+    {
+        public readonly List<(int Id, DateTime Time)> Events = new();
+
+        protected override void OnEventSourceCreated(System.Diagnostics.Tracing.EventSource source)
+        {
+            if (source.Name == "Microsoft-Windows-DotNETRuntime")
+                EnableEvents(source, System.Diagnostics.Tracing.EventLevel.Informational, (System.Diagnostics.Tracing.EventKeywords)0x1);
+        }
+
+        protected override void OnEventWritten(System.Diagnostics.Tracing.EventWrittenEventArgs e)
+        {
+            if (e.EventId == 9 || e.EventId == 3)
+                lock (Events) Events.Add((e.EventId, e.TimeStamp));
+        }
+    }
+
     [UnmanagedFunctionPointer(CallingConvention.Cdecl)]
     private delegate ulong Metric(uint id);
 
@@ -82,6 +100,7 @@ internal static class CompareDriver
             return (long)run.Invoke(null, new object?[] { workload, count, ops, null, false })!;
         }
 
+        PauseListener? pauseListener = Environment.GetEnvironmentVariable("DRV_PAUSES") == "1" ? new PauseListener() : null;
         Stopwatch warmup = Stopwatch.StartNew();
         do
         {
@@ -129,9 +148,32 @@ internal static class CompareDriver
         {
             for (uint i = 0; i < RegionCount; i++) regionBefore[i] = metric!(700 + i);
         }
+        DateTime utcStart = DateTime.UtcNow;
         long start = Now();
         long checksum = Invoke(size, operations);
         long end = Now();
+        DateTime utcEnd = DateTime.UtcNow;
+        if (pauseListener is not null)
+        {
+            System.Threading.Thread.Sleep(300);
+            var csv = new System.Text.StringBuilder("start_ms,duration_ms\n");
+            DateTime? begin = null;
+            lock (pauseListener.Events)
+            {
+                foreach (var ev in pauseListener.Events)
+                {
+                    if (ev.Id == 9) { begin = ev.Time; }
+                    else if (begin is not null)
+                    {
+                        if (begin.Value >= utcStart && ev.Time <= utcEnd.AddMilliseconds(50))
+                            csv.Append(((begin.Value - utcStart).TotalMilliseconds).ToString("F3", CultureInfo.InvariantCulture)).Append(',').Append((ev.Time - begin.Value).TotalMilliseconds.ToString("F3", CultureInfo.InvariantCulture)).Append('\n');
+                        begin = null;
+                    }
+                }
+            }
+            File.WriteAllText(Path.Combine(output, "pauses.csv"), csv.ToString());
+            pauseListener.Dispose();
+        }
         if (mark is not null) File.WriteAllText(mark + ".end", "1");
         if (metric is not null) Console.Error.WriteLine("fast_refills=" + (metric(33) - m33a));
         long[] region = new long[RegionCount];
