@@ -4957,20 +4957,10 @@ LxrRcResult LxrReferenceCounting::RefreshBlock(uintptr_t block, size_t index, co
         return LxrRcResult::Success;
     }
     size_t freeLines = 0;
-    size_t next = 0;
-    while (next < ImmixBlockGeometry::LinesPerBlock)
+    result = FromMetadata(m_allocation.CountHoleLines(block, &freeLines));
+    if (result != LxrRcResult::Success)
     {
-        ImmixHole hole;
-        ImmixAllocationStatus found;
-        result = FromMetadata(m_allocation.TryFindNextHole(block, next, &hole, &next, &found));
-        if (result != LxrRcResult::Success)
-        {
-            return result;
-        }
-        if (found == ImmixAllocationStatus::Ready)
-        {
-            freeLines += hole.line_count;
-        }
+        return result;
     }
     if (freeLines == 0 || freeLines >= ImmixBlockGeometry::LinesPerBlock)
     {
