@@ -381,6 +381,14 @@ private:
     // the owner number of the thread (it holds a different block than the allocator above).
     ImmixBumpAllocator overflowAllocator;
     uintptr_t overflowSpanStart;
+    // Laxori. The private region of the thread (a clean block). privateSpanStart is the start of its span: the block
+    // start while the region is held, zero when the thread has none. bufferIsPrivate: the buffer that is published to the
+    // runtime (publishedCursor/publishedLimit) lies in the private region. inRequest: the thread is between BeginRequest
+    // and EndRequest.
+    ImmixBumpAllocator privateAllocator;
+    uintptr_t privateSpanStart = 0;
+    bool bufferIsPrivate = false;
+    bool inRequest = false;
     std::atomic<uint64_t> overflowObjects;
     std::atomic<uint64_t> overflowBytes;
     // The closed spans of this thread since the last pause. A pause merges them into the list of the engine.
@@ -421,6 +429,52 @@ public:
     LaxoriRcMutator* FindMutator(void* identity) const;
     LaxoriRcMutator* FindCachedMutator(void* cached, void* identity) const;
     LaxoriRcResult GetAllocationSpan(LaxoriRcMutator* mutator, uintptr_t* cursor, uintptr_t* limit);
+
+    // ---- Laxori: request-private regions (docs/design/laxori-port/DESIGN.md) ----
+    // A region is one Immix block taken from the clean blocks by the private allocator of the mutator. blockTable has one
+    // byte for each block of the whole reservation (index (address - reservation start) >> block log size): 1 for the
+    // block that is the private region of a thread.
+    void SetBlockTable(uint8_t* table) { m_block_table = table; }
+    bool IsPrivateAddress(uintptr_t address) const
+    {
+        uintptr_t offset = address - reinterpret_cast<uintptr_t>(m_arena);
+        return m_block_table != nullptr && offset < GetReservationBytes() &&
+            m_block_table[offset >> ImmixBlockGeometry::BlockLogBytes] != 0;
+    }
+    void SetInRequest(LaxoriRcMutator* mutator, bool value) { mutator->inRequest = value; }
+    bool IsInRequest(const LaxoriRcMutator* mutator) const { return mutator->inRequest; }
+    bool HasPrivateRegion(const LaxoriRcMutator* mutator) const { return mutator->privateSpanStart != 0; }
+    // True when the address is in the private block of this mutator.
+    bool IsInPrivateRegion(const LaxoriRcMutator* mutator, uintptr_t address) const
+    {
+        uintptr_t block = mutator->privateAllocator.GetBlock();
+        return mutator->privateSpanStart != 0 && block != 0 && address - block < ImmixBlockGeometry::BlockBytes;
+    }
+    // Takes a clean block as the private region. Success with *taken false means that no block was free.
+    LaxoriRcResult AcquirePrivateRegion(LaxoriRcMutator* mutator, bool* taken);
+    // Allocates from the private region. *fits is false when the object does not fit the rest of the region.
+    LaxoriRcResult TryAllocatePrivate(LaxoriRcMutator* mutator, size_t completeSize, Object** object, bool* fits);
+    // Like GetAllocationSpan, for the private region. The buffer that RetireAllocationSpan retires is then the private one.
+    LaxoriRcResult GetPrivateAllocationSpan(LaxoriRcMutator* mutator, uintptr_t* cursor, uintptr_t* limit);
+    // The region becomes shared: its objects are a young span, and the block goes back to the engine. The buffer of the
+    // thread must be retired first.
+    LaxoriRcResult PublishPrivateRegion(LaxoriRcMutator* mutator);
+    // The region is empty again: zeroes the used part and moves the cursor back. No span is recorded. The buffer must be
+    // retired first. *bytes is the size of the used part.
+    LaxoriRcResult ResetPrivateRegion(LaxoriRcMutator* mutator, size_t* bytes);
+    uint64_t GetRequestMetric(size_t metric) const
+    {
+        return metric < RequestMetricCount ? m_request_metrics[metric].load(std::memory_order_relaxed) : UINT64_MAX;
+    }
+    void CountRequestMetric(size_t metric, uint64_t amount = 1)
+    {
+        m_request_metrics[metric].fetch_add(amount, std::memory_order_relaxed);
+    }
+    enum RequestMetric : size_t
+    {
+        RequestsBegun, RequestsEnded, RegionsReset, RegionBytesReset, RegionsPublishedEscape, RegionsPublishedFull,
+        RegionsPublishedAtPause, RegionsAcquired, EscapeSlowCalls, ForeignEscapes, RequestMetricCount,
+    };
     // P22 (D2). The mutator's buffer ends at cursor (the used point: the address of the next object header). The span of
     // the objects that the thread allocated in the hole is recorded as [start, cursor).
     LaxoriRcResult RetireAllocationSpan(LaxoriRcMutator* mutator, uintptr_t cursor);
@@ -774,6 +828,10 @@ private:
     LaxoriRcResult CloseSpan(LaxoriRcMutator* mutator, uintptr_t end);
     // Item 4. Closes the open span of the overflow allocator of the thread at end (its used point).
     LaxoriRcResult CloseOverflowSpan(LaxoriRcMutator* mutator, uintptr_t end);
+    // Laxori. Closes the span of the private region of the thread at end (its used point).
+    LaxoriRcResult ClosePrivateSpan(LaxoriRcMutator* mutator, uintptr_t end);
+    uint8_t* m_block_table = nullptr;
+    std::atomic<uint64_t> m_request_metrics[RequestMetricCount]{};
     // Item 4. Allocates a request that is larger than a line from the clean block of the thread. *allocated is false
     // (and the result is Success) when no clean block is left, and the caller then uses the holes.
     LaxoriRcResult AllocateMediumOverflow(

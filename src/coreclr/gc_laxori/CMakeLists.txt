@@ -28,7 +28,7 @@ set(LAXORI_SOURCES
   ../gc/handletablescan.cpp
   ../gc/handletablecache.cpp
   ../gc/objecthandle.cpp
-  ../gc/gchandletable.cpp
+  laxori_gchandletable.cpp
   ../gc/gcbridge.cpp
   ../gc/softwarewritewatch.cpp
   laxori_side_metadata.cpp

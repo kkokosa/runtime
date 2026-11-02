@@ -832,7 +832,8 @@ LaxoriRcResult LaxoriReferenceCounting::Initialize(
     for (size_t index = 0; index < configuration.maximumMutators; index++)
     {
         if (m_mutators[index].allocator.Initialize(&m_allocation, index + 1) != SideMetadataResult::Success ||
-            m_mutators[index].overflowAllocator.Initialize(&m_allocation, index + 1) != SideMetadataResult::Success)
+            m_mutators[index].overflowAllocator.Initialize(&m_allocation, index + 1) != SideMetadataResult::Success ||
+            m_mutators[index].privateAllocator.Initialize(&m_allocation, index + 1) != SideMetadataResult::Success)
         {
             return Fail(LaxoriRcResult::AllocationFailure);
         }
@@ -1532,6 +1533,150 @@ LaxoriRcResult LaxoriReferenceCounting::CloseSpan(LaxoriRcMutator* mutator, uint
     return LaxoriRcResult::Success;
 }
 
+LaxoriRcResult LaxoriReferenceCounting::ClosePrivateSpan(LaxoriRcMutator* mutator, uintptr_t end)
+{
+    uintptr_t start = mutator->privateSpanStart;
+    mutator->privateSpanStart = 0;
+    if (start == 0 || end <= start)
+    {
+        return LaxoriRcResult::Success;
+    }
+    if (!mutator->spans.Push(start, end))
+    {
+        return Fail(LaxoriRcResult::OutOfMemory);
+    }
+    m_span_metrics[0].fetch_add(1, std::memory_order_relaxed);
+    m_span_metrics[1].fetch_add(end - start, std::memory_order_relaxed);
+    m_metrics[AllocatedBytes].fetch_add(end - start, std::memory_order_relaxed);
+    return LaxoriRcResult::Success;
+}
+
+LaxoriRcResult LaxoriReferenceCounting::AcquirePrivateRegion(LaxoriRcMutator* mutator, bool* taken)
+{
+    *taken = false;
+    if (mutator == nullptr || mutator->engine != this || GetPhase() != LaxoriRcPhase::Mutator ||
+        mutator->publishedLimit != 0 || m_block_table == nullptr)
+    {
+        return LaxoriRcResult::InvalidArgument;
+    }
+    if (mutator->privateSpanStart != 0)
+    {
+        *taken = true;
+        return LaxoriRcResult::Success;
+    }
+    ImmixAllocationStatus status;
+    SideMetadataResult result = mutator->privateAllocator.TryRefill(
+        ImmixAllocationSource::MutatorFresh,
+        m_marking.load(std::memory_order_acquire)
+            ? ImmixMarkingContext::ConcurrentOrFinalMark : ImmixMarkingContext::Inactive, &status);
+    if (result != SideMetadataResult::Success)
+    {
+        return FromMetadata(result);
+    }
+    if (status != ImmixAllocationStatus::Ready)
+    {
+        return LaxoriRcResult::Success;
+    }
+    uintptr_t block = mutator->privateAllocator.GetBlock();
+    mutator->privateSpanStart = mutator->privateAllocator.GetCursor();
+    m_block_table[(block - reinterpret_cast<uintptr_t>(m_arena)) >> ImmixBlockGeometry::BlockLogBytes] = 1;
+    CountRequestMetric(RegionsAcquired);
+    *taken = true;
+    return LaxoriRcResult::Success;
+}
+
+LaxoriRcResult LaxoriReferenceCounting::TryAllocatePrivate(
+    LaxoriRcMutator* mutator, size_t completeSize, Object** object, bool* fits)
+{
+    if (mutator == nullptr || mutator->engine != this || mutator->privateSpanStart == 0 ||
+        mutator->publishedLimit != 0 || completeSize < MIN_OBJECT_SIZE || completeSize % sizeof(uintptr_t) != 0)
+    {
+        return LaxoriRcResult::InvalidArgument;
+    }
+    ImmixAllocationRequest request{completeSize, sizeof(uintptr_t), 0};
+    ImmixAllocationStatus status;
+    uintptr_t start = 0;
+    SideMetadataResult result = mutator->privateAllocator.TryAllocate(request, &start, &status);
+    if (result != SideMetadataResult::Success)
+    {
+        return FromMetadata(result);
+    }
+    *fits = status == ImmixAllocationStatus::Allocated;
+    if (*fits)
+    {
+        *object = Reference(start);
+        m_metrics[Allocations].fetch_add(1, std::memory_order_relaxed);
+    }
+    else if (status != ImmixAllocationStatus::Exhausted)
+    {
+        return LaxoriRcResult::InvalidArgument;
+    }
+    return LaxoriRcResult::Success;
+}
+
+LaxoriRcResult LaxoriReferenceCounting::GetPrivateAllocationSpan(
+    LaxoriRcMutator* mutator, uintptr_t* cursor, uintptr_t* limit)
+{
+    if (mutator == nullptr || mutator->engine != this || mutator->privateSpanStart == 0 ||
+        GetPhase() != LaxoriRcPhase::Mutator || cursor == nullptr || limit == nullptr || mutator->publishedLimit != 0)
+    {
+        return LaxoriRcResult::InvalidArgument;
+    }
+    *cursor = 0;
+    *limit = 0;
+    uintptr_t first = mutator->privateAllocator.GetCursor();
+    uintptr_t end = mutator->privateAllocator.GetLimit();
+    if (end >= first && end - first >= MIN_OBJECT_SIZE)
+    {
+        mutator->publishedCursor = first;
+        mutator->publishedLimit = end;
+        mutator->bufferIsPrivate = true;
+        *cursor = first;
+        *limit = end;
+    }
+    return LaxoriRcResult::Success;
+}
+
+LaxoriRcResult LaxoriReferenceCounting::PublishPrivateRegion(LaxoriRcMutator* mutator)
+{
+    if (mutator == nullptr || mutator->engine != this || mutator->privateSpanStart == 0 || mutator->publishedLimit != 0)
+    {
+        return LaxoriRcResult::InvalidArgument;
+    }
+    uintptr_t block = mutator->privateAllocator.GetBlock();
+    LaxoriRcResult closed = ClosePrivateSpan(mutator, mutator->privateAllocator.GetCursor());
+    if (closed != LaxoriRcResult::Success)
+    {
+        return closed;
+    }
+    m_block_table[(block - reinterpret_cast<uintptr_t>(m_arena)) >> ImmixBlockGeometry::BlockLogBytes] = 0;
+    ImmixAllocationStatus status;
+    SideMetadataResult result = mutator->privateAllocator.Reset(&status);
+    if (result != SideMetadataResult::Success)
+    {
+        return Fail(LaxoriRcResult::AllocationFailure);
+    }
+    // A contended return leaves the block with the allocator; the next refill or the next pause returns it.
+    return LaxoriRcResult::Success;
+}
+
+LaxoriRcResult LaxoriReferenceCounting::ResetPrivateRegion(LaxoriRcMutator* mutator, size_t* bytes)
+{
+    if (mutator == nullptr || mutator->engine != this || mutator->privateSpanStart == 0 || mutator->publishedLimit != 0)
+    {
+        return LaxoriRcResult::InvalidArgument;
+    }
+    uintptr_t block = mutator->privateAllocator.GetBlock();
+    size_t used = static_cast<size_t>(mutator->privateAllocator.GetCursor() - block);
+    memset(reinterpret_cast<void*>(block), 0, used);
+    if (mutator->privateAllocator.RewindToBlockStart() != SideMetadataResult::Success)
+    {
+        return Fail(LaxoriRcResult::InvariantViolation);
+    }
+    *bytes = used;
+    return LaxoriRcResult::Success;
+}
+
 LaxoriRcResult LaxoriReferenceCounting::CloseOverflowSpan(LaxoriRcMutator* mutator, uintptr_t end)
 {
     uintptr_t start = mutator->overflowSpanStart;
@@ -1642,10 +1787,12 @@ LaxoriRcResult LaxoriReferenceCounting::RetireAllocationSpan(LaxoriRcMutator* mu
     if (mutator == nullptr || mutator->engine != this ||
         mutator->publishedLimit == 0 || cursor < mutator->publishedCursor || cursor > mutator->publishedLimit ||
         cursor % sizeof(uintptr_t) != 0 ||
-        mutator->allocator.SetCursor(cursor) != SideMetadataResult::Success)
+        (mutator->bufferIsPrivate ? mutator->privateAllocator.SetCursor(cursor)
+                                  : mutator->allocator.SetCursor(cursor)) != SideMetadataResult::Success)
     {
         return LaxoriRcResult::InvariantViolation;
     }
+    mutator->bufferIsPrivate = false;
     mutator->publishedCursor = 0;
     mutator->publishedLimit = 0;
     return LaxoriRcResult::Success;
@@ -1676,6 +1823,9 @@ LaxoriRcResult LaxoriReferenceCounting::AttachMutator(void* identity, LaxoriRcMu
         candidate.publishedLimit = 0;
         candidate.spanStart = 0;
         candidate.overflowSpanStart = 0;
+        candidate.privateSpanStart = 0;
+        candidate.bufferIsPrivate = false;
+        candidate.inRequest = false;
         candidate.spans.Clear();
         candidate.state.store(2, std::memory_order_release);
         *mutator = &candidate;
@@ -1849,6 +1999,17 @@ LaxoriRcResult LaxoriReferenceCounting::DetachMutator(LaxoriRcMutator* mutator)
     {
         closed = CloseOverflowSpan(mutator, mutator->overflowAllocator.GetCursor());
     }
+    if (closed == LaxoriRcResult::Success && mutator->privateSpanStart != 0)
+    {
+        uintptr_t block = mutator->privateAllocator.GetBlock();
+        closed = ClosePrivateSpan(mutator, mutator->privateAllocator.GetCursor());
+        if (m_block_table != nullptr)
+        {
+            m_block_table[(block - reinterpret_cast<uintptr_t>(m_arena)) >> ImmixBlockGeometry::BlockLogBytes] = 0;
+        }
+    }
+    mutator->inRequest = false;
+    mutator->bufferIsPrivate = false;
     if (closed != LaxoriRcResult::Success)
     {
         return closed;
@@ -1874,6 +2035,16 @@ LaxoriRcResult LaxoriReferenceCounting::DetachMutator(LaxoriRcMutator* mutator)
     SideMetadataResult result = mutator->allocator.Reset(&status);
     ImmixAllocationStatus overflowStatus;
     SideMetadataResult overflowResult = mutator->overflowAllocator.Reset(&overflowStatus);
+    ImmixAllocationStatus privateStatus;
+    SideMetadataResult privateResult = mutator->privateAllocator.Reset(&privateStatus);
+    if (result == SideMetadataResult::Success && privateResult != SideMetadataResult::Success)
+    {
+        result = privateResult;
+    }
+    else if (result == SideMetadataResult::Success && privateStatus != ImmixAllocationStatus::Ready)
+    {
+        status = privateStatus;
+    }
     if (result == SideMetadataResult::Success && overflowResult != SideMetadataResult::Success)
     {
         result = overflowResult;
@@ -2552,6 +2723,20 @@ LaxoriRcResult LaxoriReferenceCounting::FlushMutators()
             {
                 closed = CloseOverflowSpan(&mutator, mutator.overflowAllocator.GetCursor());
             }
+            if (closed == LaxoriRcResult::Success && mutator.privateSpanStart != 0)
+            {
+                // Laxori. A pause dissolves the private region: its objects are young objects like all others.
+                uintptr_t block = mutator.privateAllocator.GetBlock();
+                if (mutator.privateAllocator.GetCursor() > mutator.privateSpanStart)
+                {
+                    CountRequestMetric(RegionsPublishedAtPause);
+                }
+                closed = ClosePrivateSpan(&mutator, mutator.privateAllocator.GetCursor());
+                if (m_block_table != nullptr)
+                {
+                    m_block_table[(block - reinterpret_cast<uintptr_t>(m_arena)) >> ImmixBlockGeometry::BlockLogBytes] = 0;
+                }
+            }
             if (closed != LaxoriRcResult::Success)
             {
                 return closed;
@@ -2564,8 +2749,11 @@ LaxoriRcResult LaxoriReferenceCounting::FlushMutators()
             SideMetadataResult result = mutator.allocator.Reset(&status);
             ImmixAllocationStatus overflowStatus;
             SideMetadataResult overflowResult = mutator.overflowAllocator.Reset(&overflowStatus);
+            ImmixAllocationStatus privateStatus;
+            SideMetadataResult privateResult = mutator.privateAllocator.Reset(&privateStatus);
             if (result != SideMetadataResult::Success || status != ImmixAllocationStatus::Ready ||
-                overflowResult != SideMetadataResult::Success || overflowStatus != ImmixAllocationStatus::Ready)
+                overflowResult != SideMetadataResult::Success || overflowStatus != ImmixAllocationStatus::Ready ||
+                privateResult != SideMetadataResult::Success || privateStatus != ImmixAllocationStatus::Ready)
             {
                 return Fail(LaxoriRcResult::AllocationFailure);
             }

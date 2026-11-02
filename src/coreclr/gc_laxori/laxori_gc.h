@@ -127,6 +127,17 @@ public:
     // Called by the assembly write barrier (through LaxoriBarrierSlowPath) when the unlog bit of a field is set.
     static void BarrierSlowPath(Object** slot);
 
+    // Laxori: request-private regions (docs/design/laxori-port/DESIGN.md).
+    // Called by the assembly write barrier when a reference to an object of a private region is stored into a field that is
+    // not in a private region.
+    static void EscapeSlowPath(Object** slot, Object* reference);
+    // Publishes the private region of the calling thread when the object lies in a private region.
+    static void EscapeObject(Object* object);
+    // The exported hooks. The thread must be in cooperative mode (they are called without a GC transition).
+    void BeginRequest();
+    void EndRequest(Object* result);
+    bool RequestsEnabled() const { return m_requests_enabled; }
+
     ObjectReferenceEnumerationParameters* GetObjectReferenceEnumerationParameters() override;
     ObjectHeaderBitsParameters* GetObjectHeaderBitsParameters() override;
 
@@ -147,6 +158,8 @@ public:
 
 private:
     static constexpr size_t ImmixBytes = 8 * 1024 * 1024;
+    // Laxori: the largest object that is allocated in a request region (a quarter of the block).
+    static constexpr size_t MaximumPrivateObjectBytes = 8 * 1024;
     static constexpr size_t LargeBytes = 16 * 1024 * 1024;
     static constexpr size_t MaximumMutators = 1024;
     static constexpr size_t MaximumRoots = 131072;
@@ -202,6 +215,16 @@ private:
 
     void Fatal(const char* message) const;
     void Unsupported(const char* operation) const;
+    // Laxori helpers. All of them run in cooperative mode (see EnterCooperative).
+    bool IsPrivateObject(const void* address) const { return m_engine.IsPrivateAddress(reinterpret_cast<uintptr_t>(address)); }
+    void PublishRegionOfCurrentThread(bool atEscape);
+    void PublishWordsOfSource(const void* source, size_t length);
+    bool AllocatePrivate(gc_alloc_context* context, LaxoriRcMutator* mutator, size_t size, Object** object);
+    void InstallPrivateBuffer(gc_alloc_context* context, LaxoriRcMutator* mutator);
+    bool m_requests_enabled = false;
+    // The number of threads that are in a request. Zero lets the bulk and runtime store callbacks skip all request work.
+    std::atomic<uint32_t> m_requests_active{0};
+    uint8_t* m_block_table = nullptr;
     LaxoriRcMutator* FindOrAttach(gc_alloc_context* context, bool barrier);
     LaxoriRcResult RunScan(uint8_t kind);
     bool WaitForScanComplete();

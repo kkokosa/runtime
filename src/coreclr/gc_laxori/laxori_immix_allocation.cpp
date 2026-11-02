@@ -1126,6 +1126,17 @@ SideMetadataResult ImmixBumpAllocator::SetCursor(uintptr_t cursor)
     return SideMetadataResult::Success;
 }
 
+SideMetadataResult ImmixBumpAllocator::RewindToBlockStart()
+{
+    if (m_block == 0 || !ImmixAllocationManager::IsFreshSource(m_source))
+    {
+        return SideMetadataResult::InvalidArgument;
+    }
+    m_cursor = m_block;
+    m_limit = m_block + ImmixBlockGeometry::BlockBytes;
+    return SideMetadataResult::Success;
+}
+
 bool ImmixBumpAllocator::TryAlignWithOffset(
     uintptr_t cursor,
     size_t alignment,

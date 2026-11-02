@@ -274,6 +274,8 @@ public:
     uintptr_t GetCursor() const;
     uintptr_t GetLimit() const;
     SideMetadataResult SetCursor(uintptr_t cursor);
+    // Laxori: moves the cursor back to the start of the block that the allocator holds (a request region that is reused).
+    SideMetadataResult RewindToBlockStart();
 
 private:
     static bool TryAlignWithOffset(

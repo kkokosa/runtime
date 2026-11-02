@@ -36,6 +36,11 @@ extern "C"
     extern uint8_t LaxoriPatchable_HeapSize;
     extern uint8_t LaxoriPatchable_SlowPath;
     extern uint8_t LaxoriPatchable_XsaveMask;
+    // Laxori: base of the block table (one byte per Immix block of the reservation, 1 = request-private block) and the
+    // escape slow path void LaxoriEscapeSlowPath(Object** destination, Object* reference).
+    extern uint8_t LaxoriPatchable_BlockTable;
+    extern uint8_t LaxoriPatchable_EscapePath;
+    extern uint8_t LaxoriEscapeSlowAVLocation;
 }
 
 // The values that the slots cache. The runtime copies the current value of each global into its slot (right after it
@@ -52,6 +57,8 @@ struct LaxoriWriteBarrierGlobals
     uintptr_t slow_path;
     // The xsave components to save around the slow path; 0 means use fxsave.
     uintptr_t xsave_mask;
+    uintptr_t block_table;
+    uintptr_t escape_path;
 };
 
 extern "C" LaxoriWriteBarrierGlobals g_laxori_write_barrier_globals;
@@ -83,6 +90,7 @@ uintptr_t LaxoriWriteBarrierComputeXsaveMask();
 
 // Sets the values that the patchable slots cache.
 void LaxoriWriteBarrierSetGlobals(
-    uintptr_t metadataBase, uintptr_t heapLow, uintptr_t heapSize, void* slowPath, uintptr_t xsaveMask);
+    uintptr_t metadataBase, uintptr_t heapLow, uintptr_t heapSize, void* slowPath, uintptr_t xsaveMask,
+    uint8_t* blockTable, void* escapePath);
 
 #endif // LAXORI_WRITE_BARRIER_H

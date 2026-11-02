@@ -1,32 +1,30 @@
 // Licensed to the .NET Foundation under one or more agreements.
 // The .NET Foundation licenses this file to you under the MIT license.
 
-// The LAXORI write barrier for System V AMD64. The runtime installs it through IGCHeap::GetAssignRefFunctions
-// as CORINFO_HELP_ASSIGN_REF and CORINFO_HELP_CHECKED_ASSIGN_REF (the "specialized" barrier ABI).
+// The Laxori write barrier for System V AMD64. The runtime installs it through IGCHeap::GetAssignRefFunctions
+// as CORINFO_HELP_ASSIGN_REF and CORINFO_HELP_CHECKED_ASSIGN_REF (the "specialized" barrier ABI). It is the LXR barrier
+// plus the block-table check of Laxori (docs/design/laxori-port/DESIGN.md, section 6).
 //
-// What the barrier does: before the reference store, it tests the "unlogged" bit of the destination field in side
-// metadata (one bit for every 8-byte field slot; a set bit means the field has not been logged in this epoch).
-// A clear bit: store and return. A set bit: call the C++ function LaxoriBarrierSlowPath(dst), which reads the old value
-// of the field, claims the bit and logs the old value. Then store.
+// What the barrier does:
+//   1. dst is in a request-private block (block table byte != 0): store and return. A private field needs no log.
+//   2. dst is not private and the new reference is in a request-private block: call LaxoriEscapeSlowPath(dst, ref),
+//      which publishes the region. Then go on with 3.
+//   3. the LXR check: test the "unlogged" bit of the destination field in side metadata (one bit for every 8-byte slot).
+//      A clear bit: store and return. A set bit: call LaxoriBarrierSlowPath(dst), which logs the old value. Then store.
 //
 // Register contract (the one the JIT assumes for these helpers, see RBM_CALLEE_TRASH_WRITEBARRIER):
 //   in:     rdi = destination slot, rsi = new reference
 //   killed: rax, rcx, rdx, rsi, rdi, r8, r9, r10, r11 and the flags
 //   kept:   every other register, and ALL vector state (xmm0-15, ymm upper halves, zmm0-31, k0-7, mxcsr)
-// The fast path is a leaf routine that only uses rax, rcx, r8. The slow path calls C++ code, which may change any
-// vector register. So the slow path saves the whole vector state with xsave (fxsave when the OS does not enable
-// xsave), calls the C++ function, and restores the state.
+// The fast paths are leaf routines that use only rax, rcx, r8. The slow paths call C++ code, which can change any
+// vector register. So they save the whole vector state with xsave (fxsave when the OS does not enable xsave), call
+// the C++ function, and restore the state.
 //
 // Relocation rules (the runtime copies the block to another page):
 //   - the block is [LaxoriCheckedAssignRef, LaxoriWriteBarrierBlock_End) and must be relocatable,
 //   - inside the block only local labels are used, and all branches are relative, so a copy keeps working,
 //   - every value that is not known at build time is read from an 8-byte aligned slot inside the block
 //     (the LaxoriPatchable_* labels); the runtime fills the slots (see GCWriteBarrierPatchableValue).
-//
-// Test controls (the native barrier test builds this file with one of these defines and must see a failure):
-//   LAXORI_WB_CONTROL_NO_VECTOR_SAVE    do not save and restore vector state
-//   LAXORI_WB_CONTROL_MISALIGN          call the C++ function with a misaligned stack
-//   LAXORI_WB_CONTROL_NO_STORE_AFTER_SLOW  forget the store after the slow path
 
 .intel_syntax noprefix
 #include "unixasmmacros.inc"
@@ -35,59 +33,10 @@
 // standard format. The frame has room for the 64-byte alignment too.
 #define LAXORI_XSAVE_FRAME_SIZE 2816
 #define LAXORI_XSAVE_HEADER_OFFSET 512
+// log2 of the size of an Immix block (32 KiB)
+#define LAXORI_BLOCK_SHIFT 15
 
-//
-//   rdi - destination address (any address; outside the LAXORI heap the helper only stores)
-//   rsi - new reference
-//
-LEAF_ENTRY LaxoriCheckedAssignRef, _TEXT
-        mov     rax, rdi
-        sub     rax, qword ptr [rip + LOCAL_LABEL(HeapLowSlot)]
-        cmp     rax, qword ptr [rip + LOCAL_LABEL(HeapSizeSlot)]
-        jb      LOCAL_LABEL(AssignRefEntry)
-ALTERNATE_ENTRY LaxoriCheckedAssignRefAVLocation
-        mov     [rdi], rsi
-        ret
-LEAF_END_MARKED LaxoriCheckedAssignRef, _TEXT
-
-//
-//   rdi - destination address, must be inside the LAXORI heap
-//   rsi - new reference
-//
-LEAF_ENTRY LaxoriAssignRef, _TEXT
-LOCAL_LABEL(AssignRefEntry):
-        // metadata byte = base[dst >> 6], bit = (dst >> 3) & 7 (granularity: one bit for every 8 bytes)
-        mov     rax, rdi
-        shr     rax, 6
-        mov     r8, qword ptr [rip + LOCAL_LABEL(MetadataBaseSlot)]
-ALTERNATE_ENTRY LaxoriAssignRefMetadataAVLocation
-        movzx   eax, byte ptr [rax + r8]
-        mov     ecx, edi
-        shr     ecx, 3
-        and     ecx, 7
-        bt      eax, ecx
-        jc      LOCAL_LABEL(SlowEntry)
-ALTERNATE_ENTRY LaxoriAssignRefAVLocation
-        mov     [rdi], rsi
-        ret
-LEAF_END_MARKED LaxoriAssignRef, _TEXT
-
-//
-// Slow path. Entered by a jump from the fast path, so the stack looks as if LaxoriAssignRef was just called.
-// A nested function with unwind information. The runtime unwinds copied code through the original address.
-//
-NESTED_ENTRY LaxoriBarrierSlow, _TEXT, NoHandler
-LOCAL_LABEL(SlowEntry):
-        push_nonvol_reg rbp
-        mov     rbp, rsp
-        set_cfa_register rbp, 16
-        // keep the arguments: the call below kills rdi and rsi
-        push    rdi
-        push    rsi
-        sub     rsp, LAXORI_XSAVE_FRAME_SIZE
-        and     rsp, -64
-
-#ifndef LAXORI_WB_CONTROL_NO_VECTOR_SAVE
+.macro LAXORI_SAVE_VECTOR_STATE
         // the header of the xsave area must be zero before xrstor sees it
         xor     eax, eax
         mov     qword ptr [rsp + LAXORI_XSAVE_HEADER_OFFSET + 0], rax
@@ -101,42 +50,136 @@ LOCAL_LABEL(SlowEntry):
 
         mov     rax, qword ptr [rip + LOCAL_LABEL(XsaveMaskSlot)]
         test    rax, rax
-        jz      LOCAL_LABEL(SaveWithFxsave)
+        jz      .Lsave_fx_\@
         mov     rdx, rax
         shr     rdx, 32
         xsave   [rsp]
         // C++ code uses legacy SSE encoding. Clear the upper halves, so that it does not pay for mixing with the
         // caller's AVX state; xrstor puts them back.
         test    al, 4
-        jz      LOCAL_LABEL(CallManaged)
+        jz      .Lsave_done_\@
         vzeroupper
-        jmp     LOCAL_LABEL(CallManaged)
-LOCAL_LABEL(SaveWithFxsave):
+        jmp     .Lsave_done_\@
+.Lsave_fx_\@:
         fxsave  [rsp]
-#endif // !LAXORI_WB_CONTROL_NO_VECTOR_SAVE
+.Lsave_done_\@:
+.endm
 
-LOCAL_LABEL(CallManaged):
-#ifdef LAXORI_WB_CONTROL_MISALIGN
-        sub     rsp, 8
-#endif
-        // rdi still holds the destination: LaxoriBarrierSlowPath(Object** destination)
-        call    qword ptr [rip + LOCAL_LABEL(SlowPathSlot)]
-#ifdef LAXORI_WB_CONTROL_MISALIGN
-        add     rsp, 8
-#endif
-
-#ifndef LAXORI_WB_CONTROL_NO_VECTOR_SAVE
+.macro LAXORI_RESTORE_VECTOR_STATE
         mov     rax, qword ptr [rip + LOCAL_LABEL(XsaveMaskSlot)]
         test    rax, rax
-        jz      LOCAL_LABEL(RestoreWithFxrstor)
+        jz      .Lrestore_fx_\@
         mov     rdx, rax
         shr     rdx, 32
         xrstor  [rsp]
-        jmp     LOCAL_LABEL(Restored)
-LOCAL_LABEL(RestoreWithFxrstor):
+        jmp     .Lrestore_done_\@
+.Lrestore_fx_\@:
         fxrstor [rsp]
-LOCAL_LABEL(Restored):
-#endif // !LAXORI_WB_CONTROL_NO_VECTOR_SAVE
+.Lrestore_done_\@:
+.endm
+
+//
+//   rdi - destination address (any address; outside the Laxori heap the helper only stores)
+//   rsi - new reference
+//
+LEAF_ENTRY LaxoriCheckedAssignRef, _TEXT
+        mov     rax, rdi
+        sub     rax, qword ptr [rip + LOCAL_LABEL(HeapLowSlot)]
+        cmp     rax, qword ptr [rip + LOCAL_LABEL(HeapSizeSlot)]
+        jb      LOCAL_LABEL(AssignRefEntry)
+ALTERNATE_ENTRY LaxoriCheckedAssignRefAVLocation
+        mov     [rdi], rsi
+        ret
+LEAF_END_MARKED LaxoriCheckedAssignRef, _TEXT
+
+//
+//   rdi - destination address, must be inside the Laxori heap
+//   rsi - new reference
+//
+LEAF_ENTRY LaxoriAssignRef, _TEXT
+LOCAL_LABEL(AssignRefEntry):
+        // block table byte of the destination: table[(dst - heap low) >> 15]
+        mov     rax, rdi
+        sub     rax, qword ptr [rip + LOCAL_LABEL(HeapLowSlot)]
+        shr     rax, LAXORI_BLOCK_SHIFT
+        mov     r8, qword ptr [rip + LOCAL_LABEL(BlockTableSlot)]
+ALTERNATE_ENTRY LaxoriEscapeSlowAVLocation
+        cmp     byte ptr [rax + r8], 0
+        jne     LOCAL_LABEL(PrivateStore)
+        // The destination is shared. Is the new reference in a private block? (null and non-heap values are outside.)
+        mov     rax, rsi
+        sub     rax, qword ptr [rip + LOCAL_LABEL(HeapLowSlot)]
+        cmp     rax, qword ptr [rip + LOCAL_LABEL(HeapSizeSlot)]
+        jae     LOCAL_LABEL(LogCheck)
+        shr     rax, LAXORI_BLOCK_SHIFT
+        cmp     byte ptr [rax + r8], 0
+        jne     LOCAL_LABEL(EscapeEntry)
+LOCAL_LABEL(LogCheck):
+        // metadata byte = base[dst >> 6], bit = (dst >> 3) & 7 (granularity: one bit for every 8 bytes)
+        mov     rax, rdi
+        shr     rax, 6
+        mov     r8, qword ptr [rip + LOCAL_LABEL(MetadataBaseSlot)]
+ALTERNATE_ENTRY LaxoriAssignRefMetadataAVLocation
+        movzx   eax, byte ptr [rax + r8]
+        mov     ecx, edi
+        shr     ecx, 3
+        and     ecx, 7
+        bt      eax, ecx
+        jc      LOCAL_LABEL(SlowEntry)
+LOCAL_LABEL(PrivateStore):
+ALTERNATE_ENTRY LaxoriAssignRefAVLocation
+        mov     [rdi], rsi
+        ret
+LEAF_END_MARKED LaxoriAssignRef, _TEXT
+
+//
+// Escape slow path. Entered by a jump from the fast path, so the stack looks as if LaxoriAssignRef was just called.
+// rdi = destination, rsi = reference to an object of a private block. After the call the code goes on with the LXR check.
+//
+NESTED_ENTRY LaxoriEscapeSlow, _TEXT, NoHandler
+LOCAL_LABEL(EscapeEntry):
+        push_nonvol_reg rbp
+        mov     rbp, rsp
+        set_cfa_register rbp, 16
+        // keep the arguments: the call below kills rdi and rsi
+        push    rdi
+        push    rsi
+        sub     rsp, LAXORI_XSAVE_FRAME_SIZE
+        and     rsp, -64
+
+        LAXORI_SAVE_VECTOR_STATE
+        // LaxoriEscapeSlowPath(Object** destination, Object* reference): both are still in rdi and rsi
+        call    qword ptr [rip + LOCAL_LABEL(EscapePathSlot)]
+        LAXORI_RESTORE_VECTOR_STATE
+
+        lea     rsp, [rbp - 16]
+        pop     rsi
+        pop     rdi
+        pop     rbp
+        .cfi_def_cfa rsp, 8
+        .cfi_restore rbp
+        jmp     LOCAL_LABEL(LogCheck)
+NESTED_END LaxoriEscapeSlow, _TEXT
+
+//
+// Slow path of the log. Entered by a jump from the fast path, so the stack looks as if LaxoriAssignRef was just called.
+// A nested function with unwind information. The runtime unwinds copied code through the original address.
+//
+NESTED_ENTRY LaxoriBarrierSlow, _TEXT, NoHandler
+LOCAL_LABEL(SlowEntry):
+        push_nonvol_reg rbp
+        mov     rbp, rsp
+        set_cfa_register rbp, 16
+        // keep the arguments: the call below kills rdi and rsi
+        push    rdi
+        push    rsi
+        sub     rsp, LAXORI_XSAVE_FRAME_SIZE
+        and     rsp, -64
+
+        LAXORI_SAVE_VECTOR_STATE
+        // rdi still holds the destination: LaxoriBarrierSlowPath(Object** destination)
+        call    qword ptr [rip + LOCAL_LABEL(SlowPathSlot)]
+        LAXORI_RESTORE_VECTOR_STATE
 
         lea     rsp, [rbp - 16]
         pop     rsi
@@ -145,9 +188,7 @@ LOCAL_LABEL(Restored):
         .cfi_def_cfa rsp, 8
         .cfi_restore rbp
 ALTERNATE_ENTRY LaxoriBarrierSlowAVLocation
-#ifndef LAXORI_WB_CONTROL_NO_STORE_AFTER_SLOW
         mov     [rdi], rsi
-#endif
         ret
 NESTED_END LaxoriBarrierSlow, _TEXT
 
@@ -170,6 +211,12 @@ LOCAL_LABEL(SlowPathSlot):
         .quad   0
 PATCH_LABEL LaxoriPatchable_XsaveMask
 LOCAL_LABEL(XsaveMaskSlot):
+        .quad   0
+PATCH_LABEL LaxoriPatchable_BlockTable
+LOCAL_LABEL(BlockTableSlot):
+        .quad   0
+PATCH_LABEL LaxoriPatchable_EscapePath
+LOCAL_LABEL(EscapePathSlot):
         .quad   0
 
         .global C_FUNC(LaxoriWriteBarrierBlock_End)
