@@ -8,11 +8,34 @@
 namespace
 {
     std::atomic<int64_t> CommitFailureAfter{-1};
+    std::atomic<int64_t> DecommitFailureAfter{-1};
 }
 
 void LxrTestFailCommitAfter(int64_t calls)
 {
     CommitFailureAfter.store(calls, std::memory_order_relaxed);
+}
+
+void LxrTestFailDecommitAfter(int64_t calls)
+{
+    DecommitFailureAfter.store(calls, std::memory_order_relaxed);
+}
+
+// Consulted by the large object space before it gives pages back to the system.
+bool LxrTestDecommitShouldFail()
+{
+    int64_t remaining = DecommitFailureAfter.load(std::memory_order_relaxed);
+    if (remaining < 0)
+    {
+        return false;
+    }
+    if (remaining == 0)
+    {
+        DecommitFailureAfter.store(-1, std::memory_order_relaxed);
+        return true;
+    }
+    DecommitFailureAfter.fetch_sub(1, std::memory_order_relaxed);
+    return false;
 }
 
 #ifdef HOST_WINDOWS
