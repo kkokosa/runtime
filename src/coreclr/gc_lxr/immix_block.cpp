@@ -265,11 +265,10 @@ ImmixGeometryResult ImmixBlockGeometry::GetRange(
 ImmixBlockManager::ImmixBlockManager()
     : m_metadata(nullptr)
     , m_global_phase_epoch(InitialPhaseEpoch)
-    , m_active_operations(0)
+    , m_phase_transition(false)
 #ifdef _DEBUG
     , m_active_readers(0)
 #endif // _DEBUG
-    , m_phase_transition(false)
 {
     static_assert(std::atomic<uint8_t>::is_always_lock_free);
 }
@@ -277,13 +276,13 @@ ImmixBlockManager::ImmixBlockManager()
 ImmixBlockManager::BlockOperationScope::BlockOperationScope(
     const ImmixBlockManager* manager)
     : m_manager(manager)
+    , m_stripe(manager->BeginBlockOperation())
 {
-    m_manager->BeginBlockOperation();
 }
 
 ImmixBlockManager::BlockOperationScope::~BlockOperationScope()
 {
-    m_manager->EndBlockOperation();
+    m_manager->EndBlockOperation(m_stripe);
 }
 
 SideMetadataResult ImmixBlockManager::Initialize(SideMetadataManager* metadata)
@@ -322,7 +321,10 @@ SideMetadataResult ImmixBlockManager::Initialize(SideMetadataManager* metadata)
     }
     m_reference_count = metadata->GetAccessor(LxrSideMetadataKind::ReferenceCount);
     m_global_phase_epoch.store(InitialPhaseEpoch, std::memory_order_seq_cst);
-    m_active_operations.store(0, std::memory_order_seq_cst);
+    for (OperationStripe& stripe : m_operation_stripes)
+    {
+        stripe.count.store(0, std::memory_order_seq_cst);
+    }
     m_phase_transition.store(false, std::memory_order_seq_cst);
     m_non_free_blocks.store(0, std::memory_order_relaxed);
     m_reusable_free_lines.store(0, std::memory_order_relaxed);
@@ -338,7 +340,10 @@ void ImmixBlockManager::Shutdown()
     }
     m_reference_count = SideMetadataAccessor();
     m_global_phase_epoch.store(InitialPhaseEpoch, std::memory_order_seq_cst);
-    m_active_operations.store(0, std::memory_order_seq_cst);
+    for (OperationStripe& stripe : m_operation_stripes)
+    {
+        stripe.count.store(0, std::memory_order_seq_cst);
+    }
     m_phase_transition.store(false, std::memory_order_seq_cst);
     m_non_free_blocks.store(0, std::memory_order_relaxed);
     m_reusable_free_lines.store(0, std::memory_order_relaxed);
@@ -1861,8 +1866,13 @@ void ImmixBlockManager::NoteRawStateChange(uint8_t oldRaw, uint8_t newRaw)
     }
 }
 
-void ImmixBlockManager::BeginBlockOperation() const
+size_t ImmixBlockManager::BeginBlockOperation() const
 {
+    // The stripe is chosen by the stack of the calling thread, so threads count in different cache lines. The scope keeps the
+    // index, and the end of the operation uses the same stripe.
+    int marker;
+    size_t stripe = static_cast<size_t>(
+        ((reinterpret_cast<uintptr_t>(&marker) >> 12) * UINT64_C(0x9E3779B97F4A7C15)) >> 60) % OperationStripes;
     while (true)
     {
         while (m_phase_transition.load(std::memory_order_seq_cst))
@@ -1872,28 +1882,40 @@ void ImmixBlockManager::BeginBlockOperation() const
             YieldProcessor();
         }
 
-        m_active_operations.fetch_add(1, std::memory_order_seq_cst);
+        m_operation_stripes[stripe].count.fetch_add(1, std::memory_order_seq_cst);
         if (!m_phase_transition.load(std::memory_order_seq_cst))
         {
-            return;
+            return stripe;
         }
 
         s_flip_blocked_operations.fetch_add(1, std::memory_order_relaxed);
         _ASSERTE(!"A block operation started during an epoch flip.");
-        m_active_operations.fetch_sub(1, std::memory_order_seq_cst);
+        m_operation_stripes[stripe].count.fetch_sub(1, std::memory_order_seq_cst);
     }
 }
 
-void ImmixBlockManager::EndBlockOperation() const
+void ImmixBlockManager::EndBlockOperation(size_t stripe) const
 {
-    m_active_operations.fetch_sub(1, std::memory_order_seq_cst);
+    m_operation_stripes[stripe].count.fetch_sub(1, std::memory_order_seq_cst);
+}
+
+bool ImmixBlockManager::HasActiveOperations() const
+{
+    for (const OperationStripe& stripe : m_operation_stripes)
+    {
+        if (stripe.count.load(std::memory_order_seq_cst) != 0)
+        {
+            return true;
+        }
+    }
+    return false;
 }
 
 bool ImmixBlockManager::BeginPhaseTransition()
 {
     // Operations in flight before the flip flag is set. The gate would wait for them; the assertion
     // checks that a pause or worker protocol never needs it to.
-    if (m_active_operations.load(std::memory_order_seq_cst) != 0)
+    if (HasActiveOperations())
     {
         s_flip_overlaps.fetch_add(1, std::memory_order_relaxed);
         _ASSERTE(!"A block operation was in flight at an epoch flip.");
@@ -1916,7 +1938,7 @@ bool ImmixBlockManager::BeginPhaseTransition()
         return false;
     }
 
-    while (m_active_operations.load(std::memory_order_seq_cst) != 0)
+    while (HasActiveOperations())
     {
         YieldProcessor();
     }
