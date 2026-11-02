@@ -6,6 +6,7 @@
 #include "../../../../src/coreclr/gc_lxr/immix_block.h"
 
 #include <atomic>
+#include <chrono>
 #include <stdio.h>
 #include <thread>
 #include <vector>
@@ -1411,6 +1412,99 @@ namespace
             ImmixBlockManager::GetFlipOverlaps() + ImmixBlockManager::GetFlipBlockedOperations() > before);
     }
 
+#ifdef LXR_BLOCK_OPERATION_TEST_HOOK
+    struct HeldOperations
+    {
+        std::atomic<size_t> inside{0};
+        std::atomic<bool> release{false};
+    };
+
+    void HoldOperation(void* context)
+    {
+        HeldOperations* held = static_cast<HeldOperations*>(context);
+        held->inside.fetch_add(1, std::memory_order_seq_cst);
+        while (!held->release.load(std::memory_order_acquire))
+        {
+            std::this_thread::yield();
+        }
+    }
+
+    // The in-flight operations are counted in several cache lines, and the epoch flip has to wait for the operations of every
+    // thread: many threads hold an operation open (each one is counted where the stack of its thread selects), and the flip
+    // must not complete before all of them end. Afterwards the counts are balanced: flips no longer wait.
+    void TestFlipWaitsForOperationsOfEveryThread()
+    {
+        Fixture fixture;
+        Expect("held operations fixture initialized", fixture.initialized);
+        if (!fixture.initialized)
+        {
+            return;
+        }
+
+        constexpr size_t Threads = 32;
+        HeldOperations held;
+        fixture.blocks.SetInOperationHookForTest(HoldOperation, &held);
+        std::vector<std::thread> workers;
+        std::atomic<size_t> acquired{0};
+        for (size_t index = 0; index < Threads; index++)
+        {
+            workers.emplace_back([&, index]()
+            {
+                ImmixBlockOperationStatus status;
+                if ((fixture.blocks.TryAcquire(
+                         DataStart + (index * ImmixBlockGeometry::BlockBytes),
+                         static_cast<uintptr_t>(0x6000 + index),
+                         ImmixBlockAcquireKind::MutatorFresh,
+                         &status) == SideMetadataResult::Success) &&
+                    (status == ImmixBlockOperationStatus::Updated))
+                {
+                    acquired.fetch_add(1, std::memory_order_relaxed);
+                }
+            });
+        }
+        for (int wait = 0; wait < 10000 && held.inside.load(std::memory_order_acquire) != Threads; wait++)
+        {
+            std::this_thread::sleep_for(std::chrono::milliseconds(1));
+        }
+        Expect("every thread is inside a block operation", held.inside.load(std::memory_order_acquire) == Threads);
+
+        std::atomic<bool> flipped{false};
+        ImmixBlockOperationStatus flipStatus = ImmixBlockOperationStatus::Stale;
+        std::thread flipper([&]()
+        {
+            fixture.blocks.StartGcPause(&flipStatus);
+            flipped.store(true, std::memory_order_release);
+        });
+        std::this_thread::sleep_for(std::chrono::milliseconds(300));
+        Expect("an epoch flip waits for the operations that are in flight", !flipped.load(std::memory_order_acquire));
+        Expect("the epoch does not change while the flip waits", fixture.blocks.GetGlobalPhaseEpoch() == 1);
+
+        held.release.store(true, std::memory_order_release);
+        for (std::thread& worker : workers)
+        {
+            worker.join();
+        }
+        flipper.join();
+        Expect("the flip completes when the operations end",
+            flipped.load(std::memory_order_acquire) && flipStatus == ImmixBlockOperationStatus::Updated);
+        Expect("every held operation completed", acquired.load(std::memory_order_relaxed) == Threads);
+        Expect("the epoch changed once", fixture.blocks.GetGlobalPhaseEpoch() == 2);
+
+        fixture.blocks.SetInOperationHookForTest(nullptr, nullptr);
+        ImmixBlockOperationStatus status;
+        size_t completed = 0;
+        for (size_t index = 0; index < 1000; index++)
+        {
+            bool released = fixture.blocks.ReleaseGcPause(&status) == SideMetadataResult::Success &&
+                status == ImmixBlockOperationStatus::Updated;
+            bool started = fixture.blocks.StartGcPause(&status) == SideMetadataResult::Success &&
+                status == ImmixBlockOperationStatus::Updated;
+            completed += (released && started) ? 1 : 0;
+        }
+        Expect("flips complete after the operations ended, so the counts are balanced", completed == 1000);
+    }
+#endif // LXR_BLOCK_OPERATION_TEST_HOOK
+
     void TestFailuresAndManagerLifetime()
     {
         LxrSideMetadataLayout layout;
@@ -1530,6 +1624,9 @@ int main()
     TestLogAndContention();
     TestEpochWrap();
     TestFlipOverlapDetection();
+#ifdef LXR_BLOCK_OPERATION_TEST_HOOK
+    TestFlipWaitsForOperationsOfEveryThread();
+#endif // LXR_BLOCK_OPERATION_TEST_HOOK
     TestFailuresAndManagerLifetime();
 #else
     LxrSideMetadataLayout layout;

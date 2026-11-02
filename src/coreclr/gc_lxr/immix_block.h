@@ -283,6 +283,16 @@ public:
 
     SideMetadataResult TryLog(uintptr_t block, bool* logged);
     SideMetadataResult Unlog(uintptr_t block);
+#ifdef LXR_BLOCK_OPERATION_TEST_HOOK
+    // Test only. The hook runs in every block operation, after the operation is counted as in flight and before it reads or
+    // changes any block. A test uses it to hold operations open while an epoch flip is tried.
+    using InOperationHook = void (*)(void* context);
+    void SetInOperationHookForTest(InOperationHook hook, void* context)
+    {
+        m_in_operation_context = context;
+        m_in_operation_hook = hook;
+    }
+#endif // LXR_BLOCK_OPERATION_TEST_HOOK
 
 private:
     class BlockOperationScope final
@@ -400,6 +410,10 @@ private:
 #ifdef _DEBUG
     alignas(64) mutable std::atomic<uint32_t> m_active_readers;
 #endif // _DEBUG
+#ifdef LXR_BLOCK_OPERATION_TEST_HOOK
+    InOperationHook m_in_operation_hook = nullptr;
+    void* m_in_operation_context = nullptr;
+#endif // LXR_BLOCK_OPERATION_TEST_HOOK
 };
 
 static_assert(ImmixBlockGeometry::BlockBytes == 32 * 1024);

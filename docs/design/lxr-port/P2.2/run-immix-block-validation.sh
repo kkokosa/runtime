@@ -33,6 +33,7 @@ command=(
   -DHOST_AMD64
   -DTARGET_64BIT
   -DHOST_64BIT
+  -DLXR_BLOCK_OPERATION_TEST_HOOK
   -I"$lxr_root"
   -I"$gc_root"
   -I"$gc_root/env"

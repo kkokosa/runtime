@@ -278,6 +278,12 @@ ImmixBlockManager::BlockOperationScope::BlockOperationScope(
     : m_manager(manager)
     , m_stripe(manager->BeginBlockOperation())
 {
+#ifdef LXR_BLOCK_OPERATION_TEST_HOOK
+    if (manager->m_in_operation_hook != nullptr)
+    {
+        manager->m_in_operation_hook(manager->m_in_operation_context);
+    }
+#endif // LXR_BLOCK_OPERATION_TEST_HOOK
 }
 
 ImmixBlockManager::BlockOperationScope::~BlockOperationScope()
