@@ -21,6 +21,17 @@ namespace
         return true;
     }
 
+    // A relaxed load of one word of the count plane. The compiler may schedule these loads freely, which a volatile read
+    // does not allow.
+    inline uintptr_t LoadCountWord(const volatile uintptr_t* word)
+    {
+#if defined(__GNUC__) || defined(__clang__)
+        return __atomic_load_n(const_cast<const uintptr_t*>(word), __ATOMIC_RELAXED);
+#else
+        return VolatileLoadWithoutBarrier(word);
+#endif
+    }
+
     // The index of the lowest set bit. The value is not zero.
     inline size_t LowestSetBit(uint64_t value)
     {
@@ -353,14 +364,19 @@ uint64_t ImmixAllocationManager::GetDeadMask(
     }
 
     // A line is dead when all of its count words are zero (the same rule as IsLineDeadFast). The loop has no branch that
-    // depends on the counts.
+    // depends on the counts, and each word is read once, with a relaxed load.
     const volatile uintptr_t* words = blockWords + (half * 64 * m_rc_words_per_line);
     uint64_t mask = 0;
     if (m_rc_words_per_line == 1)
     {
-        for (size_t line = 0; line < 64; line++)
+        for (size_t group = 0; group < 8; group++)
         {
-            mask |= static_cast<uint64_t>(VolatileLoadWithoutBarrier(words + line) == 0) << line;
+            uint64_t bits = 0;
+            for (size_t line = 0; line < 8; line++)
+            {
+                bits |= static_cast<uint64_t>(LoadCountWord(words + (group * 8) + line) == 0) << line;
+            }
+            mask |= bits << (group * 8);
         }
     }
     else
@@ -370,7 +386,7 @@ uint64_t ImmixAllocationManager::GetDeadMask(
             uintptr_t any = 0;
             for (size_t word = 0; word < m_rc_words_per_line; word++)
             {
-                any |= VolatileLoadWithoutBarrier(words + (line * m_rc_words_per_line) + word);
+                any |= LoadCountWord(words + (line * m_rc_words_per_line) + word);
             }
             mask |= static_cast<uint64_t>(any == 0) << line;
         }
