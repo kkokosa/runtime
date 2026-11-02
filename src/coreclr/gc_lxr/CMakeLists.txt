@@ -37,6 +37,7 @@ set(LXR_SOURCES
   immix_block.cpp
   reference_count.cpp
   immix_allocation.cpp
+  immix_zeroing.cpp
   large_object_space.cpp
   lxr_work_packet.cpp
   lxr_work_scheduler.cpp
@@ -53,6 +54,7 @@ set(LXR_SOURCES
   lxr_gcload.cpp
   lxr_write_barrier.cpp
   lxr_write_barrier.h
+  lxr_block_zeroer.h
   lxr_worker_policy.h
   lxr_prefetch.h)
 

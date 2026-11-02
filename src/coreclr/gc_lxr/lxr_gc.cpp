@@ -333,6 +333,12 @@ HRESULT LxrGcHeap::Initialize()
     size_t nurseryCapMB = 0;
     bool immixReserveSpecified = false;
     bool largeReserveSpecified = false;
+    // A block that was never used is zero already (committed memory is zero), so an allocator does not clear it. The
+    // background clearer (LXRPrezeroThread) is off by default: it moves the clear of reused blocks to another thread, but the
+    // program thread then pays the cache misses of the first write to every line (see immix_zeroing.cpp), and the total
+    // CPU time rises.
+    configuration.prezero = true;
+    configuration.prezeroThread = false;
     if (!ReadBooleanSetting("LXRLegacyCapacity", &legacy) ||
         !ReadSetting("LXRImmixInitialMB", &immixInitial, 10, LxrSideMetadataLayout::AddressLimit >> 20) ||
         !ReadSetting("LXRLOSInitialMB", &largeInitial, 10, LxrSideMetadataLayout::AddressLimit >> 20) ||
@@ -374,7 +380,11 @@ HRESULT LxrGcHeap::Initialize()
         !ReadBooleanSetting("LXRPhaseTimers", &phaseTimers) ||
         !ReadBooleanSetting("LXRHeapSizing", &m_sizing_configuration.enabled) ||
         !ReadSetting("LXRNurseryCapMB", &nurseryCapMB, 10, SIZE_MAX >> 20) ||
-        !ReadBooleanSetting("LXRPolicyTrace", &m_policy_trace))
+        !ReadBooleanSetting("LXRPolicyTrace", &m_policy_trace) ||
+        !ReadBooleanSetting("LXRPrezero", &configuration.prezero) ||
+        !ReadBooleanSetting("LXRPrezeroThread", &configuration.prezeroThread) ||
+        !ReadSetting("LXRPrezeroMarginBlocks", &configuration.prezeroMarginBlocks, 10, 4096) ||
+        !ReadSetting("LXRPrezeroWindowBlocks", &configuration.prezeroWindowBlocks, 10, 65536))
     {
         return E_FAIL;
     }
@@ -2321,6 +2331,10 @@ void LxrGcHeap::EnumerateConfigurationValues(void* context, ConfigurationValueFu
         static_cast<int64_t>(m_heap_configuration.workers));
     callback(context, "LXRConcGCThreads", "System.GC.LXRConcGCThreads", GCConfigurationType::Int64,
         static_cast<int64_t>(m_heap_configuration.concurrentTraceWorkers));
+    callback(context, "LXRPrezero", "System.GC.LXRPrezero", GCConfigurationType::Boolean,
+        m_heap_configuration.prezero);
+    callback(context, "LXRPrezeroThread", "System.GC.LXRPrezeroThread", GCConfigurationType::Boolean,
+        m_heap_configuration.prezeroThread);
     callback(context, "GCConcurrent", "System.GC.Concurrent", GCConfigurationType::Boolean, IsConcurrentGCEnabled());
 }
 
@@ -3060,6 +3074,10 @@ uint64_t LxrGcHeap::GetPrototypeMetric(uint32_t metric) const
             if (metric >= 640 && metric < 648)
             {
                 return m_engine.GetMediumOverflowMetric(metric - 640);
+            }
+            if (metric >= 670 && metric < 680)
+            {
+                return m_engine.GetZeroingMetric(metric - 670);
             }
             Unsupported("LXR prototype metric index is invalid.");
             return UINT64_MAX;

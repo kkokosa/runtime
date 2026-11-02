@@ -15,7 +15,7 @@ esac
 GC="$REPO/src/coreclr/gc"
 LXR="$REPO/src/coreclr/gc_lxr"
 rm -f "$OUT/lxr-rc-validation"
-SOURCES=(side_metadata.cpp immix_block.cpp immix_allocation.cpp reference_count.cpp large_object_space.cpp
+SOURCES=(side_metadata.cpp immix_block.cpp immix_allocation.cpp immix_zeroing.cpp reference_count.cpp large_object_space.cpp
   lxr_work_packet.cpp lxr_work_scheduler.cpp lxr_pause_schedule.cpp lxr_pause_coordinator.cpp
   lxr_completion_counter.cpp lxr_reference_counting.cpp)
 FILES=()

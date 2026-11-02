@@ -6,6 +6,7 @@
 
 #include "immix_allocation.h"
 #include "large_object_space.h"
+#include "lxr_block_zeroer.h"
 #include "reference_count.h"
 #include "lxr_pause_coordinator.h"
 #include "lxr_virtual_array.h"
@@ -102,6 +103,15 @@ struct LxrRcConfiguration
     // The engine uses this only when no hard limit is set (the hard limit equals the whole reservation) and the
     // reservation is larger than the initial capacity. With a hard limit below the reservation it does nothing.
     bool overshootToSpace = false;
+    // A clean block that is known to be zero (never used, or cleared by the background clearer) is not cleared again when an
+    // allocator takes it (immix_zeroing.cpp).
+    bool prezero = false;
+    // A background thread clears free blocks in front of the allocators, so that the allocating thread rarely clears one.
+    // The window starts prezeroMarginBlocks after the cursor of the allocators and has prezeroWindowBlocks blocks. It needs
+    // prezero.
+    bool prezeroThread = false;
+    size_t prezeroMarginBlocks = 16;
+    size_t prezeroWindowBlocks = 128;
 };
 
 struct LxrRcMetrics
@@ -608,6 +618,9 @@ public:
     // passed over, 4 = recycled lines consumed, 5 = clean blocks acquired, 6 = recycled blocks acquired,
     // 7 = the overflow allocator is enabled.
     uint64_t GetMediumOverflowMetric(size_t metric) const;
+    // Zeroing of allocation memory (ImmixAllocationManager::GetZeroingMetric).
+    uint64_t GetZeroingMetric(size_t metric) const { return m_allocation.GetZeroingMetric(metric); }
+    bool IsPreZeroGatedForTest() const { return m_allocation.IsPreZeroGated(); }
     // Number of spans of the pause that runs now (0 outside a pause) and the span at an index. For tests.
     size_t GetYoungSpanCount() const { return m_young_spans.Size(); }
     bool GetYoungSpan(size_t index, uintptr_t* start, uintptr_t* end) const
@@ -1030,6 +1043,9 @@ private:
     static constexpr uint8_t PausePinFlag = 2;
     LxrPinList m_pins;
     std::atomic<uint8_t>* m_block_flags = nullptr;
+    // Pre-zeroing: the zero state of every Immix block (ImmixAllocationManager::ZeroState*) and the clearer thread.
+    std::atomic<uint8_t>* m_zero_state = nullptr;
+    LxrBlockZeroer m_zeroer;
     ImmixBumpAllocator m_pinned_allocator;
     std::atomic_flag m_pinned_lock = ATOMIC_FLAG_INIT;
     std::atomic<uint64_t> m_pause_pinned_roots{0};

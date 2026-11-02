@@ -140,9 +140,11 @@ SideMetadataResult ImmixAllocationManager::GrowQuiescent(size_t arenaSize)
     {
         return SideMetadataResult::InvalidArgument;
     }
+    size_t previousBlocks = m_block_count;
     m_arena_size = arenaSize;
     m_block_count = arenaSize / ImmixBlockGeometry::BlockBytes;
     ResetCursors();
+    InitializeZeroStates(previousBlocks, m_block_count);
     return SideMetadataResult::Success;
 }
 
@@ -353,6 +355,7 @@ SideMetadataResult ImmixAllocationManager::NotifyBlocksReleased(size_t count)
 void ImmixAllocationManager::SetAcquireNotes(const AcquireNotes& notes)
 {
     m_notes = notes;
+    InitializeZeroStates(0, m_block_count);
 }
 
 void ImmixAllocationManager::NoteAcquired(size_t index, bool fresh, bool mutator)
@@ -660,12 +663,25 @@ SideMetadataResult ImmixAllocationManager::PrepareFreshBlock(
     ImmixAllocationSource source,
     ImmixMarkingContext markingContext)
 {
+    // A clean block that the background clearer has cleared (or that was never used) is zero already.
+    bool alreadyZero = m_notes.zero_state != nullptr && TakeBlockForUse(block);
     if (!IsCopySource(source))
     {
-        memset(
-            reinterpret_cast<void*>(block),
-            0,
-            ImmixBlockGeometry::BlockBytes);
+        if (alreadyZero)
+        {
+            m_zero_stats[3].fetch_add(1, std::memory_order_relaxed);
+#if defined(_DEBUG) || defined(LXR_F9_TEST_HOOKS)
+            VerifyBlockZero(block);
+#endif // _DEBUG || LXR_F9_TEST_HOOKS
+        }
+        else
+        {
+            memset(
+                reinterpret_cast<void*>(block),
+                0,
+                ImmixBlockGeometry::BlockBytes);
+            m_zero_stats[0].fetch_add(1, std::memory_order_relaxed);
+        }
     }
 
     SideMetadataResult result = InitializeFieldLogRange(
@@ -710,6 +726,8 @@ SideMetadataResult ImmixAllocationManager::PrepareRecycledHole(
     if (!IsCopySource(source))
     {
         memset(reinterpret_cast<void*>(hole.start), 0, size);
+        m_zero_stats[1].fetch_add(1, std::memory_order_relaxed);
+        m_zero_stats[2].fetch_add(size, std::memory_order_relaxed);
     }
 
     SideMetadataResult result = InitializeFieldLogRange(

@@ -43,6 +43,7 @@ command=(
   "$lxr_root/side_metadata.cpp"
   "$lxr_root/immix_block.cpp"
   "$lxr_root/immix_allocation.cpp"
+  "$lxr_root/immix_zeroing.cpp"
   -o "$output_root/immix-allocation-validation"
 )
 

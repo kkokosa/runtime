@@ -10,7 +10,7 @@ New-Item -ItemType Directory -Force $Output | Out-Null
 $Output = (Resolve-Path $Output).Path
 $gc = Join-Path $Repo 'src\coreclr\gc'
 $lxr = Join-Path $Repo 'src\coreclr\gc_lxr'
-$names = 'side_metadata.cpp', 'immix_block.cpp', 'immix_allocation.cpp', 'reference_count.cpp', 'large_object_space.cpp',
+$names = 'side_metadata.cpp', 'immix_block.cpp', 'immix_allocation.cpp', 'immix_zeroing.cpp', 'reference_count.cpp', 'large_object_space.cpp',
     'lxr_work_packet.cpp', 'lxr_work_scheduler.cpp', 'lxr_pause_schedule.cpp', 'lxr_pause_coordinator.cpp',
     'lxr_completion_counter.cpp', 'lxr_reference_counting.cpp'
 $sources = @($names | ForEach-Object { '"' + (Join-Path $lxr $_) + '"' })

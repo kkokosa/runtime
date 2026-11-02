@@ -8,6 +8,7 @@
 #include "../../../../src/coreclr/gc_lxr/lxr_prefetch.h"
 
 #include <atomic>
+#include <chrono>
 #include <stdio.h>
 #include <thread>
 #include <vector>
@@ -2082,6 +2083,382 @@ namespace
         }
     }
 
+    // Pre-zeroing of clean blocks (immix_zeroing.cpp). The zero state is one byte per block. The blocks start clean (committed
+    // memory is zero); an allocator that takes a block makes it Taken; the clearer claims a free block (Active), clears it and
+    // publishes it as Clean.
+    constexpr size_t PreZeroMaxBlocks = 64;
+
+    struct PreZeroFixture
+    {
+        Fixture fixture;
+        std::atomic<uint8_t> states[PreZeroMaxBlocks]{};
+
+        explicit PreZeroFixture(size_t blockCount, size_t minimumReuseLines = 1)
+            : fixture(1, blockCount, minimumReuseLines)
+        {
+            ImmixAllocationManager::AcquireNotes notes{};
+            notes.zero_state = states;
+            fixture.allocation.SetAcquireNotes(notes);
+        }
+
+        uint8_t* Block(size_t index)
+        {
+            return reinterpret_cast<uint8_t*>(fixture.data_start + index * ImmixBlockGeometry::BlockBytes);
+        }
+
+        bool Holds(size_t index, uint8_t value)
+        {
+            const uint8_t* block = Block(index);
+            for (size_t i = 0; i < ImmixBlockGeometry::BlockBytes; i++)
+            {
+                if (block[i] != value)
+                {
+                    return false;
+                }
+            }
+            return true;
+        }
+
+        uint64_t Metric(size_t metric)
+        {
+            return fixture.allocation.GetZeroingMetric(metric);
+        }
+    };
+
+    void TestPreZeroTakeBlock()
+    {
+        PreZeroFixture z(8);
+        Expect("prezero fixture initialized", z.fixture.initialized);
+        if (!z.fixture.initialized)
+        {
+            return;
+        }
+        bool allClean = true;
+        for (size_t index = 0; index < 8; index++)
+        {
+            allClean = allClean && z.states[index].load() == ImmixAllocationManager::ZeroStateClean;
+        }
+        Expect("prezero blocks start clean", allClean);
+        Expect("prezero is enabled", z.fixture.allocation.IsPreZeroEnabled());
+
+        memset(z.Block(0), 0x5a, z.fixture.data_size);
+        ImmixBumpAllocator allocator;
+        ExpectMetadata("prezero allocator initialize", allocator.Initialize(&z.fixture.allocation, OwnerOne),
+            SideMetadataResult::Success);
+        ImmixAllocationStatus status = ImmixAllocationStatus::InvalidRequest;
+
+        // A block that says Clean is not cleared again. Its memory is not zero here (the state is wrong on purpose), and the
+        // check of the test build reports it.
+        ExpectMetadata("prezero first refill", allocator.TryRefill(
+            ImmixAllocationSource::MutatorFresh, ImmixMarkingContext::Inactive, &status), SideMetadataResult::Success);
+        Expect("prezero first refill ready", status == ImmixAllocationStatus::Ready && allocator.GetBlock() == z.fixture.data_start);
+        Expect("prezero clean block taken without a clear", z.Metric(3) == 1 && z.Metric(0) == 0);
+        Expect("prezero clean block is not cleared", z.Holds(0, 0x5a));
+        Expect("prezero verification reports a clean block that is not zero", z.Metric(9) == 1);
+        Expect("prezero taken block is marked", z.states[0].load() == ImmixAllocationManager::ZeroStateTaken);
+
+        // A block that is not known to be zero is cleared.
+        z.states[1].store(ImmixAllocationManager::ZeroStateDirty);
+        ExpectMetadata("prezero second refill", allocator.TryRefill(
+            ImmixAllocationSource::MutatorFresh, ImmixMarkingContext::Inactive, &status), SideMetadataResult::Success);
+        Expect("prezero second refill ready", status == ImmixAllocationStatus::Ready &&
+            allocator.GetBlock() == reinterpret_cast<uintptr_t>(z.Block(1)));
+        Expect("prezero dirty block cleared by the allocator", z.Holds(1, 0) && z.Metric(0) == 1 && z.Metric(3) == 1);
+        Expect("prezero dirty block is marked taken", z.states[1].load() == ImmixAllocationManager::ZeroStateTaken);
+
+        // A block that is zero and says Clean is taken without a clear and without a report.
+        memset(z.Block(2), 0, ImmixBlockGeometry::BlockBytes);
+        ExpectMetadata("prezero third refill", allocator.TryRefill(
+            ImmixAllocationSource::MutatorFresh, ImmixMarkingContext::Inactive, &status), SideMetadataResult::Success);
+        Expect("prezero zero block taken without a clear", z.Metric(3) == 2 && z.Metric(0) == 1 && z.Metric(9) == 1);
+        Expect("prezero zero block is marked taken", z.states[2].load() == ImmixAllocationManager::ZeroStateTaken);
+
+        // A block that was used before (Taken) is cleared again.
+        z.states[3].store(ImmixAllocationManager::ZeroStateTaken);
+        ExpectMetadata("prezero fourth refill", allocator.TryRefill(
+            ImmixAllocationSource::MutatorFresh, ImmixMarkingContext::Inactive, &status), SideMetadataResult::Success);
+        Expect("prezero used block cleared by the allocator", z.Holds(3, 0) && z.Metric(0) == 2 && z.Metric(3) == 2);
+
+        // A block that the clearer is clearing is waited for, and is zero when the allocator gets it.
+        z.states[4].store(ImmixAllocationManager::ZeroStateActive);
+        std::atomic<bool> finished(false);
+        std::thread taker([&]()
+        {
+            ImmixAllocationStatus takerStatus = ImmixAllocationStatus::InvalidRequest;
+            allocator.TryRefill(ImmixAllocationSource::MutatorFresh, ImmixMarkingContext::Inactive, &takerStatus);
+            finished.store(true);
+        });
+        std::this_thread::sleep_for(std::chrono::milliseconds(50));
+        Expect("prezero an allocator waits for the claim of the clearer", !finished.load());
+        memset(z.Block(4), 0, ImmixBlockGeometry::BlockBytes);
+        z.states[4].store(ImmixAllocationManager::ZeroStateClean);
+        taker.join();
+        Expect("prezero the allocator goes on when the claim ends",
+            finished.load() && z.Metric(3) == 3 && z.Metric(0) == 2 && z.Metric(6) == 1 &&
+            z.states[4].load() == ImmixAllocationManager::ZeroStateTaken && z.Metric(9) == 1);
+        ExpectMetadata("prezero allocator reset", allocator.Reset(&status), SideMetadataResult::Success);
+    }
+
+    void TestPreZeroStep()
+    {
+        PreZeroFixture z(16);
+        Expect("prezero step fixture initialized", z.fixture.initialized);
+        if (!z.fixture.initialized)
+        {
+            return;
+        }
+        memset(z.Block(0), 0x5a, z.fixture.data_size);
+        for (size_t index = 0; index < 16; index++)
+        {
+            z.states[index].store(ImmixAllocationManager::ZeroStateDirty);
+        }
+        ImmixAllocationManager::PreZeroPass pass{};
+        size_t cleared = z.fixture.allocation.PreZeroStep(2, 3, 16, &pass);
+        Expect("prezero window of three blocks after a margin of two", cleared == 3 && pass.cleared == 3 && pass.caughtUp);
+        bool window = true;
+        for (size_t index = 0; index < 16; index++)
+        {
+            bool inside = index >= 2 && index < 5;
+            window = window && z.Holds(index, inside ? 0 : 0x5a) &&
+                z.states[index].load() == (inside ? ImmixAllocationManager::ZeroStateClean :
+                    ImmixAllocationManager::ZeroStateDirty);
+        }
+        Expect("prezero clears the blocks of the window and no others", window);
+        Expect("prezero counts the blocks that it cleared", z.Metric(4) == 3);
+        Expect("prezero an unchanged window has nothing to clear",
+            z.fixture.allocation.PreZeroStep(2, 3, 16, &pass) == 0 && pass.caughtUp);
+        cleared = z.fixture.allocation.PreZeroStep(2, 8, 2, &pass);
+        Expect("prezero a budget limits the pass", cleared == 2 && !pass.caughtUp && z.Holds(5, 0) && z.Holds(6, 0) &&
+            z.Holds(7, 0x5a));
+        cleared = z.fixture.allocation.PreZeroStep(2, 8, 16, &pass);
+        Expect("prezero the next pass goes on where the last one stopped",
+            cleared == 3 && pass.caughtUp && z.Holds(7, 0) && z.Holds(9, 0) && z.Holds(10, 0x5a));
+
+        // A pause holds the clearer back, and after it the clearer looks at the blocks behind its frontier again.
+        z.fixture.allocation.SuspendPreZero();
+        z.states[3].store(ImmixAllocationManager::ZeroStateDirty);
+        memset(z.Block(3), 0x5a, ImmixBlockGeometry::BlockBytes);
+        cleared = z.fixture.allocation.PreZeroStep(2, 8, 16, &pass);
+        Expect("prezero clears nothing during a pause", cleared == 0 && pass.gated && z.Holds(3, 0x5a));
+        z.fixture.allocation.ResumePreZero();
+        cleared = z.fixture.allocation.PreZeroStep(2, 8, 16, &pass);
+        Expect("prezero looks behind the old frontier after a pause", cleared == 1 && !pass.gated && z.Holds(3, 0) &&
+            z.states[3].load() == ImmixAllocationManager::ZeroStateClean);
+    }
+
+    std::atomic<int> s_prezeroWakes;
+
+    // The clearer sleeps until an allocator takes a block at the index that the clearer asked for, and the allocator calls
+    // the wake callback once.
+    void TestPreZeroWake()
+    {
+        PreZeroFixture z(8);
+        Expect("prezero wake fixture initialized", z.fixture.initialized);
+        if (!z.fixture.initialized)
+        {
+            return;
+        }
+        s_prezeroWakes = 0;
+        z.fixture.allocation.SetPreZeroWake([](void* context)
+        {
+            static_cast<std::atomic<int>*>(context)->fetch_add(1);
+        }, &s_prezeroWakes);
+        ImmixBumpAllocator allocator;
+        Expect("prezero wake allocator initialize",
+            allocator.Initialize(&z.fixture.allocation, OwnerOne) == SideMetadataResult::Success);
+        ImmixAllocationStatus status = ImmixAllocationStatus::InvalidRequest;
+        Expect("prezero the clearer may sleep while the allocators are behind the wake index",
+            z.fixture.allocation.ArmPreZeroWake(3));
+        for (size_t block = 0; block < 3; block++)
+        {
+            allocator.TryRefill(ImmixAllocationSource::MutatorFresh, ImmixMarkingContext::Inactive, &status);
+        }
+        Expect("prezero blocks below the wake index do not wake the clearer", s_prezeroWakes.load() == 0);
+        allocator.TryRefill(ImmixAllocationSource::MutatorFresh, ImmixMarkingContext::Inactive, &status);
+        Expect("prezero the block at the wake index wakes the clearer", s_prezeroWakes.load() == 1);
+        allocator.TryRefill(ImmixAllocationSource::MutatorFresh, ImmixMarkingContext::Inactive, &status);
+        Expect("prezero the clearer is woken once", s_prezeroWakes.load() == 1);
+        Expect("prezero the clearer must not sleep when the allocators are past the wake index",
+            !z.fixture.allocation.ArmPreZeroWake(2));
+        z.fixture.allocation.DisarmPreZeroWake();
+        allocator.TryRefill(ImmixAllocationSource::MutatorFresh, ImmixMarkingContext::Inactive, &status);
+        Expect("prezero a disarmed wake does not wake the clearer", s_prezeroWakes.load() == 1);
+        allocator.Reset(&status);
+    }
+
+    void TestPreZeroEligibility()
+    {
+        PreZeroFixture z(8);
+        Expect("prezero eligibility fixture initialized", z.fixture.initialized);
+        if (!z.fixture.initialized)
+        {
+            return;
+        }
+        memset(z.Block(0), 0x5a, z.fixture.data_size);
+        for (size_t index = 0; index < 8; index++)
+        {
+            z.states[index].store(ImmixAllocationManager::ZeroStateDirty);
+        }
+        // Block 0 is held by an allocator, block 1 was taken and returned in this epoch (a nursery block), block 2 is a
+        // reusable block.
+        ImmixBumpAllocator holder;
+        ImmixBumpAllocator returned;
+        Expect("prezero allocators initialize",
+            holder.Initialize(&z.fixture.allocation, OwnerOne) == SideMetadataResult::Success &&
+            returned.Initialize(&z.fixture.allocation, OwnerTwo) == SideMetadataResult::Success);
+        ImmixAllocationStatus status = ImmixAllocationStatus::InvalidRequest;
+        Expect("prezero holder refill", holder.TryRefill(
+            ImmixAllocationSource::MutatorFresh, ImmixMarkingContext::Inactive, &status) == SideMetadataResult::Success &&
+            status == ImmixAllocationStatus::Ready && holder.GetBlock() == z.fixture.data_start);
+        Expect("prezero returned refill", returned.TryRefill(
+            ImmixAllocationSource::MutatorFresh, ImmixMarkingContext::Inactive, &status) == SideMetadataResult::Success &&
+            status == ImmixAllocationStatus::Ready &&
+            returned.GetBlock() == z.fixture.data_start + ImmixBlockGeometry::BlockBytes);
+        Expect("prezero returned reset", returned.Reset(&status) == SideMetadataResult::Success);
+        memset(z.Block(0), 0x77, ImmixBlockGeometry::BlockBytes);
+        memset(z.Block(1), 0x77, ImmixBlockGeometry::BlockBytes);
+        SeedReusableBlock(z.fixture, z.fixture.data_start + 2 * ImmixBlockGeometry::BlockBytes);
+        z.fixture.allocation.ResetCursors();
+        ImmixAllocationManager::PreZeroPass pass{};
+        size_t cleared = z.fixture.allocation.PreZeroStep(0, 8, 16, &pass);
+        Expect("prezero clears the five free blocks", cleared == 5 && pass.caughtUp);
+        Expect("prezero leaves the block of an allocator alone", z.Holds(0, 0x77) &&
+            z.states[0].load() == ImmixAllocationManager::ZeroStateTaken);
+        Expect("prezero leaves a nursery block alone", z.Holds(1, 0x77) &&
+            z.states[1].load() == ImmixAllocationManager::ZeroStateTaken);
+        Expect("prezero leaves a reusable block alone", z.Holds(2, 0x5a) &&
+            z.states[2].load() == ImmixAllocationManager::ZeroStateDirty);
+        bool free = true;
+        for (size_t index = 3; index < 8; index++)
+        {
+            free = free && z.Holds(index, 0) && z.states[index].load() == ImmixAllocationManager::ZeroStateClean;
+        }
+        Expect("prezero clears the free blocks", free);
+        Expect("prezero a nursery block is not claimed", z.Metric(5) == 0);
+        Expect("prezero holder reset", holder.Reset(&status) == SideMetadataResult::Success);
+    }
+
+    // The clearer runs on its own thread while allocators take every block, check that it is zero, fill it with a pattern and
+    // check the pattern again at the end of the round. A pause (every thread stopped, the clearer gated) releases the nursery
+    // blocks, and the next round starts. No block may be cleared while an allocator uses it, and none may be taken as zero
+    // while it is not.
+    void TestPreZeroConcurrent()
+    {
+        constexpr size_t BlockCount = 48;
+        constexpr size_t ThreadCount = 4;
+        constexpr size_t Rounds = 150;
+        PreZeroFixture z(BlockCount);
+        Expect("prezero concurrent fixture initialized", z.fixture.initialized);
+        if (!z.fixture.initialized)
+        {
+            return;
+        }
+        memset(z.Block(0), 0xe1, z.fixture.data_size);
+        for (size_t index = 0; index < BlockCount; index++)
+        {
+            z.states[index].store(ImmixAllocationManager::ZeroStateDirty);
+        }
+        std::atomic<bool> stop(false);
+        std::thread clearer([&]()
+        {
+            ImmixAllocationManager::PreZeroPass pass;
+            while (!stop.load())
+            {
+                z.fixture.allocation.PreZeroStep(1, 24, 3, &pass);
+                if (pass.caughtUp || pass.gated)
+                {
+                    std::this_thread::sleep_for(std::chrono::microseconds(20));
+                }
+            }
+        });
+        std::atomic<size_t> notZero(0);
+        std::atomic<size_t> lostPattern(0);
+        std::atomic<size_t> taken(0);
+        bool pauses = true;
+        for (size_t round = 0; round < Rounds; round++)
+        {
+            std::vector<std::thread> threads;
+            for (size_t thread = 0; thread < ThreadCount; thread++)
+            {
+                threads.emplace_back([&, thread]()
+                {
+                    ImmixBumpAllocator allocator;
+                    if (allocator.Initialize(&z.fixture.allocation, 0x4000 + thread) != SideMetadataResult::Success)
+                    {
+                        return;
+                    }
+                    std::vector<std::pair<uint8_t*, uint8_t>> mine;
+                    ImmixAllocationStatus status = ImmixAllocationStatus::InvalidRequest;
+                    while (allocator.TryRefill(ImmixAllocationSource::MutatorFresh, ImmixMarkingContext::Inactive,
+                               &status) == SideMetadataResult::Success && status == ImmixAllocationStatus::Ready)
+                    {
+                        uint8_t* block = reinterpret_cast<uint8_t*>(allocator.GetBlock());
+                        uint8_t pattern = static_cast<uint8_t>(0x10 + thread);
+                        bool zero = true;
+                        for (size_t i = 0; i < ImmixBlockGeometry::BlockBytes; i++)
+                        {
+                            zero &= block[i] == 0;
+                        }
+                        if (!zero)
+                        {
+                            notZero++;
+                        }
+                        memset(block, pattern, ImmixBlockGeometry::BlockBytes);
+                        mine.emplace_back(block, pattern);
+                        taken++;
+                    }
+                    for (const auto& entry : mine)
+                    {
+                        for (size_t i = 0; i < ImmixBlockGeometry::BlockBytes; i++)
+                        {
+                            if (entry.first[i] != entry.second)
+                            {
+                                lostPattern++;
+                                break;
+                            }
+                        }
+                    }
+                    allocator.Reset(&status);
+                });
+            }
+            for (std::thread& thread : threads)
+            {
+                thread.join();
+            }
+            // The pause.
+            z.fixture.allocation.SuspendPreZero();
+            ImmixBlockOperationStatus blockStatus;
+            pauses = pauses && z.fixture.blocks.StartGcPause(&blockStatus) == SideMetadataResult::Success;
+            for (size_t index = 0; index < BlockCount; index++)
+            {
+                pauses = pauses && z.fixture.blocks.TryReleaseNursery(
+                    z.fixture.data_start + index * ImmixBlockGeometry::BlockBytes, &blockStatus) ==
+                    SideMetadataResult::Success && blockStatus == ImmixBlockOperationStatus::Updated;
+            }
+            pauses = pauses && z.fixture.blocks.ReleaseGcPause(&blockStatus) == SideMetadataResult::Success;
+            z.fixture.allocation.ResetCursors();
+            z.fixture.allocation.ResumePreZero();
+            // Give the clearer a chance to get ahead of the allocators in some of the rounds.
+            if (round % 3 == 0)
+            {
+                std::this_thread::sleep_for(std::chrono::microseconds(300));
+            }
+        }
+        stop.store(true);
+        clearer.join();
+        Expect("prezero concurrent pauses released every block", pauses);
+        Expect("prezero concurrent allocators took every block of every round", taken.load() == BlockCount * Rounds);
+        Expect("prezero concurrent every block was zero when it was taken", notZero.load() == 0);
+        Expect("prezero concurrent no block was cleared while it was in use", lostPattern.load() == 0);
+        Expect("prezero concurrent verification found no block that was taken as zero and was not",
+            z.Metric(9) == 0);
+        Expect("prezero concurrent the clearer cleared blocks that allocators took as zero",
+            z.Metric(4) > 0 && z.Metric(3) > 0);
+        printf("DETAIL: prezero concurrent cleared by clearer=%llu taken zero=%llu cleared by allocators=%llu waits=%llu\n",
+            static_cast<unsigned long long>(z.Metric(4)), static_cast<unsigned long long>(z.Metric(3)),
+            static_cast<unsigned long long>(z.Metric(0)), static_cast<unsigned long long>(z.Metric(6)));
+    }
+
     void TestConfigurationFailures()
     {
         {
@@ -2189,6 +2566,12 @@ int main()
     TestPhaseAndContention();
     TestFreshReclamation();
     TestRejectedReusableBlocks();
+    TestPreZeroTakeBlock();
+    TestPreZeroStep();
+    TestPreZeroWake();
+    TestPreZeroWake();
+    TestPreZeroEligibility();
+    TestPreZeroConcurrent();
     TestConfigurationFailures();
 #endif
 

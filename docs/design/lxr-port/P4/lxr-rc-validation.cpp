@@ -8488,6 +8488,91 @@ namespace
         return LxrRcResult::Success;
     }
 
+    // The pause captures its roots after it has held the clearer back.
+    LxrRcResult CapturePreZeroGate(LxrReferenceCounting* engine, void* context)
+    {
+        *static_cast<bool*>(context) = engine->IsPreZeroGatedForTest();
+        return LxrRcResult::Success;
+    }
+
+    // Pre-zeroing of clean blocks in the engine (immix_zeroing.cpp). A mutator allocates objects over many epochs. Every
+    // object must be zero when the mutator gets it, whether its block was cleared by the mutator, by the background clearer
+    // or never used. The programs fills the objects, a pause kills them all and releases the blocks, and the clearer clears
+    // the released blocks again while the next epoch runs.
+    void ValidatePreZero(bool thread, size_t windowBlocks)
+    {
+        LxrReferenceCounting engine;
+        LxrRcConfiguration configuration{
+            64 * ImmixBlockGeometry::BlockBytes, 8 * LxrLargeObjectSpace::MinimumObjectBytes, 16, 1024, 4, 2,
+        };
+        configuration.prezero = true;
+        configuration.prezeroThread = thread;
+        configuration.prezeroMarginBlocks = 2;
+        configuration.prezeroWindowBlocks = windowBlocks;
+        LxrPauseRuntimeAdapter adapter{Suspend, Resume, nullptr, false};
+        LxrRcMutator* mutator = nullptr;
+        int identity;
+        if (!Check(engine.Initialize(configuration, adapter) == LxrRcResult::Success &&
+                engine.AttachMutator(&identity, &mutator) == LxrRcResult::Success, "the prezero engine initializes"))
+        {
+            return;
+        }
+        Type type(48, 0);
+        Helper helper{&engine, mutator};
+        std::vector<Object*> none;
+        size_t objects = 0;
+        size_t notZero = 0;
+        size_t lost = 0;
+        for (size_t cycle = 0; cycle < 16; cycle++)
+        {
+            std::vector<Object*> mine;
+            for (size_t index = 0; index < 40 * ImmixBlockGeometry::BlockBytes / 48; index++)
+            {
+                Object* object = helper.NewObject(type);
+                if (object == nullptr)
+                {
+                    break;
+                }
+                uint64_t* words = reinterpret_cast<uint64_t*>(object);
+                for (size_t word = 1; word < 6; word++)
+                {
+                    notZero += words[word] != 0 ? 1 : 0;
+                    words[word] = 0xd0d0000000000000ULL + (cycle << 32) + objects;
+                }
+                mine.push_back(object);
+                objects++;
+            }
+            for (size_t index = 0; index < mine.size(); index++)
+            {
+                const uint64_t* words = reinterpret_cast<const uint64_t*>(mine[index]);
+                lost += words[1] != words[5] ? 1 : 0;
+            }
+            helper.Retire();
+            if (!Epoch(engine, none))
+            {
+                return;
+            }
+            helper = Helper{&engine, mutator};
+            if (thread && cycle % 2 == 0)
+            {
+                std::this_thread::sleep_for(std::chrono::milliseconds(2));
+            }
+        }
+        Check(objects > 16 * 30 * ImmixBlockGeometry::BlockBytes / 48, "the prezero cycles allocate their objects");
+        Check(notZero == 0, "every object that a mutator gets is zero (cleared by the mutator, by the clearer, or never used)");
+        Check(lost == 0, "no object is changed by the clearer while the program uses it");
+        Check(engine.GetZeroingMetric(9) == 0, "no block was taken as zero while it was not");
+        bool gatedInPause = false;
+        Check(engine.Collect(CapturePreZeroGate, &gatedInPause, Timeout) == LxrRcResult::Success &&
+                engine.Drain(Timeout) == LxrRcResult::Success, "a pause with a probe completes");
+        Check(gatedInPause, "the clearer is held back while a pause runs");
+        Check(!engine.IsPreZeroGatedForTest(), "the clearer is released when the pause is over");
+        Check(engine.GetZeroingMetric(3) > 0, "blocks that were never used or were cleared before are taken without a clear");
+        Check(engine.GetZeroingMetric(0) > 0 || thread, "blocks that were not known to be zero are cleared by the mutator");
+        Check(thread ? engine.GetZeroingMetric(4) > 0 : engine.GetZeroingMetric(4) == 0,
+            thread ? "the background clearer clears blocks that pauses released" : "without the thread nothing is cleared in the background");
+    }
+
     // Spans are recorded per thread, merged and sorted at the pause, cut at the used point, and the memory
     // after the cut is not parsed. A thread that has left (FixAllocContext) keeps its spans until the pause.
     void ValidateD2Spans()
@@ -9864,6 +9949,14 @@ int main(int argc, char** argv)
             Failures == 0 ? "PASS" : "FAIL", Checks - Failures, Checks);
         return Failures == 0 ? 0 : 1;
     }
+    if (argc == 2 && strcmp(argv[1], "--prezero") == 0)
+    {
+        ValidatePreZero(false, 16);
+        ValidatePreZero(true, 16);
+        ValidatePreZero(true, 4);
+        std::printf("%s: %d/%d pre-zeroing checks\n", Failures == 0 ? "PASS" : "FAIL", Checks - Failures, Checks);
+        return Failures == 0 ? 0 : 1;
+    }
     if (argc == 2 && strcmp(argv[1], "--fresh-block-race") == 0)
     {
         ValidateFreshBlockRace();
@@ -10305,6 +10398,9 @@ int main(int argc, char** argv)
     ValidatePauseTrace(false, 8, 4);
     ValidatePauseTrace(true, 8, 4);
     ValidatePauseTraceOwnerCopy(8);
+    ValidatePreZero(false, 16);
+    ValidatePreZero(true, 16);
+    ValidatePreZero(true, 4);
 #endif
     std::printf("%s: %d/%d integrated P4 checks\n",
         Failures == 0 ? "PASS" : "FAIL", Checks - Failures, Checks);
