@@ -1,0 +1,71 @@
+set(CMAKE_INCLUDE_CURRENT_DIR ON)
+
+add_definitions(-DFEATURE_STANDALONE_GC)
+remove_definitions(-DSTRESS_HEAP)
+remove_definitions(-DWRITE_BARRIER_CHECK)
+
+add_definitions(-DBUILD_AS_STANDALONE)
+add_definitions(-DFEATURE_CONSERVATIVE_GC)
+add_definitions(-DFX_VER_INTERNALNAME_STR=clrlaxorigc.dll)
+add_definitions(-DVERIFY_HEAP)
+add_definitions(-DGC_CONFIG_DRIVEN)
+add_definitions(-DGC_DESCRIPTOR)
+add_compile_definitions(LAXORI_ENABLE_LAZY_COMPLETION_COUNTER)
+if(CLR_CMAKE_ENABLE_LAXORI_PHASE_TIMERS)
+  add_compile_definitions(LAXORI_ENABLE_PHASE_TIMERS)
+endif()
+
+include_directories(../gc ../gc/env ../pal/inc)
+include_directories(${CMAKE_CURRENT_BINARY_DIR}/../gc)
+
+set(LAXORI_SOURCES
+  ../gc/gceventstatus.cpp
+  ../gc/gcconfig.cpp
+  ../gc/gccommon.cpp
+  ../gc/gcscan.cpp
+  ../gc/handletable.cpp
+  ../gc/handletablecore.cpp
+  ../gc/handletablescan.cpp
+  ../gc/handletablecache.cpp
+  ../gc/objecthandle.cpp
+  ../gc/gchandletable.cpp
+  ../gc/gcbridge.cpp
+  ../gc/softwarewritewatch.cpp
+  laxori_side_metadata.cpp
+  laxori_immix_block.cpp
+  laxori_reference_count.cpp
+  laxori_immix_allocation.cpp
+  laxori_large_object_space.cpp
+  laxori_work_packet.cpp
+  laxori_work_scheduler.cpp
+  laxori_completion_counter.cpp
+  laxori_pause_schedule.cpp
+  laxori_pause_coordinator.cpp
+  laxori_reference_counting.cpp
+  laxori_finalizer_registry.h
+  laxori_finalizer_pause.h
+  laxori_pin_list.h
+  laxori_young_spans.h
+  laxori_gc.cpp
+  laxori_gc.h
+  laxori_gcload.cpp
+  laxori_write_barrier.cpp
+  laxori_write_barrier.h
+  laxori_worker_policy.h
+  laxori_prefetch.h)
+
+# The Linux x64 barrier only. The Windows assembly of the barrier is not ported (see docs/design/laxori-port/DESIGN.md).
+set(LAXORI_WRITE_BARRIER_ASM amd64/laxori_writebarrier.S)
+add_library_clr(laxori_writebarrier OBJECT ${LAXORI_WRITE_BARRIER_ASM})
+target_include_directories(laxori_writebarrier PRIVATE
+  ${ARCH_SOURCES_DIR}
+  ../vm/${ARCH_SOURCES_DIR}
+  ${CMAKE_CURRENT_BINARY_DIR}/../vm/wks)
+
+set(LAXORI_LINK_LIBRARIES gc_pal minipal)
+list(APPEND LAXORI_LINK_LIBRARIES gc_vxsort)
+
+add_library_clr(clrlaxorigc SHARED ${LAXORI_SOURCES} $<TARGET_OBJECTS:laxori_writebarrier>)
+add_dependencies(clrlaxorigc eventing_headers)
+target_link_libraries(clrlaxorigc PRIVATE ${LAXORI_LINK_LIBRARIES})
+install_clr(TARGETS clrlaxorigc DESTINATIONS . sharedFramework COMPONENT runtime)

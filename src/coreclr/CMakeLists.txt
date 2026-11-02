@@ -73,6 +73,14 @@ OPTION(CLR_CMAKE_ENABLE_SATORI_GC
   "Build the Satori standalone collector (comparison build; AMD64 and ARM64 only)" OFF)
 OPTION(CLR_CMAKE_ENABLE_LXR_GC
   "Build the experimental selectable LXR collector" OFF)
+OPTION(CLR_CMAKE_ENABLE_LAXORI_GC
+  "Build the experimental selectable Laxori collector (request-private regions over an LXR engine)" OFF)
+
+if(CLR_CMAKE_ENABLE_LAXORI_GC)
+  if(NOT CLR_CMAKE_TARGET_ARCH_AMD64 OR NOT CLR_CMAKE_TARGET_LINUX)
+    message(FATAL_ERROR "The selectable Laxori prototype requires standalone Linux AMD64 CoreCLR")
+  endif()
+endif()
 
 if(CLR_CMAKE_ENABLE_LXR_GC)
   if(NOT CLR_CMAKE_TARGET_ARCH_AMD64 OR
@@ -268,6 +276,9 @@ include(clrdefinitions.cmake)
 if(CLR_CMAKE_ENABLE_LXR_GC AND NOT FEATURE_STANDALONE_GC)
   message(FATAL_ERROR "The selectable LXR prototype requires standalone GC support")
 endif()
+if(CLR_CMAKE_ENABLE_LAXORI_GC AND NOT FEATURE_STANDALONE_GC)
+  message(FATAL_ERROR "The selectable Laxori prototype requires standalone GC support")
+endif()
 
 #--------------------------------
 # Data descriptors mechanics
@@ -336,6 +347,9 @@ endif()
 add_subdirectory(gc)
 if(CLR_CMAKE_ENABLE_LXR_GC)
   add_subdirectory(gc_lxr)
+endif()
+if(CLR_CMAKE_ENABLE_LAXORI_GC)
+  add_subdirectory(gc_laxori)
 endif()
 if (CLR_CMAKE_ENABLE_SATORI_GC AND (CLR_CMAKE_TARGET_ARCH_AMD64 OR CLR_CMAKE_TARGET_ARCH_ARM64))
   add_subdirectory(gc_satori)
