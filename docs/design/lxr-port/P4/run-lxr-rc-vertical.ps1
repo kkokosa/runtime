@@ -26,7 +26,7 @@ New-Item -ItemType Directory -Path $OutputDirectory -Force | Out-Null
 $gc = Join-Path $RepositoryRoot 'src\coreclr\gc'
 $lxr = Join-Path $RepositoryRoot 'src\coreclr\gc_lxr'
 $sources = @(
-    'side_metadata.cpp', 'immix_block.cpp', 'immix_allocation.cpp', 'reference_count.cpp',
+    'side_metadata.cpp', 'immix_block.cpp', 'immix_allocation.cpp', 'immix_zeroing.cpp', 'reference_count.cpp',
     'large_object_space.cpp', 'lxr_work_packet.cpp', 'lxr_work_scheduler.cpp',
     'lxr_pause_schedule.cpp', 'lxr_pause_coordinator.cpp', 'lxr_completion_counter.cpp',
     'lxr_reference_counting.cpp'

@@ -828,7 +828,8 @@ LxrRcResult LxrReferenceCounting::Initialize(
         return Fail(LxrRcResult::SchedulerFailure);
     }
     m_allocation.SetAcquireNotes(
-        {m_allocated_block_storage.Get(), m_allocated_list, &m_allocated_count, m_mature_candidates, m_block_flags});
+        {m_allocated_block_storage.Get(), m_allocated_list, &m_allocated_count, m_mature_candidates, m_block_flags,
+            m_zero_state});
     for (size_t index = 0; index < configuration.maximumMutators; index++)
     {
         if (m_mutators[index].allocator.Initialize(&m_allocation, index + 1) != SideMetadataResult::Success ||
@@ -873,6 +874,11 @@ LxrRcResult LxrReferenceCounting::Initialize(
     if (m_coordinator.Initialize(&m_scheduler, adapter) != LxrPauseCoordinatorResult::Success)
     {
         return Fail(LxrRcResult::SchedulerFailure);
+    }
+    if (m_zero_state != nullptr && m_configuration.prezeroThread)
+    {
+        // Without the thread every block is cleared by the allocator that takes it, as before.
+        m_zeroer.Start(&m_allocation, m_configuration.prezeroMarginBlocks, m_configuration.prezeroWindowBlocks);
     }
     m_phase.store(LxrRcPhase::Mutator, std::memory_order_release);
     return LxrRcResult::Success;
@@ -943,6 +949,15 @@ LxrRcResult LxrReferenceCounting::InitializeBuffers(size_t slots)
             m_configuration.immixBytes / ImmixBlockGeometry::BlockBytes]{};
         m_block_flags = new (std::nothrow) std::atomic<uint8_t>[
             m_configuration.immixBytes / ImmixBlockGeometry::BlockBytes]{};
+        if (m_configuration.prezero && !m_observer)
+        {
+            m_zero_state = new (std::nothrow) std::atomic<uint8_t>[
+                m_configuration.immixBytes / ImmixBlockGeometry::BlockBytes]{};
+            if (m_zero_state == nullptr)
+            {
+                return Fail(LxrRcResult::OutOfMemory);
+            }
+        }
         // Not initialized: the entries are written before they are read, and the pages stay untouched until used.
         m_allocated_list = new (std::nothrow) uint32_t[m_configuration.immixBytes / ImmixBlockGeometry::BlockBytes];
         if (m_allocated_list == nullptr || m_block_flags == nullptr)
@@ -1295,6 +1310,7 @@ void LxrReferenceCounting::Shutdown()
         return;
     }
     m_phase.store(LxrRcPhase::Shutdown, std::memory_order_release);
+    m_zeroer.Stop();
     m_scheduler.Shutdown();
     DeleteRememberedChunks();
     DeleteWork();
@@ -1344,6 +1360,7 @@ void LxrReferenceCounting::Shutdown()
     delete[] m_dead_large;
     delete[] m_mature_candidates;
     delete[] m_block_flags;
+    delete[] m_zero_state;
     delete[] m_allocated_list;
     delete[] m_trace_locks;
     delete[] m_scan_buckets;
@@ -1361,6 +1378,7 @@ void LxrReferenceCounting::Shutdown()
     m_trace_locks = nullptr;
     m_scan_buckets = nullptr;
     m_block_flags = nullptr;
+    m_zero_state = nullptr;
     m_pins.Clear();
     m_roots[0] = nullptr;
     m_roots[1] = nullptr;
@@ -2834,6 +2852,10 @@ void LxrReferenceCounting::Suspend(void* context)
 {
     LxrReferenceCounting* engine = static_cast<LxrReferenceCounting*>(context);
     engine->m_runtime.suspend(engine->m_runtime.context);
+#if !defined(LXR_SIDE_METADATA_TEST_PLATFORM) || !defined(LXR_PREZERO_NO_PAUSE_GATE_CONTROL)
+    // Control: the pause does not hold the clearer back.
+    engine->m_allocation.SuspendPreZero();
+#endif // !LXR_SIDE_METADATA_TEST_PLATFORM || !LXR_PREZERO_NO_PAUSE_GATE_CONTROL
     int64_t prepareStart = engine->m_pause_timers.Enabled() ? engine->m_pause_timers.Stamp() : 0;
     engine->m_phase.store(LxrRcPhase::Suspended, std::memory_order_release);
     engine->m_copy_exhausted.store(false, std::memory_order_relaxed);
@@ -2984,6 +3006,8 @@ void LxrReferenceCounting::Resume(bool finishedGc, void* context)
         }
     }
     engine->m_runtime.resume(finishedGc, engine->m_runtime.context);
+    engine->m_allocation.ResumePreZero();
+    engine->m_zeroer.Wake();
 }
 
 LxrRcResult LxrReferenceCounting::Collect(
