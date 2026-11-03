@@ -235,6 +235,7 @@ private:
     bool LocalCollect(LaxoriRcMutator* mutator);
     bool LocalCollectCore(LaxoriRcMutator* mutator);
     bool m_tl_timers = false;                // DOTNET_LAXORITlTimers=1: cycle and count diagnostics of the thread-local collector
+    bool m_sync_walk = false;                // DOTNET_LAXORISyncWalk=1: the thread-local mark also walks the region for sync blocks (the old way)
     uint64_t m_tsc_start = 0;
     int64_t m_tsc_ns_start = 0;
 public:

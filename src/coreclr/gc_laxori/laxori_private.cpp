@@ -788,26 +788,31 @@ bool LaxoriGcHeap::LocalMark(LaxoriPrivateRegion& region)
     TlCount(N_RootsIn, local.rootsIn);
 
     // The sync-block table of the runtime holds raw pointers to the objects that have a sync block, dead or alive, and it is
-    // updated only by a pause. An object with a sync block therefore stays where it is and stays alive until the region is
-    // dissolved. The walk finds the dead ones too: the objects between two gaps are contiguous.
+    // updated only by a pause, so an object with a sync block must stay where it is. The runtime creates a sync block through
+    // pre_store (SyncBlockCache::NewSyncBlockSlot), which escapes the object (PreStore), and an escaped object is a root that does not
+    // move. The walk of the whole region (every object, dead ones too) that found such objects before is kept for A/B tests only
+    // (DOTNET_LAXORISyncWalk=1); it was 40 to 85 percent of the cost of a collection.
     t0 = TlNow();
     uint64_t walked = 0;
-    WalkRegionObjects(region, [&](Object* walkedObject, size_t size)
+    if (m_sync_walk)
     {
-        if (m_test_control == 5)
+        WalkRegionObjects(region, [&](Object* walkedObject, size_t size)
         {
-            return;
-        }
-        walked++;
-        uintptr_t address = reinterpret_cast<uintptr_t>(walkedObject);
-        if (!BitTest(address) && HasSyncBlock(walkedObject))
-        {
-            BitSet(address);
-            BitSet(address + 2 * sizeof(uintptr_t));
-            region.survivors += size;
-            PushMarkStack(region, walkedObject);
-        }
-    });
+            if (m_test_control == 5)
+            {
+                return;
+            }
+            walked++;
+            uintptr_t address = reinterpret_cast<uintptr_t>(walkedObject);
+            if (!BitTest(address) && HasSyncBlock(walkedObject))
+            {
+                BitSet(address);
+                BitSet(address + 2 * sizeof(uintptr_t));
+                region.survivors += size;
+                PushMarkStack(region, walkedObject);
+            }
+        });
+    }
     TlAdd(C_Sync, t0);
     TlCount(N_SyncObjs, walked);
 
@@ -1227,6 +1232,7 @@ bool LaxoriGcHeap::InitializePrivateTier(size_t regionKB, bool enabled, bool col
     m_private_enabled = enabled;
     m_verify_private = getenv("DOTNET_LAXORIVerifyPrivate") != nullptr;
     m_tl_timers = getenv("DOTNET_LAXORITlTimers") != nullptr;
+    m_sync_walk = getenv("DOTNET_LAXORISyncWalk") != nullptr;
     m_tsc_start = __builtin_ia32_rdtsc();
     m_tsc_ns_start = static_cast<int64_t>(minipal_hires_ticks());
     {

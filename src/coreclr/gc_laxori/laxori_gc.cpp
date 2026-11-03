@@ -951,13 +951,17 @@ bool LaxoriGcHeap::IsInHeap(void*, void* address)
 
 void LaxoriGcHeap::PreStore(Object** destination, Object* newReference)
 {
+    // A store of a private reference to a place outside the heap (the stack slot of the sync-block table, a handle, native memory)
+    // makes the object reachable for the runtime, like a store into the shared heap: the object escapes (Satori's
+    // CheckEscapeSatori does the same). A sync block is created through this call, so an object that has one is always escaped
+    // and the thread-local collector needs no walk of the region to find it.
+    if (s_heap->m_private_enabled && s_heap->m_test_control != 7)
+    {
+        s_heap->EscapeCheck(destination, newReference);
+    }
     if (!IsInHeap(nullptr, destination))
     {
         return;
-    }
-    if (s_heap->m_private_enabled)
-    {
-        s_heap->EscapeCheck(destination, newReference);
     }
     const uint8_t* metadata = reinterpret_cast<const uint8_t*>(g_laxori_write_barrier_globals.metadata_base);
     uintptr_t address = reinterpret_cast<uintptr_t>(destination);
