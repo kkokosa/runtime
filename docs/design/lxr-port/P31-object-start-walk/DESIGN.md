@@ -246,3 +246,57 @@ bash docs/design/lxr-port/P31-object-start-walk/run-walk-controls.sh            
 `LXR_OBJECT_START_WALK=1` in the environment makes the P2.2-P2.5 and P4 scripts build the walk variant. The managed stress
 test is `managed/InteriorStress` (see its header). Selectors that are flaky under load in both variants:
 `--mature-released-candidate` and `--p8-storage`.
+
+## 8. Results
+
+All numbers come from WSL2 (16 CPUs), frame copies of `frame-c4`, `DOTNET_gcServer=1`, 9 interleaved runs per workload, medians, under `flock /tmp/lxr-bench.lock`. All checksums were correct. "walk" means the count-plane variant; "base" means the ValidObject variant. Values are walk relative to base (negative is better).
+
+### 8.1 Validation
+
+- Release, both variants: P2.1-P2.5 pass. P3.1 641, P3.2 395, P3.3 357, P3.4 70, P4 105380.
+- Debug, both variants: P4 105380.
+- New `--object-start` selector: 4279 checks pass in both variants. The deterministic DIGEST lines are equal in both variants (`compare-digests.sh`).
+- Six walk mutation controls (`run-walk-controls.sh`) and the P2.4 write-valid control are detected.
+- Some selectors are flaky under load in BOTH variants (and in the baseline): `--mature-released-candidate` (about 4 of 8 runs fail in default Release, 1 of 8 in walk Release, 0 of 8 in Debug) and sometimes `--p8-storage`. `--zero-rc-control` is a control that is expected to fail.
+- Managed `InteriorStress` passes with stock GC, LXR base and LXR walk.
+
+### 8.2 Benchmarks
+
+| Workload | wall (batch 1 / 2) | cpu (batch 1 / 2) | pause (batch 1 / 2) | rss (batch 1 / 2) |
+|---|---|---|---|---|
+| requests | -3.2% / -0.6% | -6.1% / -3.7% | -5.1% / -5.1% | -0.9% / -1.1% |
+| binarytrees | -2.4% / -1.8% | -11.9% / -14.0% | -21.7% / -8.0% | -1.2% / -2.6% |
+| listsuffix | -5.4% / -2.6% | -11.8% / -11.0% | -13.0% / -14.5% | -1.5% / -0.3% |
+| mixedmedium | -3.7% / +0.1% | -4.8% / -2.5% | -2.6% / -3.0% | -1.0% / -1.1% |
+| losarrays | -2.7% / -2.2% | -4.0% / -2.5% | -7.3% / -4.8% | -3.4% / -4.1% |
+| mediumarrays | -3.3% / -3.0% | -5.5% / -3.6% | -6.4% / -2.1% | -1.3% / -1.3% |
+
+Control: the stock `frame-c4` library against the default variant of this tree gives about 0% (wall -0.6 to +2.3%, CPU about +0.4%). The default variant is unchanged in speed.
+
+### 8.3 Worker CPU by function (perf, cpu-clock, 2 repetitions)
+
+- The largest saving is the per-death clear of the ValidObject bit in `DecrementWithDeathCore` (listsuffix 612 to 447 ms, mixedmedium 107 to 38 ms, requests 16.5 to 9.4 ms). This cost is higher than the early estimate (1.8-2.8%) because the bitmap costs two CAS per mature object life: one at promotion and one at death.
+- `MarkPromotedStart` is removed (listsuffix 85 ms, binarytrees 43 ms in base).
+- `TryCopyMature` in binarytrees: 166 to 87 ms.
+- The walk variant adds `FindNextValidSlot` (binarytrees 53 ms) and `ResolveForwardedChecked` (63 ms, partly offset by a cheaper `ResolveForwarded`).
+- Worker CPU total: binarytrees 2708 to 2416 ms, listsuffix 3065 to 2565 ms, mixedmedium 1202 to 1134 ms, losarrays 1633 to 1507 ms, mediumarrays 872 to 848 ms. The requests value is too small to read (noise).
+
+### 8.4 Interior lookups per pause (`LXRLookupStats=1`)
+
+- Number of lookups is small: stress test about 83K per run (about 17 per pause), requests 18, listsuffix about 1.1-1.5K, mixedmedium 2.5-38K.
+- Cost per lookup: stress test base 0.42 us, walk 0.30 us.
+- binarytrees (remembered-set replay, depends on the pause policy): base 65K-410K lookups per run; walk runs vary in number. The per-lookup cost is about 0.4 us in walk. Base is slower on failing lookups because it scans bits slot by slot.
+- Stale-value span walks in walk (`checked`): about 1.4K per binarytrees run, about 200-970 for the other workloads. These are cheap.
+- Interior lookups are never the main cost in either variant.
+
+### 8.5 Crash hunt (walk variant)
+
+- Mixed programs: 105 runs at each of 13/3, 4/2 and 1/1 workers = 315 of 315 OK.
+- Stress test only: 100 runs at each configuration = 300 of 300 OK.
+- Base control: 40 runs at each configuration = 120 of 120 OK.
+
+### 8.6 Limits of the walk variant
+
+- A literal heap walk was not made correct without a new invariant (filler objects or a first-object index) that costs at least as much as the bitmap. See sections 3 and 4. The walk variant uses the count plane and young spans.
+- Young pinned objects are found only inside a pause (through the pinned span). In the base variant the bit finds them at once. Young objects are not found outside a pause in either variant.
+- The ValidObject plane is not committed in the walk variant (1/64 of the heap less native plane memory).

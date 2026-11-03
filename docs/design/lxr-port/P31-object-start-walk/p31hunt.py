@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """Crash hunt: many short runs of the six workloads and of the interior-pointer stress test at several worker counts.
-usage: p31hunt.py <variant: base|walk> <runs per config> <out.jsonl> [configs=13:3,4:2,1:1]
+usage: p31hunt.py <variant: base|walk> <runs per config> <out.jsonl> [configs=13:3,4:2,1:1]   (HUNT_PROGRAMS=stress,requests restricts the programs)
 Each run is one process (corerun) with DOTNET_LXRGCThreads=N and DOTNET_LXRConcGCThreads=M. A run fails on a nonzero exit code,
 a wrong checksum, a failure line of the stress test, or a timeout."""
 import json, os, subprocess, sys, time
@@ -14,7 +14,7 @@ WORK = {"binarytrees": (18, 1), "requests": (8192, 200000), "listsuffix": (8192,
         "mediumarrays": (20000, 300000), "mixedmedium": (12000, 200000), "losarrays": (1500, 100000)}
 SUMS = {"requests": "27134172608", "binarytrees": "68332294", "listsuffix": "159636632672",
         "mixedmedium": "40586599707", "losarrays": "13936826922", "mediumarrays": "7032863679"}
-programs = list(WORK) + ["stress"]
+programs = os.environ.get("HUNT_PROGRAMS", ",".join(list(WORK) + ["stress"])).split(",")
 failures = 0
 with open(out, "a") as f:
     for config in configs:
