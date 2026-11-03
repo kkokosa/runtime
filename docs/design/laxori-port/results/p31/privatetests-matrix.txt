@@ -1,0 +1,22 @@
+count-L2 threads=1: rc=0 PASS 
+count-L2 threads=2: rc=0 PASS 
+count-L2 threads=4: rc=0 PASS 
+count-L2 threads=8: rc=0 PASS 
+count-L2 threads=13: rc=0 PASS 
+count-L1 threads=1: rc=0 PASS 
+count-L1 threads=2: rc=0 PASS 
+count-L1 threads=4: rc=0 PASS 
+count-L1 threads=8: rc=0 PASS 
+/root/laxori/pt.sh: line 6: 651848 Aborted                 env -i HOME=/root PATH=/usr/bin:/bin DOTNET_gcServer=${SVR:-1} $gcenv $EXTRA timeout ${TMO:-300} /root/prof/frame-c4/corerun /root/laxori/pt/bin/PrivateTests.dll $t $sc $th > /tmp/pt-$$.txt 2>&1
+count-L1 threads=13: rc=134 timeout: the monitored command dumped core 
+bitmap-L2 threads=1: rc=0 PASS 
+bitmap-L2 threads=2: rc=0 PASS 
+bitmap-L2 threads=4: rc=0 PASS 
+bitmap-L2 threads=8: rc=0 PASS 
+/root/laxori/pt.sh: line 6: 653556 Aborted                 env -i HOME=/root PATH=/usr/bin:/bin DOTNET_gcServer=${SVR:-1} $gcenv $EXTRA timeout ${TMO:-300} /root/prof/frame-c4/corerun /root/laxori/pt/bin/PrivateTests.dll $t $sc $th > /tmp/pt-$$.txt 2>&1
+bitmap-L2 threads=13: rc=134 timeout: the monitored command dumped core 
+bitmap-L1 threads=1: rc=0 PASS 
+bitmap-L1 threads=2: rc=0 PASS 
+bitmap-L1 threads=4: rc=0 PASS 
+bitmap-L1 threads=8: rc=0 PASS 
+bitmap-L1 threads=13: rc=0 PASS 

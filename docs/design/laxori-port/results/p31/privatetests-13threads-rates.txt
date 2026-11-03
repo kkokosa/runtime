@@ -1,0 +1,7 @@
+laxori-count-L2: 1/12 failed  | /root/laxori/pt.sh: line 6: 663627 Aborted                 env -i HOME=/root PATH=/usr/bin
+laxori-bitmap-L2: 1/12 failed  | /root/laxori/pt.sh: line 6: 685017 Aborted                 env -i HOME=/root PATH=/usr/bin
+lxr-count: 2/12 failed  | /root/laxori/pt.sh: line 6: 691777 Aborted                 env -i HOME=/root PATH=/usr/bin | rc=1
+lxr-bitmap: 4/12 failed  | /root/laxori/pt.sh: line 6: 703865 Aborted                 env -i HOME=/root PATH=/usr/bin | rc=1 | /root/laxori/pt.sh: line 6: 714428 Aborted                 env -i HOME=/root PATH=/usr/bin | rc=1
+laxori-count-L1: 6/12 failed  | /root/laxori/pt.sh: line 6: 718529 Aborted                 env -i HOME=/root PATH=/usr/bin | rc=1 | /root/laxori/pt.sh: line 6: 722538 Aborted                 env -i HOME=/root PATH=/usr/bin | /root/laxori/pt.sh: line 6: 722641 Aborted                 env -i HOME=/root PATH=/usr/bin | rc=1 | rc=1
+laxori-bitmap-L1: 2/12 failed  | /root/laxori/pt.sh: line 6: 740055 Aborted                 env -i HOME=/root PATH=/usr/bin | rc=1
+done

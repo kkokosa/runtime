@@ -1,0 +1,5 @@
+Laxori count-plane build, DOTNET_LAXORILookupStats=1, last (cumulative) line of one run per workload, frame-c4, freq=1e9 (ticks are ns)
+binarytrees: pauses=37 calls=74 ticks=3310684 spans=50 checked=782 ; pause_ms=151
+requests:    pauses=18 calls=12 ticks=191599  spans=6  checked=272 ; pause_ms=15
+listsuffix:  pauses=25 calls=96 ticks=350700  spans=6  checked=249 ; pause_ms=387
+mixedmedium: pauses=299 calls=9431 ticks=4473094 spans=6 checked=171 ; pause_ms=524

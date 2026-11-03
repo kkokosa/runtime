@@ -1,0 +1,7 @@
+13-thread PrivateTests (all, scale 2, verifier on), L1 mode (DOTNET_LAXORIEscapedInPlace=0), interleaved by scripts/p13-pair.sh, 20 pairs.
+A = Laxori count-plane build, B = Laxori bitmap build.
+Result: A failed 12/20, B failed 11/20. Every failure is heap-space exhaustion: "Laxori could not take a private region (engine failure 1)",
+"space-pressure collection failed before growth admission (engine failure 1)", "pre-store logging failed ... (engine failure 1)", or a managed
+System.OutOfMemoryException. Same family as the inherited stock-LXR failure of PrivateTests all 2 13.
+Earlier sequential batches (count 12/26, bitmap 3/26 in L1) were machine-load drift: the machine is shared (load average about 10).
+Rates by build, 12 sequential runs each (privatetests-13threads-rates.txt): L2 count 1, L2 bitmap 1, LXR count 2, LXR bitmap 4.

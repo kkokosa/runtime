@@ -1,0 +1,466 @@
+0 binarytrees laxori-walk 1180 68332294 
+0 binarytrees laxori-bitmap 1244 68332294 
+0 binarytrees lxr-walk 1056 68332294 
+0 binarytrees lxr-bitmap 1080 68332294 
+0 requests laxori-walk 321 27134172608 
+0 requests laxori-bitmap 373 27134172608 
+0 requests lxr-walk 453 27134172608 
+0 requests lxr-bitmap 393 27134172608 
+0 listsuffix laxori-walk 1793 159636632672 
+0 listsuffix laxori-bitmap 1677 159636632672 
+0 listsuffix lxr-walk 1370 159636632672 
+0 listsuffix lxr-bitmap 1315 159636632672 
+0 mixedmedium laxori-walk 1499 40586599707 
+0 mixedmedium laxori-bitmap 1636 40586599707 
+0 mixedmedium lxr-walk 1519 40586599707 
+0 mixedmedium lxr-bitmap 1511 40586599707 
+0 losarrays laxori-walk 1211 13936826922 
+0 losarrays laxori-bitmap 1266 13936826922 
+0 losarrays lxr-walk 1266 13936826922 
+0 losarrays lxr-bitmap 1277 13936826922 
+0 mediumarrays laxori-walk 1199 7032863679 
+0 mediumarrays laxori-bitmap 1116 7032863679 
+0 mediumarrays lxr-walk 1020 7032863679 
+0 mediumarrays lxr-bitmap 1012 7032863679 
+1 binarytrees laxori-walk 1138 68332294 
+1 binarytrees laxori-bitmap 1073 68332294 
+1 binarytrees lxr-walk 1020 68332294 
+1 binarytrees lxr-bitmap 1206 68332294 
+1 requests laxori-walk 359 27134172608 
+1 requests laxori-bitmap 330 27134172608 
+1 requests lxr-walk 382 27134172608 
+1 requests lxr-bitmap 386 27134172608 
+1 listsuffix laxori-walk 1639 159636632672 
+1 listsuffix laxori-bitmap 1743 159636632672 
+1 listsuffix lxr-walk 1523 159636632672 
+1 listsuffix lxr-bitmap 1665 159636632672 
+1 mixedmedium laxori-walk 1577 40586599707 
+1 mixedmedium laxori-bitmap 1732 40586599707 
+1 mixedmedium lxr-walk 1576 40586599707 
+1 mixedmedium lxr-bitmap 1525 40586599707 
+1 losarrays laxori-walk 1136 13936826922 
+1 losarrays laxori-bitmap 1246 13936826922 
+1 losarrays lxr-walk 1177 13936826922 
+1 losarrays lxr-bitmap 1215 13936826922 
+1 mediumarrays laxori-walk 1037 7032863679 
+1 mediumarrays laxori-bitmap 1108 7032863679 
+1 mediumarrays lxr-walk 984 7032863679 
+1 mediumarrays lxr-bitmap 1000 7032863679 
+2 binarytrees laxori-walk 1148 68332294 
+2 binarytrees laxori-bitmap 1155 68332294 
+2 binarytrees lxr-walk 1169 68332294 
+2 binarytrees lxr-bitmap 1161 68332294 
+2 requests laxori-walk 334 27134172608 
+2 requests laxori-bitmap 312 27134172608 
+2 requests lxr-walk 372 27134172608 
+2 requests lxr-bitmap 376 27134172608 
+2 listsuffix laxori-walk 1676 159636632672 
+2 listsuffix laxori-bitmap 1662 159636632672 
+2 listsuffix lxr-walk 1402 159636632672 
+2 listsuffix lxr-bitmap 1438 159636632672 
+2 mixedmedium laxori-walk 1473 40586599707 
+2 mixedmedium laxori-bitmap 1553 40586599707 
+2 mixedmedium lxr-walk 1518 40586599707 
+2 mixedmedium lxr-bitmap 1473 40586599707 
+2 losarrays laxori-walk 1152 13936826922 
+2 losarrays laxori-bitmap 1240 13936826922 
+2 losarrays lxr-walk 1146 13936826922 
+2 losarrays lxr-bitmap 1228 13936826922 
+2 mediumarrays laxori-walk 1100 7032863679 
+2 mediumarrays laxori-bitmap 1163 7032863679 
+2 mediumarrays lxr-walk 1010 7032863679 
+2 mediumarrays lxr-bitmap 1022 7032863679 
+3 binarytrees laxori-walk 1138 68332294 
+3 binarytrees laxori-bitmap 1058 68332294 
+3 binarytrees lxr-walk 1190 68332294 
+3 binarytrees lxr-bitmap 1102 68332294 
+3 requests laxori-walk 375 27134172608 
+3 requests laxori-bitmap 374 27134172608 
+3 requests lxr-walk 373 27134172608 
+3 requests lxr-bitmap 380 27134172608 
+3 listsuffix laxori-walk 1779 159636632672 
+3 listsuffix laxori-bitmap 2148 159636632672 
+3 listsuffix lxr-walk 1720 159636632672 
+3 listsuffix lxr-bitmap 1683 159636632672 
+3 mixedmedium laxori-walk 1656 40586599707 
+3 mixedmedium laxori-bitmap 1608 40586599707 
+3 mixedmedium lxr-walk 1527 40586599707 
+3 mixedmedium lxr-bitmap 1837 40586599707 
+3 losarrays laxori-walk 1373 13936826922 
+3 losarrays laxori-bitmap 1524 13936826922 
+3 losarrays lxr-walk 1248 13936826922 
+3 losarrays lxr-bitmap 1295 13936826922 
+3 mediumarrays laxori-walk 1121 7032863679 
+3 mediumarrays laxori-bitmap 1056 7032863679 
+3 mediumarrays lxr-walk 1047 7032863679 
+3 mediumarrays lxr-bitmap 1027 7032863679 
+4 binarytrees laxori-walk 1132 68332294 
+4 binarytrees laxori-bitmap 1113 68332294 
+4 binarytrees lxr-walk 1191 68332294 
+4 binarytrees lxr-bitmap 1155 68332294 
+4 requests laxori-walk 330 27134172608 
+4 requests laxori-bitmap 354 27134172608 
+4 requests lxr-walk 374 27134172608 
+4 requests lxr-bitmap 397 27134172608 
+4 listsuffix laxori-walk 1567 159636632672 
+4 listsuffix laxori-bitmap 1646 159636632672 
+4 listsuffix lxr-walk 1340 159636632672 
+4 listsuffix lxr-bitmap 1383 159636632672 
+4 mixedmedium laxori-walk 1499 40586599707 
+4 mixedmedium laxori-bitmap 1730 40586599707 
+4 mixedmedium lxr-walk 1456 40586599707 
+4 mixedmedium lxr-bitmap 1532 40586599707 
+4 losarrays laxori-walk 1175 13936826922 
+4 losarrays laxori-bitmap 1228 13936826922 
+4 losarrays lxr-walk 1169 13936826922 
+4 losarrays lxr-bitmap 1232 13936826922 
+4 mediumarrays laxori-walk 1107 7032863679 
+4 mediumarrays laxori-bitmap 1055 7032863679 
+4 mediumarrays lxr-walk 983 7032863679 
+4 mediumarrays lxr-bitmap 1004 7032863679 
+5 binarytrees laxori-walk 1100 68332294 
+5 binarytrees laxori-bitmap 1179 68332294 
+5 binarytrees lxr-walk 1153 68332294 
+5 binarytrees lxr-bitmap 1294 68332294 
+5 requests laxori-walk 337 27134172608 
+5 requests laxori-bitmap 353 27134172608 
+5 requests lxr-walk 381 27134172608 
+5 requests lxr-bitmap 405 27134172608 
+5 listsuffix laxori-walk 1574 159636632672 
+5 listsuffix laxori-bitmap 1784 159636632672 
+5 listsuffix lxr-walk 1410 159636632672 
+5 listsuffix lxr-bitmap 1339 159636632672 
+5 mixedmedium laxori-walk 1509 40586599707 
+5 mixedmedium laxori-bitmap 1574 40586599707 
+5 mixedmedium lxr-walk 1580 40586599707 
+5 mixedmedium lxr-bitmap 1495 40586599707 
+5 losarrays laxori-walk 1247 13936826922 
+5 losarrays laxori-bitmap 1294 13936826922 
+5 losarrays lxr-walk 1212 13936826922 
+5 losarrays lxr-bitmap 1251 13936826922 
+5 mediumarrays laxori-walk 1095 7032863679 
+5 mediumarrays laxori-bitmap 1205 7032863679 
+5 mediumarrays lxr-walk 1073 7032863679 
+5 mediumarrays lxr-bitmap 1083 7032863679 
+6 binarytrees laxori-walk 1093 68332294 
+6 binarytrees laxori-bitmap 1103 68332294 
+6 binarytrees lxr-walk 1056 68332294 
+6 binarytrees lxr-bitmap 1197 68332294 
+6 requests laxori-walk 322 27134172608 
+6 requests laxori-bitmap 347 27134172608 
+6 requests lxr-walk 380 27134172608 
+6 requests lxr-bitmap 401 27134172608 
+6 listsuffix laxori-walk 1632 159636632672 
+6 listsuffix laxori-bitmap 1585 159636632672 
+6 listsuffix lxr-walk 1307 159636632672 
+6 listsuffix lxr-bitmap 1290 159636632672 
+6 mixedmedium laxori-walk 1457 40586599707 
+6 mixedmedium laxori-bitmap 1771 40586599707 
+6 mixedmedium lxr-walk 1456 40586599707 
+6 mixedmedium lxr-bitmap 2248 40586599707 
+6 losarrays laxori-walk 1795 13936826922 
+6 losarrays laxori-bitmap 1705 13936826922 
+6 losarrays lxr-walk 1449 13936826922 
+6 losarrays lxr-bitmap 1475 13936826922 
+6 mediumarrays laxori-walk 1243 7032863679 
+6 mediumarrays laxori-bitmap 1199 7032863679 
+6 mediumarrays lxr-walk 1045 7032863679 
+6 mediumarrays lxr-bitmap 1156 7032863679 
+7 binarytrees laxori-walk 1222 68332294 
+7 binarytrees laxori-bitmap 1125 68332294 
+7 binarytrees lxr-walk 1144 68332294 
+7 binarytrees lxr-bitmap 1226 68332294 
+7 requests laxori-walk 430 27134172608 
+7 requests laxori-bitmap 362 27134172608 
+7 requests lxr-walk 402 27134172608 
+7 requests lxr-bitmap 553 27134172608 
+7 listsuffix laxori-walk 1968 159636632672 
+7 listsuffix laxori-bitmap 2094 159636632672 
+7 listsuffix lxr-walk 1455 159636632672 
+7 listsuffix lxr-bitmap 1461 159636632672 
+7 mixedmedium laxori-walk 1694 40586599707 
+7 mixedmedium laxori-bitmap 1951 40586599707 
+7 mixedmedium lxr-walk 1818 40586599707 
+7 mixedmedium lxr-bitmap 1836 40586599707 
+7 losarrays laxori-walk 1594 13936826922 
+7 losarrays laxori-bitmap 1418 13936826922 
+7 losarrays lxr-walk 1465 13936826922 
+7 losarrays lxr-bitmap 1632 13936826922 
+7 mediumarrays laxori-walk 1204 7032863679 
+7 mediumarrays laxori-bitmap 1204 7032863679 
+7 mediumarrays lxr-walk 1412 7032863679 
+7 mediumarrays lxr-bitmap 1347 7032863679 
+8 binarytrees laxori-walk 1153 68332294 
+8 binarytrees laxori-bitmap 1209 68332294 
+8 binarytrees lxr-walk 1073 68332294 
+8 binarytrees lxr-bitmap 1065 68332294 
+8 requests laxori-walk 349 27134172608 
+8 requests laxori-bitmap 342 27134172608 
+8 requests lxr-walk 415 27134172608 
+8 requests lxr-bitmap 405 27134172608 
+8 listsuffix laxori-walk 1688 159636632672 
+8 listsuffix laxori-bitmap 1667 159636632672 
+8 listsuffix lxr-walk 1464 159636632672 
+8 listsuffix lxr-bitmap 1556 159636632672 
+8 mixedmedium laxori-walk 1535 40586599707 
+8 mixedmedium laxori-bitmap 1696 40586599707 
+8 mixedmedium lxr-walk 1482 40586599707 
+8 mixedmedium lxr-bitmap 1639 40586599707 
+8 losarrays laxori-walk 1195 13936826922 
+8 losarrays laxori-bitmap 1573 13936826922 
+8 losarrays lxr-walk 1501 13936826922 
+8 losarrays lxr-bitmap 1541 13936826922 
+8 mediumarrays laxori-walk 1059 7032863679 
+8 mediumarrays laxori-bitmap 1084 7032863679 
+8 mediumarrays lxr-walk 1021 7032863679 
+8 mediumarrays lxr-bitmap 1010 7032863679 
+9 binarytrees laxori-walk 1273 68332294 
+9 binarytrees laxori-bitmap 1099 68332294 
+9 binarytrees lxr-walk 1168 68332294 
+9 binarytrees lxr-bitmap 1129 68332294 
+9 requests laxori-walk 321 27134172608 
+9 requests laxori-bitmap 321 27134172608 
+9 requests lxr-walk 400 27134172608 
+9 requests lxr-bitmap 385 27134172608 
+9 listsuffix laxori-walk 1559 159636632672 
+9 listsuffix laxori-bitmap 1653 159636632672 
+9 listsuffix lxr-walk 1290 159636632672 
+9 listsuffix lxr-bitmap 1304 159636632672 
+9 mixedmedium laxori-walk 1501 40586599707 
+9 mixedmedium laxori-bitmap 1562 40586599707 
+9 mixedmedium lxr-walk 1564 40586599707 
+9 mixedmedium lxr-bitmap 1449 40586599707 
+9 losarrays laxori-walk 1523 13936826922 
+9 losarrays laxori-bitmap 1522 13936826922 
+9 losarrays lxr-walk 1312 13936826922 
+9 losarrays lxr-bitmap 1359 13936826922 
+9 mediumarrays laxori-walk 1336 7032863679 
+9 mediumarrays laxori-bitmap 1149 7032863679 
+9 mediumarrays lxr-walk 1040 7032863679 
+9 mediumarrays lxr-bitmap 1121 7032863679 
+10 binarytrees laxori-walk 1116 68332294 
+10 binarytrees laxori-bitmap 1179 68332294 
+10 binarytrees lxr-walk 1363 68332294 
+10 binarytrees lxr-bitmap 1242 68332294 
+10 requests laxori-walk 330 27134172608 
+10 requests laxori-bitmap 394 27134172608 
+10 requests lxr-walk 379 27134172608 
+10 requests lxr-bitmap 398 27134172608 
+10 listsuffix laxori-walk 1587 159636632672 
+10 listsuffix laxori-bitmap 1676 159636632672 
+10 listsuffix lxr-walk 1463 159636632672 
+10 listsuffix lxr-bitmap 1556 159636632672 
+10 mixedmedium laxori-walk 1736 40586599707 
+10 mixedmedium laxori-bitmap 1940 40586599707 
+10 mixedmedium lxr-walk 1551 40586599707 
+10 mixedmedium lxr-bitmap 1605 40586599707 
+10 losarrays laxori-walk 1648 13936826922 
+10 losarrays laxori-bitmap 1369 13936826922 
+10 losarrays lxr-walk 1260 13936826922 
+10 losarrays lxr-bitmap 1249 13936826922 
+10 mediumarrays laxori-walk 1033 7032863679 
+10 mediumarrays laxori-bitmap 1052 7032863679 
+10 mediumarrays lxr-walk 984 7032863679 
+10 mediumarrays lxr-bitmap 1076 7032863679 
+11 binarytrees laxori-walk 1203 68332294 
+11 binarytrees laxori-bitmap 1102 68332294 
+11 binarytrees lxr-walk 1229 68332294 
+11 binarytrees lxr-bitmap 1188 68332294 
+11 requests laxori-walk 335 27134172608 
+11 requests laxori-bitmap 318 27134172608 
+11 requests lxr-walk 403 27134172608 
+11 requests lxr-bitmap 371 27134172608 
+11 listsuffix laxori-walk 1490 159636632672 
+11 listsuffix laxori-bitmap 1501 159636632672 
+11 listsuffix lxr-walk 1284 159636632672 
+11 listsuffix lxr-bitmap 1282 159636632672 
+11 mixedmedium laxori-walk 1457 40586599707 
+11 mixedmedium laxori-bitmap 1552 40586599707 
+11 mixedmedium lxr-walk 1505 40586599707 
+11 mixedmedium lxr-bitmap 1449 40586599707 
+11 losarrays laxori-walk 1120 13936826922 
+11 losarrays laxori-bitmap 1205 13936826922 
+11 losarrays lxr-walk 1168 13936826922 
+11 losarrays lxr-bitmap 1235 13936826922 
+11 mediumarrays laxori-walk 1038 7032863679 
+11 mediumarrays laxori-bitmap 1071 7032863679 
+11 mediumarrays lxr-walk 1011 7032863679 
+11 mediumarrays lxr-bitmap 1007 7032863679 
+12 binarytrees laxori-walk 1081 68332294 
+12 binarytrees laxori-bitmap 1049 68332294 
+12 binarytrees lxr-walk 1191 68332294 
+12 binarytrees lxr-bitmap 1113 68332294 
+12 requests laxori-walk 360 27134172608 
+12 requests laxori-bitmap 319 27134172608 
+12 requests lxr-walk 364 27134172608 
+12 requests lxr-bitmap 357 27134172608 
+12 listsuffix laxori-walk 1549 159636632672 
+12 listsuffix laxori-bitmap 1496 159636632672 
+12 listsuffix lxr-walk 1421 159636632672 
+12 listsuffix lxr-bitmap 1371 159636632672 
+12 mixedmedium laxori-walk 1444 40586599707 
+12 mixedmedium laxori-bitmap 1531 40586599707 
+12 mixedmedium lxr-walk 1374 40586599707 
+12 mixedmedium lxr-bitmap 1440 40586599707 
+12 losarrays laxori-walk 1173 13936826922 
+12 losarrays laxori-bitmap 1316 13936826922 
+12 losarrays lxr-walk 1589 13936826922 
+12 losarrays lxr-bitmap 1335 13936826922 
+12 mediumarrays laxori-walk 1075 7032863679 
+12 mediumarrays laxori-bitmap 1029 7032863679 
+12 mediumarrays lxr-walk 993 7032863679 
+12 mediumarrays lxr-bitmap 1064 7032863679 
+13 binarytrees laxori-walk 1143 68332294 
+13 binarytrees laxori-bitmap 1293 68332294 
+13 binarytrees lxr-walk 1066 68332294 
+13 binarytrees lxr-bitmap 1122 68332294 
+13 requests laxori-walk 435 27134172608 
+13 requests laxori-bitmap 435 27134172608 
+13 requests lxr-walk 567 27134172608 
+13 requests lxr-bitmap 497 27134172608 
+13 listsuffix laxori-walk 1856 159636632672 
+13 listsuffix laxori-bitmap 1873 159636632672 
+13 listsuffix lxr-walk 1414 159636632672 
+13 listsuffix lxr-bitmap 1500 159636632672 
+13 mixedmedium laxori-walk 1920 40586599707 
+13 mixedmedium laxori-bitmap 1828 40586599707 
+13 mixedmedium lxr-walk 1702 40586599707 
+13 mixedmedium lxr-bitmap 2077 40586599707 
+13 losarrays laxori-walk 1727 13936826922 
+13 losarrays laxori-bitmap 1541 13936826922 
+13 losarrays lxr-walk 2312 13936826922 
+13 losarrays lxr-bitmap 1776 13936826922 
+13 mediumarrays laxori-walk 1323 7032863679 
+13 mediumarrays laxori-bitmap 1343 7032863679 
+13 mediumarrays lxr-walk 1345 7032863679 
+13 mediumarrays lxr-bitmap 1344 7032863679 
+14 binarytrees laxori-walk 1419 68332294 
+14 binarytrees laxori-bitmap 1373 68332294 
+14 binarytrees lxr-walk 1232 68332294 
+14 binarytrees lxr-bitmap 1273 68332294 
+14 requests laxori-walk 459 27134172608 
+14 requests laxori-bitmap 469 27134172608 
+14 requests lxr-walk 667 27134172608 
+14 requests lxr-bitmap 602 27134172608 
+14 listsuffix laxori-walk 2707 159636632672 
+14 listsuffix laxori-bitmap 2104 159636632672 
+14 listsuffix lxr-walk 1685 159636632672 
+14 listsuffix lxr-bitmap 1727 159636632672 
+14 mixedmedium laxori-walk 1825 40586599707 
+14 mixedmedium laxori-bitmap 2005 40586599707 
+14 mixedmedium lxr-walk 1799 40586599707 
+14 mixedmedium lxr-bitmap 1777 40586599707 
+14 losarrays laxori-walk 1607 13936826922 
+14 losarrays laxori-bitmap 1641 13936826922 
+14 losarrays lxr-walk 1455 13936826922 
+14 losarrays lxr-bitmap 1629 13936826922 
+14 mediumarrays laxori-walk 1177 7032863679 
+14 mediumarrays laxori-bitmap 1224 7032863679 
+14 mediumarrays lxr-walk 1193 7032863679 
+14 mediumarrays lxr-bitmap 1242 7032863679 
+15 binarytrees laxori-walk 1418 68332294 
+15 binarytrees laxori-bitmap 1440 68332294 
+15 binarytrees lxr-walk 1394 68332294 
+15 binarytrees lxr-bitmap 1454 68332294 
+15 requests laxori-walk 390 27134172608 
+15 requests laxori-bitmap 403 27134172608 
+15 requests lxr-walk 444 27134172608 
+15 requests lxr-bitmap 546 27134172608 
+15 listsuffix laxori-walk 1908 159636632672 
+15 listsuffix laxori-bitmap 2120 159636632672 
+15 listsuffix lxr-walk 1564 159636632672 
+15 listsuffix lxr-bitmap 1466 159636632672 
+15 mixedmedium laxori-walk 1656 40586599707 
+15 mixedmedium laxori-bitmap 1712 40586599707 
+15 mixedmedium lxr-walk 1755 40586599707 
+15 mixedmedium lxr-bitmap 2267 40586599707 
+15 losarrays laxori-walk 1934 13936826922 
+15 losarrays laxori-bitmap 1754 13936826922 
+15 losarrays lxr-walk 1713 13936826922 
+15 losarrays lxr-bitmap 2004 13936826922 
+15 mediumarrays laxori-walk 1426 7032863679 
+15 mediumarrays laxori-bitmap 1690 7032863679 
+15 mediumarrays lxr-walk 1330 7032863679 
+15 mediumarrays lxr-bitmap 1179 7032863679 
+16 binarytrees laxori-walk 1263 68332294 
+16 binarytrees laxori-bitmap 1410 68332294 
+16 binarytrees lxr-walk 1223 68332294 
+16 binarytrees lxr-bitmap 1359 68332294 
+16 requests laxori-walk 746 27134172608 
+16 requests laxori-bitmap 529 27134172608 
+16 requests lxr-walk 532 27134172608 
+16 requests lxr-bitmap 483 27134172608 
+16 listsuffix laxori-walk 2025 159636632672 
+16 listsuffix laxori-bitmap 1977 159636632672 
+16 listsuffix lxr-walk 1970 159636632672 
+16 listsuffix lxr-bitmap 1689 159636632672 
+16 mixedmedium laxori-walk 1773 40586599707 
+16 mixedmedium laxori-bitmap 2134 40586599707 
+16 mixedmedium lxr-walk 1741 40586599707 
+16 mixedmedium lxr-bitmap 1874 40586599707 
+16 losarrays laxori-walk 1605 13936826922 
+16 losarrays laxori-bitmap 1649 13936826922 
+16 losarrays lxr-walk 1703 13936826922 
+16 losarrays lxr-bitmap 1732 13936826922 
+16 mediumarrays laxori-walk 1455 7032863679 
+16 mediumarrays laxori-bitmap 1238 7032863679 
+16 mediumarrays lxr-walk 1502 7032863679 
+16 mediumarrays lxr-bitmap 1401 7032863679 
+
+medians: wall ms / cpu ms / pause ms / peak RSS MB / collections
+binarytrees  laxori-walk       1148    2663    120    199    44 n=17 bad=0
+binarytrees  laxori-bitmap     1155    2676    113    201    43 n=17 bad=0
+binarytrees  lxr-walk          1169    2654    140    197    89 n=17 bad=0
+binarytrees  lxr-bitmap        1188    2897    155    202    90 n=17 bad=0
+requests     laxori-walk        349     425     10    165    27 n=17 bad=0
+requests     laxori-bitmap      354     456     11    167    27 n=17 bad=0
+requests     lxr-walk           400     535     33    171    93 n=17 bad=0
+requests     lxr-bitmap         398     554     33    173    91 n=17 bad=0
+listsuffix   laxori-walk       1676    5255    232    203    32 n=17 bad=0
+listsuffix   laxori-bitmap     1677    5800    253    205    32 n=17 bad=0
+listsuffix   lxr-walk          1421    4001    201    199    35 n=17 bad=0
+listsuffix   lxr-bitmap        1461    4298    212    201    35 n=17 bad=0
+mixedmedium  laxori-walk       1535    2698    216    195   335 n=17 bad=0
+mixedmedium  laxori-bitmap     1712    2940    250    197   326 n=17 bad=0
+mixedmedium  lxr-walk          1551    2717    224    193   332 n=17 bad=0
+mixedmedium  lxr-bitmap        1605    2877    228    195   330 n=17 bad=0
+losarrays    laxori-walk       1373    2677    602    107   294 n=17 bad=0
+losarrays    laxori-bitmap     1418    2835    590    111   256 n=17 bad=0
+losarrays    lxr-walk          1312    2630    577    106   288 n=17 bad=0
+losarrays    lxr-bitmap        1335    2694    568    110   234 n=17 bad=0
+mediumarrays laxori-walk       1121    1919    103    486    81 n=17 bad=0
+mediumarrays laxori-bitmap     1149    1976    106    492    80 n=17 bad=0
+mediumarrays lxr-walk          1040    1834     92    483    70 n=17 bad=0
+mediumarrays lxr-bitmap        1076    1913    100    489    69 n=17 bad=0
+
+paired difference (A-B)/B in percent, A=laxori-walk B=laxori-bitmap: median [min .. max], reps where A is lower
+binarytrees  | wall ms   -0.6 [-11.6..+15.8] 9/17 | cpu ms   -1.3 [-31.3..+36.3] 9/17 | pause ms   +3.4 [-37.8..+75.3] 8/17 | rss MB   -2.0 [ -5.8.. +8.2] 10/17
+requests     | wall ms   +0.2 [-16.3..+40.9] 7/17 | cpu ms   -2.5 [-22.1..+30.6] 10/17 | pause ms   -4.3 [-49.4..+263.7] 9/17 | rss MB   -0.9 [ -1.7.. -0.1] 17/17
+listsuffix   | wall ms   -0.9 [-17.2..+28.6] 10/17 | cpu ms   -9.9 [-18.2..+15.3] 15/17 | pause ms   -6.9 [-28.4..+18.1] 13/17 | rss MB   -1.1 [ -1.7.. +0.1] 16/17
+mixedmedium  | wall ms   -8.3 [-17.7.. +5.0] 15/17 | cpu ms   -6.9 [-18.2.. +2.4] 16/17 | pause ms  -10.2 [-26.2..+13.4] 14/17 | rss MB   -1.1 [ -1.8.. +0.0] 16/17
+losarrays    | wall ms   -3.7 [-24.0..+20.4] 11/17 | cpu ms   -2.9 [-15.6..+10.1] 12/17 | pause ms   -2.9 [-21.9..+25.1] 12/17 | rss MB   -3.5 [ -4.1.. -3.3] 17/17
+mediumarrays | wall ms   -1.4 [-15.7..+17.5] 9/17 | cpu ms   -2.1 [-19.0..+13.6] 10/17 | pause ms   -1.6 [-17.5..+30.2] 11/17 | rss MB   -1.3 [ -1.7.. -1.2] 17/17
+
+paired difference (A-B)/B in percent, A=laxori-walk B=lxr-walk: median [min .. max], reps where A is lower
+binarytrees  | wall ms   +3.2 [-18.1..+15.2] 7/17 | cpu ms   +1.1 [-34.9..+86.0] 8/17 | pause ms  -14.5 [-42.8..+64.6] 12/17 | rss MB   -2.5 [ -6.6..+10.3] 10/17
+requests     | wall ms  -12.2 [-31.1..+40.2] 14/17 | cpu ms  -19.5 [-39.1..+24.5] 16/17 | pause ms  -67.1 [-84.4..-47.7] 17/17 | rss MB   -3.3 [ -4.2.. -1.3] 17/17
+listsuffix   | wall ms  +17.0 [ +2.8..+60.6] 0/17 | cpu ms  +31.8 [+16.4..+79.8] 0/17 | pause ms  +25.1 [ -1.2..+78.1] 1/17 | rss MB   +1.9 [ -0.3.. +3.2] 3/17
+mixedmedium  | wall ms   +0.1 [ -6.8..+12.8] 7/17 | cpu ms   +0.1 [ -6.7.. +7.0] 8/17 | pause ms   -1.7 [-15.4..+22.3] 10/17 | rss MB   +0.9 [ +0.0.. +1.2] 0/17
+losarrays    | wall ms   +0.5 [-26.2..+30.8] 7/17 | cpu ms   +2.2 [-19.8..+12.6] 8/17 | pause ms   +0.2 [-34.8..+37.1] 8/17 | rss MB   +0.5 [ +0.0.. +1.0] 0/17
+mediumarrays | wall ms   +5.3 [-14.7..+28.4] 4/17 | cpu ms   +2.4 [ -7.8..+17.2] 2/17 | pause ms   +9.2 [-11.6..+58.3] 3/17 | rss MB   +0.6 [ +0.2.. +0.7] 0/17
+
+paired difference (A-B)/B in percent, A=lxr-walk B=lxr-bitmap: median [min .. max], reps where A is lower
+binarytrees  | wall ms   -2.2 [-15.4.. +9.7] 9/17 | cpu ms   -7.8 [-57.1..+45.5] 9/17 | pause ms   -9.2 [-60.0..+38.7] 12/17 | rss MB   -0.6 [ -8.3.. +3.5] 9/17
+requests     | wall ms   -0.8 [-27.2..+15.3] 9/17 | cpu ms   -2.8 [-19.3..+11.9] 10/17 | pause ms   -3.9 [-48.8..+19.2] 11/17 | rss MB   -1.0 [ -2.5.. +0.1] 16/17
+listsuffix   | wall ms   -0.4 [ -8.5..+16.6] 9/17 | cpu ms   -6.5 [-21.2..+10.6] 13/17 | pause ms   -5.2 [-24.0..+18.3] 12/17 | rss MB   -1.3 [ -3.9.. +1.3] 12/17
+mixedmedium  | wall ms   -3.4 [-35.2.. +8.0] 10/17 | cpu ms   -4.8 [-31.9.. +7.6] 11/17 | pause ms   -2.0 [-45.5..+11.2] 9/17 | rss MB   -1.0 [ -1.3.. +0.1] 16/17
+losarrays    | wall ms   -3.2 [-14.5..+30.2] 14/17 | cpu ms   -3.1 [-10.6..+30.3] 14/17 | pause ms   -4.7 [-17.8..+28.4] 13/17 | rss MB   -3.5 [ -4.0.. -3.2] 17/17
+mediumarrays | wall ms   -0.9 [ -9.6..+12.8] 9/17 | cpu ms   -1.9 [ -9.2.. +8.7] 12/17 | pause ms   -0.2 [-19.4..+16.4] 10/17 | rss MB   -1.3 [ -1.3.. -1.2] 17/17
+
+paired difference (A-B)/B in percent, A=laxori-bitmap B=lxr-bitmap: median [min .. max], reps where A is lower
+binarytrees  | wall ms   -3.7 [-11.0..+15.3] 12/17 | cpu ms  -13.7 [-42.3..+35.7] 11/17 | pause ms  -26.8 [-55.1..+20.5] 13/17 | rss MB   -1.3 [ -8.2.. +5.5] 9/17
+requests     | wall ms  -13.4 [-34.5.. +9.6] 16/17 | cpu ms  -21.8 [-37.9.. -2.3] 17/17 | pause ms  -69.1 [-90.0..-58.5] 17/17 | rss MB   -3.4 [ -5.3.. -2.0] 17/17
+listsuffix   | wall ms  +21.8 [ +4.7..+44.6] 0/17 | cpu ms  +35.8 [+13.1..+54.9] 0/17 | pause ms  +18.6 [ -2.1..+56.0] 2/17 | rss MB   +1.4 [ -0.5.. +2.9] 2/17
+mixedmedium  | wall ms   +6.3 [-24.5..+20.9] 4/17 | cpu ms   +4.6 [-18.1..+15.7] 5/17 | pause ms   +7.9 [-35.6..+32.1] 4/17 | rss MB   +0.9 [ -0.0.. +1.2] 1/17
+losarrays    | wall ms   +0.7 [-13.2..+17.7] 8/17 | cpu ms   -1.1 [ -8.9.. +8.9] 11/17 | pause ms   -1.6 [-18.7..+26.5] 11/17 | rss MB   +0.5 [ +0.2.. +1.1] 0/17
+mediumarrays | wall ms   +3.7 [-11.6..+43.3] 6/17 | cpu ms   +3.4 [ -8.9..+37.3] 6/17 | pause ms   +8.3 [ -8.4..+61.2] 6/17 | rss MB   +0.6 [ +0.5.. +0.7] 0/17

@@ -15,6 +15,7 @@ with `DOTNET_GCPath`.
 | L2 escaped objects stay in place, regions with escapes are reused, escape limit | Done, **default**, stable in the tests and in 126 hunt runs. `DOTNET_LAXORIEscapedInPlace=0` gives L1. |
 | Speed | **No wall-time gain.** CPU and pauses fall on `requests` and `binarytrees`; `listsuffix` is 25 to 29 percent slower; the other workloads are equal to LXR. |
 | Cycle recovery by trial deletion (item i of the description) | **Not implemented.** The shared heap uses the LXR trace (inherited). |
+| P31 count-plane object starts (port of LXR a3a225d40a9) | Done, **default**. Bitmap build kept as `libclrlaxorigc-bitmap.so`. See "Update: P31" below. |
 
 ## Update: thread-local GC cost diagnosis and fix (see `results/TLGC-DIAGNOSIS.md`)
 
@@ -24,6 +25,69 @@ sync blocks (41 to 86 percent of a collection). Fixed by escaping at sync-block 
 1072) against 1127 / 3266, `listsuffix` 1616 against 1331 (still +21 percent), the others equal to LXR. Hunts with the fixed build: L1 126 of 126, L2 126 of 126.
 **New known issue (inherited):** the stock LXR engine fails `PrivateTests all 2 13` in 10 of 20 runs (`space-pressure collection failed`, engine failure 1);
 Laxori fails it in about 1 of 6 runs with the private tier on and in 5 of 20 with it off. The numbers in sections 3 and 5 below are from before the fix.
+
+## Update: P31 count-plane object starts (port of LXR `lxr-gc-review` a3a225d40a9; results in `results/p31/`)
+
+The engine now finds the start of a mature object from the COUNT plane, not from the ValidObject plane (macro `LAXORI_OBJECT_START_WALK`).
+It is the **default** build. The old ValidObject build is the second library `libclrlaxorigc-bitmap.so` (CMake target `clrlaxorigc_bitmap`;
+`CLR_CMAKE_LAXORI_OBJECT_START_BITMAP=ON` makes the bitmap build the default one, `CLR_CMAKE_LAXORI_BUILD_BITMAP_VARIANT=OFF` skips the
+second library). `DOTNET_LAXORILookupStats=1` prints lookup counters per pause. The LXR P31 design is in
+`docs/design/lxr-port/P31-object-start-walk/DESIGN.md` on `lxr-gc-review`.
+
+How the three Laxori points were handled (reviewed in the code; no Laxori-specific code change was needed):
+1. Private objects are not counted. The blocks of a region are fresh clean blocks (zero counts, straddle and unlog bits), so a count scan finds
+   nothing there. Region lookups keep using the region owner structures and the private index. Outside a pause,
+   `GetContainingObject` still returns null for a private address (same in both variants, as before).
+2. A dissolved region becomes one young span per live stretch (`CloseRegionSpan` in `FlushMutators`) before roots are scanned. In
+   `FindContainingObjectCore` the span walk runs before the count scan, so byref and pinned roots into a dissolved region are found.
+   The young pinned span is closed with `ClosePinnedSpan`.
+3. Escaped objects have no count and unlog bits 0. `FindInYoungSpans` never returns a free object. Laxori does not put free objects into regions any more.
+
+What was run (final build, commit `0f91534`):
+
+| Check | Result |
+|---|---|
+| 10 native engine programs (p2.1 to p2.5, p3.1 to p3.4, p4), count build and bitmap build | All pass (`native-validate-*.txt`). P4 has 105380 checks, `--object-start` 4279 of 4279 in both builds. The one `FAIL` line in each file is `--zero-rc-control`, which is expected to fail. |
+| Digests of the cycle sweep and heap walk, count against bitmap | Equal (5 lines). |
+| Mutation controls of the walk (`WalkNoContinuationSkip`, `WalkOneWord`, `WalkNoExtent`, `WalkNoPinnedSpan`, `WalkTrustedResolve`, `WalkEnumContinuation`, P2.4 `WalkWriteValid`) | All detected. |
+| Native barrier test | ALL PASSED. |
+| `InteriorStress` (managed byrefs, Span, fixed, across GCs), 8 threads x 2000 and 13 x 1500 | PASS on both builds, 0 failures. |
+| `PrivateTests all 2` with verifier, 1/2/4/8/13 threads, L2 and L1, both builds | 1, 2, 4 and 8 threads: pass in all four cells. 13 threads: some runs fail with heap exhaustion (engine failure 1), see below. |
+| Managed mutation controls 1, 2, 3, 4, 7 (count build) | All detected (abort or crash). `PrivateTests trace` passes. |
+| Crash hunt (verifier on, 13/3, 4/2 and 1/1 workers, five workloads and PrivateTests) | 180 of 180 OK: L2 count 54, L2 bitmap 54, L1 count 36, L1 bitmap 36. This is smaller than the 126-run hunts of earlier milestones. |
+
+**13 threads.** `PrivateTests all 2 13` fails with heap exhaustion in a share of the runs on every build, including LXR (inherited issue, see
+the update above). 12 sequential runs each: Laxori L2 count 1 and bitmap 1, LXR count 2 and bitmap 4. In L1 mode the rate is high on both builds
+(interleaved, 20 pairs: count 12, bitmap 11; an earlier sequential batch looked different, but it was load drift on the shared machine).
+It is not a regression of the port. It is not fixed.
+
+**Benchmark** (17 interleaved runs, six workloads, frame-c4, `flock /tmp/lxr-bench.lock`, all 408 checksums right, `results/p31/bench-p31.txt`,
+`scripts/bench3.py`). The machine was shared and loaded (load average about 10), so single runs vary by tens of percent; the paired
+differences are the evidence. LXR here is the P31 pair `/root/p31/so/libclrlxrgc-walk.so` (count) and `-base.so` (bitmap), not the frame's old `libclrlxrgc.so`.
+Median of the paired difference (A-B)/B in percent, and in how many of 17 runs A was lower:
+
+| Workload | Laxori count vs Laxori bitmap: wall / CPU | LXR count vs LXR bitmap: wall / CPU | Laxori count vs LXR count: wall / CPU / pause |
+|---|---|---|---|
+| binarytrees | -0.6 (9/17) / -1.3 (9/17) | -2.2 (9/17) / -7.8 (9/17) | +3.2 / +1.1 / -14.5 |
+| requests | +0.2 (7/17) / -2.5 (10/17) | -0.8 (9/17) / -2.8 (10/17) | -12.2 / -19.5 / -67.1 |
+| listsuffix | -0.9 (10/17) / -9.9 (15/17) | -0.4 (9/17) / -6.5 (13/17) | +17.0 / +31.8 / +25.1 |
+| mixedmedium | -8.3 (15/17) / -6.9 (16/17) | -3.4 (10/17) / -4.8 (11/17) | +0.1 / +0.1 / -1.7 |
+| losarrays | -3.7 (11/17) / -2.9 (12/17) | -3.2 (14/17) / -3.1 (14/17) | +0.5 / +2.2 / +0.2 |
+| mediumarrays | -1.4 (9/17) / -2.1 (10/17) | -0.9 (9/17) / -1.9 (12/17) | +5.3 / +2.4 / +9.2 |
+
+Reading: the count plane gives Laxori a small CPU gain, as it does for LXR (clear on `listsuffix`, `mixedmedium`, `losarrays`; the wall gain
+is only clear on `mixedmedium`). Peak RSS is 1 to 3.5 percent lower. The per-run spread is large, so the wall difference on the other
+workloads is within noise. The Laxori-against-LXR picture is unchanged by the port: `requests` gains, `listsuffix` loses 17 to 32 percent, the rest is level.
+The measured gain of the port is smaller than the LXR report (-2.5 to -10 percent CPU) on `binarytrees` and `requests` (cause not measured; a
+likely reason is that fewer objects reach the mature heap there, but this was not checked).
+
+Cost of the span walk that replaces the bitmap for young objects (`results/p31/lookup-stats.txt`): `binarytrees` 50 span walks, 3.3 ms of
+151 ms pause; the other three workloads under 1 percent of pause time. Laxori spans can be up to a region long, but the walks are rare.
+
+Not verified for this port: Windows and ARM64; GC stress; the pinned-object and interior-root paths only through `InteriorStress` and the native
+`--object-start` checks (no separate managed stress with pinned handles inside private regions); `GetContainingObject` for a private object
+outside a pause (null, unchanged); the 126-run hunt size (180 runs were done in total, 36 to 54 per mode and variant); the P31 flaky selectors
+`--mature-released-candidate` and `--p8-storage` were not run in a loop; the 13-thread heap exhaustion is not fixed.
 
 ## 1. Build and run
 
