@@ -300,3 +300,67 @@ Control: the stock `frame-c4` library against the default variant of this tree g
 - A literal heap walk was not made correct without a new invariant (filler objects or a first-object index) that costs at least as much as the bitmap. See sections 3 and 4. The walk variant uses the count plane and young spans.
 - Young pinned objects are found only inside a pause (through the pinned span). In the base variant the bit finds them at once. Young objects are not found outside a pause in either variant.
 - The ValidObject plane is not committed in the walk variant (1/64 of the heap less native plane memory).
+
+## 9. A literal heap walk as a possible third variant: what exists and what is missing
+
+Decision (user, confirmed through the roadmap session): use the count-plane alternative (sections 3 (F), 4) to remove the
+ValidObject bits. A literal walk (stock CoreCLR style: brick or index entry, then step by object size over parsable objects) is
+NOT built. This section says exactly what exists and what a literal walk needs, so the decision can be explained and, if needed,
+reversed.
+
+### 9.1 Swap points that exist
+
+The lookup is behind these functions only. A third variant needs changes inside them and in their helpers, not in the callers:
+
+* `FindContainingObject` (wrapper with counters) and `FindContainingObjectCore`: interior pointer to object start.
+* `IsObjectStart`: "is this address the start of a registered object".
+* `FindNextValidSlot`: the enumeration used by `SweepCycleRange`, `WalkObjects`, `WalkObjectStarts`, `FindNextObject`,
+  `GetMarkedBytes`.
+* `ResolveForwarded` and `ResolveForwardedChecked`: the forwarded-source discriminator (it used the ValidObject bit before).
+* Callers (not to change): byref and pinned interior roots, remembered-set replay, bulk write barrier, `GetContainingObject`
+  in the GC interface, `DiagWalkHeap`.
+
+### 9.2 What exists today for each variant
+
+| Piece | ValidObject variant (default) | Count-plane variant (`LXR_OBJECT_START_WALK`) | Literal walk |
+|---|---|---|---|
+| Mature object start | bit per 8-byte slot, set at promotion, cleared at death | non-zero count, skipping continuation slots | needs a parsable heap or a first-object index |
+| Young object start | young spans | young spans (and a pinned span) | young spans (unchanged) |
+| Gaps between objects | not walked | not walked | free objects over every gap (does not exist) |
+| Dead objects in live lines | skipped by the bit | skipped by count zero | must be parsable (does not exist) |
+| Index | none | none (the count plane is the index) | first-object index per 2 KiB or per line (does not exist) |
+| Per-object cost | 2 CAS (promotion, death) | none beyond the RC protocol | one free-object store per mature death, or index maintenance |
+| Large objects | LOS page map | LOS page map | LOS page map |
+
+### 9.3 What a literal walk needs (none of it exists in gc_lxr)
+
+1. **Filler objects.** A free object (`g_gc_pFreeObjectMethodTable`, minimum 24 bytes) over every unused buffer tail
+   (`RetireAllocationSpan` writes nothing today), every run of freed lines (zeroed at hand-out only), and every dead object in a
+   live line. gc_lxr never writes a free object today; only the method table pointer is set.
+2. **A rule for gaps below 24 bytes**: a zero word pad that the walker skips, or object alignment, or no gaps.
+3. **A first-object index** (Satori `m_index`, every 2 KiB; or one bit per line) updated by the allocators at hand-out and by
+   promotion in place and copy. This does not exist.
+4. **Torn-remainder repair.** Before a hole is zeroed, find the object that crosses its start and its end and format that part
+   as free. This needs a read of the old hole content, and a read of dead objects.
+5. **A rule for dead objects of unloaded collectible types.** Their MethodTable can be dangling after the loader allocator is
+   freed. A walker reads sizes of dead objects, so it is safe only inside the finalization-gate window (`IsCycleSweepPending`),
+   or the dead object must be formatted as free before the type can go away (a write at each death).
+6. **A concurrency rule for the mutator lookup** (bulk barrier): a reader that steps over a block reads bytes that other
+   allocators write in other holes of the same block. It needs the block-owner and epoch fences the sweep already has.
+7. **An enumeration for the cycle sweep** that does not read dead objects outside the window (or the window rule from item 5).
+8. **New validation**: torn remainder, filler, index and concurrency checks, and mutation controls for each.
+
+### 9.4 Cost summary used in the decision
+
+* The count plane costs no extra write per object (it is written by the RC protocol already) and adds a scan of at most 128
+  words per mature lookup. Measured: 0.30 us per lookup vs 0.42 us (stress test); section 8.4.
+* The literal walk costs at least one write per mature death (items 1 and 5), or a read of every old hole at hand-out (item 4).
+  That is the same order as the two CAS of the bitmap, and it adds the invariants above. It is not measured, because it does
+  not exist. The only advantage of a literal walk would be that the engine would match stock CoreCLR heap parsability.
+
+### 9.5 If a third variant is wanted
+
+Keep the three variants behind the same functions (9.1). Add a second switch (for example `LXR_OBJECT_START_LITERAL_WALK`,
+mutually exclusive with `LXR_OBJECT_START_WALK`), implement items 1-7, and reuse the `--object-start` suite (it already
+checks every offset, torn remainders, hole reuse, WalkObjects equivalence and a deterministic digest that must be equal in all
+variants). Items 1, 4 and 5 are the risky ones.
