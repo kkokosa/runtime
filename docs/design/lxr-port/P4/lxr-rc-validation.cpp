@@ -8223,7 +8223,7 @@ namespace
     }
 
     // Objects of 24 bytes to 16000 bytes (one line, many lines, nearly a block), promoted in place or copied, and a large object.
-    void ValidateObjectStartEveryOffset(bool moving)
+    void ValidateObjectStartEveryOffset(bool moving, uint8_t bits)
     {
         static const uint32_t sizes[] = {24, 32, 40, 56, 120, 232, 248, 256, 264, 280, 504, 512, 520, 768, 1000, 1024, 2000,
             4096, 8000, 16000};
@@ -8231,8 +8231,8 @@ namespace
         LxrRcMutator* mutator = nullptr;
         MovingRoots roots;
         int identity;
-        if (!(moving ? InitializeMoving(engine, &roots, 16, &mutator, &identity, 8)
-                     : Initialize(engine, 8, &mutator, &identity)))
+        if (!(moving ? InitializeMoving(engine, &roots, 16, &mutator, &identity, bits)
+                     : Initialize(engine, bits, &mutator, &identity)))
         {
             return;
         }
@@ -8309,12 +8309,12 @@ namespace
     // The objects between a head and a tail die, the lines that they freed are reused, and the head and the tail of a dead
     // object stay in lines that are live. Every address that a live object contains resolves to it, every other address
     // resolves to nothing, and a dead object is not found.
-    void ValidateObjectStartHoleReuse()
+    void ValidateObjectStartHoleReuse(uint8_t bits)
     {
         LxrReferenceCounting engine;
         LxrRcMutator* mutator = nullptr;
         int identity;
-        if (!Initialize(engine, 8, &mutator, &identity))
+        if (!Initialize(engine, bits, &mutator, &identity))
         {
             return;
         }
@@ -8524,12 +8524,12 @@ namespace
 
     // Lookups of live mature objects while the lazy decrements and sweep of a pause run on the workers and other threads
     // allocate in the holes of the same blocks.
-    void ValidateObjectStartConcurrent(uint32_t seed)
+    void ValidateObjectStartConcurrent(uint32_t seed, uint8_t bits)
     {
         LxrReferenceCounting engine;
         LxrRcMutator* mutator = nullptr;
         int identity;
-        if (!Initialize(engine, 8, &mutator, &identity))
+        if (!Initialize(engine, bits, &mutator, &identity))
         {
             return;
         }
@@ -8745,14 +8745,18 @@ namespace
 
     void ValidateObjectStart()
     {
-        ValidateObjectStartEveryOffset(false);
-        ValidateObjectStartEveryOffset(true);
-        ValidateObjectStartHoleReuse();
+        for (uint8_t bits : {uint8_t{2}, uint8_t{4}, uint8_t{8}})
+        {
+            ValidateObjectStartEveryOffset(false, bits);
+            ValidateObjectStartEveryOffset(true, bits);
+        }
+        ValidateObjectStartHoleReuse(2);
+        ValidateObjectStartHoleReuse(8);
         ValidateObjectStartPinnedYoung();
         ValidateObjectStartStaleValue();
         for (uint32_t seed = 1; seed <= 4; seed++)
         {
-            ValidateObjectStartConcurrent(seed);
+            ValidateObjectStartConcurrent(seed, seed % 2 == 0 ? 2 : 8);
         }
         ValidateObjectStartDigest();
     }
