@@ -1,0 +1,6 @@
+requests     lxr pauses=  9 pause_ms/pause=  3.65 p50= 3.37 promotions/pause=        0 copied_MB/pause= 1.34 wall=379
+requests     l1  pauses=  9 pause_ms/pause=  3.97 p50= 3.43 promotions/pause=    27879 copied_MB/pause= 1.37 wall=428
+requests     l2  pauses=  2 pause_ms/pause=  6.18 p50= 6.14 promotions/pause=    75108 copied_MB/pause= 3.18 wall=430
+binarytrees  lxr pauses= 23 pause_ms/pause=  3.44 p50= 1.62 promotions/pause=        0 copied_MB/pause= 1.36 wall=1048
+binarytrees  l1  pauses= 10 pause_ms/pause=  9.89 p50= 2.71 promotions/pause=   216606 copied_MB/pause= 4.26 wall=1260
+binarytrees  l2  pauses=  9 pause_ms/pause=  8.42 p50= 5.50 promotions/pause=   214449 copied_MB/pause= 4.41 wall=1233

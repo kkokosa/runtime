@@ -1,0 +1,8 @@
+phase                                    lxr                    L1                    L2
+pauses                                    23                    10                     9
+pause_ms (runtime)                      79.2                  98.9                  75.8
+Total                                3.76 ms              10.85 ms               9.09 ms
+SuspendPrepare                       0.10 ms               0.44 ms               0.10 ms
+ReleaseEpoch                         0.33 ms               0.60 ms               0.47 ms
+StwPause                             3.44 ms               9.89 ms               8.42 ms
+ResumeGap                            0.19 ms               0.21 ms               0.20 ms

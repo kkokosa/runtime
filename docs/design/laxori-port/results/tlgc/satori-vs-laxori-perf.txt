@@ -1,0 +1,80 @@
+# Satori (libsatorigc.so, WKS, 2 MiB regions) thread-local phases from perf call chains, 10 kHz (the profile inflates wall time about 1.4x)
+res-sat/sat-requests.data: 8727 samples = 873 ms CPU in the window (all threads)
+  total    inclusive    270.7 ms   exclusive      0.5 ms
+  mark     inclusive     82.1 ms   exclusive     69.2 ms
+  plan     inclusive     53.5 ms   exclusive     52.0 ms
+  update   inclusive     60.0 ms   exclusive     52.1 ms
+  compact  inclusive     71.3 ms   exclusive     68.6 ms
+  stack scan inside mark       11.9 ms
+  stack scan inside update      6.7 ms
+  gen0 collections in the window: 638  wall 822 ms cpu 886 ms
+res-sat/sat-binarytrees.data: 18290 samples = 1829 ms CPU in the window (all threads)
+  total    inclusive    137.4 ms   exclusive      0.0 ms
+  mark     inclusive     81.9 ms   exclusive     64.0 ms
+  plan     inclusive     25.8 ms   exclusive     25.8 ms
+  update   inclusive     21.7 ms   exclusive     15.3 ms
+  compact  inclusive      4.9 ms   exclusive      3.5 ms
+  stack scan inside mark       17.1 ms
+  stack scan inside update      6.4 ms
+  gen0 collections in the window: 1050  wall 1219 ms cpu 1928 ms
+res-sat/sat-listsuffix.data: 25429 samples = 2543 ms CPU in the window (all threads)
+  total    inclusive      0.0 ms   exclusive      0.0 ms
+  mark     inclusive      0.0 ms   exclusive      0.0 ms
+  plan     inclusive      0.0 ms   exclusive      0.0 ms
+  update   inclusive      0.0 ms   exclusive      0.0 ms
+  compact  inclusive      0.0 ms   exclusive      0.0 ms
+  stack scan inside mark        0.0 ms
+  stack scan inside update      0.0 ms
+  gen0 collections in the window: 18  wall 1093 ms cpu 2627 ms
+
+# Laxori (before fix) from perf, same method
+res-sat/lx-requests.data: 5869 samples = 587 ms CPU in the window (all threads)
+  total    inclusive      0.0 ms   exclusive      0.0 ms
+  mark     inclusive      0.0 ms   exclusive      0.0 ms
+  plan     inclusive      0.0 ms   exclusive      0.0 ms
+  update   inclusive      0.0 ms   exclusive      0.0 ms
+  compact  inclusive      0.0 ms   exclusive      0.0 ms
+  stack scan inside mark        0.0 ms
+  stack scan inside update      0.0 ms
+res-sat/lx2048-requests.data: 6168 samples = 617 ms CPU in the window (all threads)
+  total    inclusive      0.0 ms   exclusive      0.0 ms
+  mark     inclusive      0.0 ms   exclusive      0.0 ms
+  plan     inclusive      0.0 ms   exclusive      0.0 ms
+  update   inclusive      0.0 ms   exclusive      0.0 ms
+  compact  inclusive      0.0 ms   exclusive      0.0 ms
+  stack scan inside mark        0.0 ms
+  stack scan inside update      0.0 ms
+res-sat/lx-binarytrees.data: 33099 samples = 3310 ms CPU in the window (all threads)
+  total    inclusive      0.0 ms   exclusive      0.0 ms
+  mark     inclusive      0.0 ms   exclusive      0.0 ms
+  plan     inclusive      0.0 ms   exclusive      0.0 ms
+  update   inclusive      0.0 ms   exclusive      0.0 ms
+  compact  inclusive      0.0 ms   exclusive      0.0 ms
+  stack scan inside mark        0.0 ms
+  stack scan inside update      0.0 ms
+res-sat/lx2048-binarytrees.data: 30948 samples = 3095 ms CPU in the window (all threads)
+  total    inclusive      0.0 ms   exclusive      0.0 ms
+  mark     inclusive      0.0 ms   exclusive      0.0 ms
+  plan     inclusive      0.0 ms   exclusive      0.0 ms
+  update   inclusive      0.0 ms   exclusive      0.0 ms
+  compact  inclusive      0.0 ms   exclusive      0.0 ms
+  stack scan inside mark        0.0 ms
+  stack scan inside update      0.0 ms
+
+# Laxori (after fix) from perf, 2 MiB
+res-sat/fx2048-requests.data: 4835 samples = 484 ms CPU in the window (all threads)
+  total    inclusive     45.2 ms   exclusive      0.0 ms
+  mark     inclusive     16.5 ms   exclusive     12.4 ms
+  plan     inclusive      9.9 ms   exclusive      9.9 ms
+  update   inclusive     10.7 ms   exclusive      7.6 ms
+  compact  inclusive      7.9 ms   exclusive      7.9 ms
+  stack scan inside mark        4.0 ms
+  stack scan inside update      3.1 ms
+res-sat/fx2048-binarytrees.data: 29680 samples = 2968 ms CPU in the window (all threads)
+  total    inclusive     35.7 ms   exclusive      0.0 ms
+  mark     inclusive     19.0 ms   exclusive      5.9 ms
+  plan     inclusive      3.0 ms   exclusive      3.0 ms
+  update   inclusive      8.9 ms   exclusive      4.7 ms
+  compact  inclusive      4.4 ms   exclusive      4.4 ms
+  stack scan inside mark       13.0 ms
+  stack scan inside update      4.2 ms

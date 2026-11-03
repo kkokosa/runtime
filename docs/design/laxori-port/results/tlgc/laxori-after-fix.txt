@@ -1,0 +1,76 @@
+# Laxori thread-local GC cost per collection, AFTER the fix (no region walk), TSC timers
+== res-tl2/fix-256-requests/result.json: wall 344 ms, TSC 2.79 GHz
+   LocalCollect calls 3698, collections done 3039, skipped 659, mark aborted 0, not worth 0, escaped MB 15.1
+   total TLGC 77.8 ms = 21.0 us/call, 25.6 us/successful collection
+     esc-scan             7.3 ms    9.4%     2.40 us/collection
+     stack-mark          24.3 ms   31.2%     7.99 us/collection
+     sync-walk            0.0 ms    0.0%     0.01 us/collection
+     propagate            0.7 ms    0.9%     0.23 us/collection
+     plan                10.3 ms   13.2%     3.39 us/collection
+     stack-update        18.1 ms   23.3%     5.95 us/collection
+     obj-update           8.8 ms   11.3%     2.88 us/collection
+     compact              7.5 ms    9.6%     2.45 us/collection
+     failed attempts      0.0 ms (calls that did not collect)
+   per collection: stack scans 2.00, roots 165 per scan (1.8 in region), escaped objs rescanned 168.3 (8.8 KB), sync-walk objs 0, propagated 12.4, planned 192, moved 1.9 KB
+   survivor KB/collection 2.2, reclaimed MB total 724
+   dissolve: 719 regions, 1.9 ms total (2.6 us each); at pauses 0.0 ms; gap zeroing 9.3 ms for 724 MB
+== res-tl2/fix-2048-requests/result.json: wall 324 ms, TSC 2.79 GHz
+   LocalCollect calls 450, collections done 369, skipped 81, mark aborted 0, not worth 0, escaped MB 14.8
+   total TLGC 43.4 ms = 96.4 us/call, 117.5 us/successful collection
+     esc-scan            11.5 ms   26.5%    31.14 us/collection
+     stack-mark           5.0 ms   11.5%    13.54 us/collection
+     sync-walk            0.0 ms    0.0%     0.01 us/collection
+     propagate            0.1 ms    0.2%     0.24 us/collection
+     plan                 9.3 ms   21.5%    25.27 us/collection
+     stack-update         2.2 ms    5.0%     5.93 us/collection
+     obj-update           7.7 ms   17.7%    20.78 us/collection
+     compact              7.4 ms   17.0%    19.96 us/collection
+     failed attempts      0.0 ms (calls that did not collect)
+   per collection: stack scans 2.00, roots 165 per scan (1.8 in region), escaped objs rescanned 1382.8 (72.1 KB), sync-walk objs 0, propagated 12.2, planned 1406, moved 1.9 KB
+   survivor KB/collection 2.2, reclaimed MB total 708
+   dissolve: 88 regions, 1.0 ms total (11.9 us each); at pauses 0.0 ms; gap zeroing 19.8 ms for 707 MB
+== res-tl2/fix-256-binarytrees/result.json: wall 1159 ms, TSC 2.79 GHz
+   LocalCollect calls 8243, collections done 5080, skipped 3024, mark aborted 139, not worth 0, escaped MB 38.8
+   total TLGC 91.5 ms = 11.1 us/call, 18.0 us/successful collection
+     esc-scan             2.9 ms    3.2%     0.57 us/collection
+     stack-mark          40.5 ms   44.3%     7.98 us/collection
+     sync-walk            0.1 ms    0.1%     0.02 us/collection
+     propagate            2.8 ms    3.0%     0.54 us/collection
+     plan                 3.5 ms    3.8%     0.68 us/collection
+     stack-update        33.8 ms   36.9%     6.65 us/collection
+     obj-update           3.4 ms    3.7%     0.67 us/collection
+     compact              3.1 ms    3.4%     0.62 us/collection
+     failed attempts      5.2 ms (calls that did not collect)
+   per collection: stack scans 2.03, roots 171 per scan (1.0 in region), escaped objs rescanned 4.0 (0.1 KB), sync-walk objs 0, propagated 45.3, planned 18, moved 0.6 KB
+   survivor KB/collection 0.6, reclaimed MB total 1267
+   dissolve: 3170 regions, 2.8 ms total (0.9 us each); at pauses 0.0 ms; gap zeroing 17.1 ms for 1267 MB
+== res-tl2/fix-2048-binarytrees/result.json: wall 1177 ms, TSC 2.79 GHz
+   LocalCollect calls 973, collections done 662, skipped 290, mark aborted 21, not worth 0, escaped MB 26.3
+   total TLGC 100.3 ms = 103.0 us/call, 151.4 us/successful collection
+     esc-scan             3.2 ms    3.2%     4.88 us/collection
+     stack-mark          10.4 ms   10.3%    15.66 us/collection
+     sync-walk            0.0 ms    0.0%     0.02 us/collection
+     propagate           19.7 ms   19.6%    29.75 us/collection
+     plan                21.4 ms   21.3%    32.31 us/collection
+     stack-update         6.0 ms    6.0%     9.03 us/collection
+     obj-update          20.8 ms   20.7%    31.37 us/collection
+     compact             18.3 ms   18.3%    27.69 us/collection
+     failed attempts      3.2 ms (calls that did not collect)
+   per collection: stack scans 2.03, roots 177 per scan (7.7 in region), escaped objs rescanned 33.5 (1.0 KB), sync-walk objs 0, propagated 2123.2, planned 1878, moved 58.2 KB
+   survivor KB/collection 58.2, reclaimed MB total 1286
+   dissolve: 319 regions, 2.1 ms total (6.5 us each); at pauses 0.0 ms; gap zeroing 45.7 ms for 1286 MB
+== res-tl2/fix-256-div2-requests/result.json: wall 477 ms, TSC 2.79 GHz
+   LocalCollect calls 4296, collections done 4296, skipped 0, mark aborted 0, not worth 0, escaped MB 15.0
+   total TLGC 210.1 ms = 48.9 us/call, 48.9 us/successful collection
+     esc-scan            33.2 ms   15.8%     7.72 us/collection
+     stack-mark          31.5 ms   15.0%     7.33 us/collection
+     sync-walk            0.1 ms    0.0%     0.01 us/collection
+     propagate            0.9 ms    0.4%     0.21 us/collection
+     plan                43.9 ms   20.9%    10.22 us/collection
+     stack-update        27.9 ms   13.3%     6.50 us/collection
+     obj-update          37.0 ms   17.6%     8.61 us/collection
+     compact             34.6 ms   16.5%     8.05 us/collection
+     failed attempts      0.0 ms (calls that did not collect)
+   per collection: stack scans 2.00, roots 176 per scan (1.7 in region), escaped objs rescanned 673.8 (35.1 KB), sync-walk objs 0, propagated 12.1, planned 697, moved 1.7 KB
+   survivor KB/collection 2.2, reclaimed MB total 863
+   dissolve: 240 regions, 1.4 ms total (6.0 us each); at pauses 0.0 ms; gap zeroing 10.3 ms for 849 MB

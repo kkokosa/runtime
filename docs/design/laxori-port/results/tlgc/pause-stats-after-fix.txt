@@ -1,0 +1,10 @@
+workload     config         pauses/run   p50 ms   p99 ms   max ms   sum ms  wall ms checksum
+requests     lxr                   9.0    3.937   11.360   11.360     41.7      378 OK
+requests     laxori:1:256          9.0    3.731    6.081    6.081     35.1      369 OK
+requests     laxori:2:256          2.0    5.653    6.138    6.138     11.2      318 OK
+binarytrees  lxr                  30.7    1.984   40.147   40.147    141.7     1137 OK
+binarytrees  laxori:1:256         14.0    6.417   32.273   32.273    132.2     1088 OK
+binarytrees  laxori:2:256         13.7    4.784   33.085   33.085    103.3     1117 OK
+listsuffix   lxr                   6.7   30.948   39.254   39.254    207.1     1301 OK
+listsuffix   laxori:1:256          8.3   30.181   33.527   33.527    239.8     1576 OK
+listsuffix   laxori:2:256          8.7   29.130   41.660   41.660    253.7     1675 OK

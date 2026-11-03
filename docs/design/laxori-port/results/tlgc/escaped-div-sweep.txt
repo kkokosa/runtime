@@ -1,0 +1,92 @@
+0 requests laxori:2:256:2 445 27134172608 
+0 requests laxori:2:256:4 438 27134172608 
+0 requests laxori:2:256:8 348 27134172608 
+0 requests laxori:2:256:16 316 27134172608 
+0 requests laxori:2:256:32 330 27134172608 
+0 binarytrees laxori:2:256:2 1066 68332294 
+0 binarytrees laxori:2:256:4 1098 68332294 
+0 binarytrees laxori:2:256:8 1095 68332294 
+0 binarytrees laxori:2:256:16 1125 68332294 
+0 binarytrees laxori:2:256:32 1065 68332294 
+0 mixedmedium laxori:2:256:2 1463 40586599707 
+0 mixedmedium laxori:2:256:4 1478 40586599707 
+0 mixedmedium laxori:2:256:8 1468 40586599707 
+0 mixedmedium laxori:2:256:16 1430 40586599707 
+0 mixedmedium laxori:2:256:32 1444 40586599707 
+1 requests laxori:2:256:2 445 27134172608 
+1 requests laxori:2:256:4 445 27134172608 
+1 requests laxori:2:256:8 345 27134172608 
+1 requests laxori:2:256:16 347 27134172608 
+1 requests laxori:2:256:32 328 27134172608 
+1 binarytrees laxori:2:256:2 1159 68332294 
+1 binarytrees laxori:2:256:4 1090 68332294 
+1 binarytrees laxori:2:256:8 1154 68332294 
+1 binarytrees laxori:2:256:16 1084 68332294 
+1 binarytrees laxori:2:256:32 1110 68332294 
+1 mixedmedium laxori:2:256:2 1498 40586599707 
+1 mixedmedium laxori:2:256:4 1453 40586599707 
+1 mixedmedium laxori:2:256:8 1399 40586599707 
+1 mixedmedium laxori:2:256:16 1403 40586599707 
+1 mixedmedium laxori:2:256:32 1425 40586599707 
+2 requests laxori:2:256:2 456 27134172608 
+2 requests laxori:2:256:4 451 27134172608 
+2 requests laxori:2:256:8 345 27134172608 
+2 requests laxori:2:256:16 314 27134172608 
+2 requests laxori:2:256:32 316 27134172608 
+2 binarytrees laxori:2:256:2 1082 68332294 
+2 binarytrees laxori:2:256:4 1080 68332294 
+2 binarytrees laxori:2:256:8 1228 68332294 
+2 binarytrees laxori:2:256:16 1122 68332294 
+2 binarytrees laxori:2:256:32 1148 68332294 
+2 mixedmedium laxori:2:256:2 1468 40586599707 
+2 mixedmedium laxori:2:256:4 1496 40586599707 
+2 mixedmedium laxori:2:256:8 1464 40586599707 
+2 mixedmedium laxori:2:256:16 1454 40586599707 
+2 mixedmedium laxori:2:256:32 1516 40586599707 
+3 requests laxori:2:256:2 434 27134172608 
+3 requests laxori:2:256:4 451 27134172608 
+3 requests laxori:2:256:8 341 27134172608 
+3 requests laxori:2:256:16 314 27134172608 
+3 requests laxori:2:256:32 346 27134172608 
+3 binarytrees laxori:2:256:2 1120 68332294 
+3 binarytrees laxori:2:256:4 1279 68332294 
+3 binarytrees laxori:2:256:8 1124 68332294 
+3 binarytrees laxori:2:256:16 1128 68332294 
+3 binarytrees laxori:2:256:32 1086 68332294 
+3 mixedmedium laxori:2:256:2 1497 40586599707 
+3 mixedmedium laxori:2:256:4 1456 40586599707 
+3 mixedmedium laxori:2:256:8 1432 40586599707 
+3 mixedmedium laxori:2:256:16 1426 40586599707 
+3 mixedmedium laxori:2:256:32 1423 40586599707 
+4 requests laxori:2:256:2 444 27134172608 
+4 requests laxori:2:256:4 441 27134172608 
+4 requests laxori:2:256:8 336 27134172608 
+4 requests laxori:2:256:16 311 27134172608 
+4 requests laxori:2:256:32 326 27134172608 
+4 binarytrees laxori:2:256:2 1094 68332294 
+4 binarytrees laxori:2:256:4 1065 68332294 
+4 binarytrees laxori:2:256:8 1149 68332294 
+4 binarytrees laxori:2:256:16 1102 68332294 
+4 binarytrees laxori:2:256:32 1123 68332294 
+4 mixedmedium laxori:2:256:2 1473 40586599707 
+4 mixedmedium laxori:2:256:4 1495 40586599707 
+4 mixedmedium laxori:2:256:8 1442 40586599707 
+4 mixedmedium laxori:2:256:16 1436 40586599707 
+4 mixedmedium laxori:2:256:32 1418 40586599707 
+
+medians: wall ms / cpu ms / pause ms / peak RSS MB / GCs / copied MB | TLGC / escaped MB / acquire failures
+requests     laxori:2:256:2     445     502      5    166    12    4.6 |    4307    15.1        1 n=5 bad=0
+requests     laxori:2:256:4     445     500      6    166    12    4.5 |    4295    15.0        1 n=5 bad=0
+requests     laxori:2:256:8     345     397      5    165    18    3.5 |    3539    12.9        1 n=5 bad=0
+requests     laxori:2:256:16     314     408      9    167    29    7.4 |    3040    15.1        2 n=5 bad=0
+requests     laxori:2:256:32     328     439     14    169    43    8.8 |    2407    15.1        4 n=5 bad=0
+binarytrees  laxori:2:256:2    1094    2660    116    199    49   55.0 |    5081    38.3       13 n=5 bad=0
+binarytrees  laxori:2:256:4    1090    2681    118    201    50   59.0 |    4725    28.6       14 n=5 bad=0
+binarytrees  laxori:2:256:8    1149    3271    138    202    50   60.4 |    5079    35.9       14 n=5 bad=0
+binarytrees  laxori:2:256:16    1122    2707    129    200    53   53.6 |    4295    31.6       16 n=5 bad=0
+binarytrees  laxori:2:256:32    1110    2710    126    200    50   59.1 |    4813    24.3       15 n=5 bad=0
+mixedmedium  laxori:2:256:2    1473    2541    201    197   339   38.1 |      97    15.6     1021 n=5 bad=0
+mixedmedium  laxori:2:256:4    1478    2544    196    197   340   36.3 |      78     5.6     1031 n=5 bad=0
+mixedmedium  laxori:2:256:8    1442    2468    192    197   344   38.8 |       2     5.3     1032 n=5 bad=0
+mixedmedium  laxori:2:256:16    1430    2453    192    197   338   30.5 |       0     7.7     1020 n=5 bad=0
+mixedmedium  laxori:2:256:32    1425    2475    193    197   341   37.3 |       0     6.4     1027 n=5 bad=0

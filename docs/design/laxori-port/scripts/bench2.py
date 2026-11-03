@@ -30,9 +30,15 @@ def config(name, workload):
         if workload == "mediumarrays":
             e.update({"DOTNET_LXRImmixInitialMB": "200", "DOTNET_LXRImmixReserveMB": "400"})
         return e
-    if name.startswith("laxori:"):
-        _, mode, kb = name.split(":")
-        e = {"DOTNET_gcServer": "1", "DOTNET_GCPath": LAXORI, "DOTNET_LAXORIRegionKB": kb}
+    if name.startswith("laxori:") or name.startswith("laxorib:"):
+        parts = name.split(":")
+        mode, kb = parts[1], parts[2]
+        div = parts[3] if len(parts) > 3 else None     # optional LAXORIEscapedCollectDiv
+        # laxori: = LAXORI_SO; laxorib: = LAXORI_SO_B (a second build, to compare two builds in one interleaved run)
+        so = LAXORI if name.startswith("laxori:") else os.environ.get("LAXORI_SO_B", LAXORI)
+        e = {"DOTNET_gcServer": "1", "DOTNET_GCPath": so, "DOTNET_LAXORIRegionKB": kb}
+        if div:
+            e["DOTNET_LAXORIEscapedCollectDiv"] = div
         if mode == "0":
             e["DOTNET_LAXORIPrivate"] = "0"
         else:

@@ -16,6 +16,15 @@ with `DOTNET_GCPath`.
 | Speed | **No wall-time gain.** CPU and pauses fall on `requests` and `binarytrees`; `listsuffix` is 25 to 29 percent slower; the other workloads are equal to LXR. |
 | Cycle recovery by trial deletion (item i of the description) | **Not implemented.** The shared heap uses the LXR trace (inherited). |
 
+## Update: thread-local GC cost diagnosis and fix (see `results/TLGC-DIAGNOSIS.md`)
+
+The comparison with Satori found one real cost defect: the thread-local mark walked every object of the region (dead ones too) to find
+sync blocks (41 to 86 percent of a collection). Fixed by escaping at sync-block creation through `pre_store`. After the fix (9 interleaved runs,
+`results/tlgc/bench-after-fix.txt`) wall / CPU ms: `requests` Laxori 323 / 415 against LXR 382 / 529 (-15 percent wall), `binarytrees` 1128 / 2697 (2 MiB regions
+1072) against 1127 / 3266, `listsuffix` 1616 against 1331 (still +21 percent), the others equal to LXR. Hunts with the fixed build: L1 126 of 126, L2 126 of 126.
+**New known issue (inherited):** the stock LXR engine fails `PrivateTests all 2 13` in 10 of 20 runs (`space-pressure collection failed`, engine failure 1);
+Laxori fails it in about 1 of 6 runs with the private tier on and in 5 of 20 with it off. The numbers in sections 3 and 5 below are from before the fix.
+
 ## 1. Build and run
 
 ```
@@ -60,8 +69,9 @@ other sessions earlier); the two hunts ran at the same time. The benchmark, the 
    rule, gap list, one span for each stretch of live objects, see `DESIGN-v2.md` section 6). Verified with the 8-thread graph test
    (about 100 percent failures before, 0 of 20 after) and the region verifier.
 3. **Sync blocks.** The sync-block table of the runtime holds raw pointers that only a pause updates; a thread-local collection that
-   reclaimed or moved an object with a sync block left a stale entry (found by the `sync` test in L2). Objects with a sync block
-   are now pinned roots of the thread-local mark (a walk of the region).
+   reclaimed or moved an object with a sync block left a stale entry (found by the `sync` test in L2). First fix: a walk of the
+   whole region at every collection; **that walk was a cost defect** (see the update below) and is replaced by escaping the object when
+   its sync block is created (`pre_store`, as Satori does).
 4. When a region could not be taken, every allocation went through the slow shared path (millions of failed acquisitions, 3 to 4
    times slower on `listsuffix` and `mixedmedium`). Fixed with the fast buffer of the engine and a back-off.
 
