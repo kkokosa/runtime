@@ -20,9 +20,10 @@ Users of the plane (all go through `FindContainingObject`, `IsObjectStart`, `Fin
 | `WalkObjects`, `WalkObjectStarts`, `FindNextObject`, `GetMarkedBytes` | pause (`DiagWalkHeap`) or test | every counted object |
 
 Cost of the plane today: one seq_cst byte CAS per promoted or copied object (`MarkPromotedStart`, `side_metadata.h:558-600`), one
-bulk clear per hole refill (`InitializeFieldLogRange`), one clear per copied source (`RetireSourceChunk`), one clear per dead cycle
-object, one fill per freed block, and 1/64 of the heap as committed metadata. This is about 1.8-2.8% of worker CPU in leaf
-profiles (`MarkPromotedStart` 98 ms of 3255 ms on listsuffix). Interior lookups are rare (at most about 10^3 per run).
+more per copy source (before the claim), one per death (`DecrementWithDeathCore` stores 0 at count 1), one bulk clear per hole
+refill (`InitializeFieldLogRange`), one clear per copied source (`RetireSourceChunk`), one clear per dead cycle object, one fill
+per freed block, and 1/64 of the heap as committed metadata. This is about 1.8-2.8% of worker CPU in leaf profiles
+(`MarkPromotedStart` 98 ms of 3255 ms on listsuffix). Interior lookups are rare (at most about 10^3 per run).
 
 ## 2. Facts about this engine that decide the design
 
@@ -33,13 +34,15 @@ profiles (`MarkPromotedStart` 98 ms of 3255 ms on listsuffix). Interior lookups 
    reused. A hole is zeroed whole at hand-out (`PrepareRecycledHole`). The unused tail of a buffer is **not** filled
    (`RetireAllocationSpan`). `gc_lxr` never writes a free object (only `g_gc_pFreeObjectMethodTable` is set).
 3. **No brick table and no first-object index exist.** A block is 32 KiB = 128 lines of 256 B.
-4. **The count plane is exact for mature objects (F9 invariant).** A count is stored at the first slot of an object, and only at
-   that slot. The count of a dead object is cleared when the object dies (`DecrementWithDeathFast` takes it to 0;
-   `RetireSourceChunk` and `SweepCycleRange` store 0). A hole or a free block has zero counts (`InitializeFieldLogRange` only
-   verifies it). A line is free exactly when the counts of its range are zero (`IsLineDead` uses `IsRangeZero`). So *a non-zero
-   count at slot S means: an object that was promoted and has not died starts at S.* The plane already exists, the RC protocol
-   already writes it, and it costs nothing extra. A saturated count never goes down (sticky), so such an object stays counted
-   until the cycle sweep.
+4. **The count plane is exact for mature objects (F9 invariant).** A count is stored at the first slot of an object. It is also
+   stored at the first slot of each *continuation line* (a line that lies wholly inside an object that is longer than a line; the
+   straddle byte of such a line is set; the count is the liveness of the line). The count of a dead object is cleared when the
+   object dies (`DecrementWithDeathFast` takes it to 0; `RetireSourceChunk` and `SweepCycleRange` store 0). A hole or a free block
+   has zero counts (`InitializeFieldLogRange` only verifies it). A line is free exactly when the counts of its range are zero
+   (`IsLineDead` uses `IsRangeZero`). So *a non-zero count at slot S, where S is not the first slot of a line whose straddle byte
+   is set, means: an object that was promoted and has not died starts at S.* The plane already exists, the RC protocol already
+   writes it, and it costs nothing extra. A saturated count never goes down (sticky), so such an object stays counted until the
+   cycle sweep.
 5. **A promoted object gets its count before its unlogged bits.** Increments run in the pause (`ProcessIncrement`: count,
    straddle marks, `SetUnloggedLines`). A mutator-side lookup (bulk barrier) only asks for an object whose unlogged bit is set,
    so the count is visible.
@@ -204,3 +207,42 @@ pinned and unpinned; young and mature; next to dead objects).
 
 Measurement: both `.so` files, six workloads, 9 interleaved runs; perf of worker CPU in promotion, refill and sweep; then a
 crash hunt of at least 100 runs at 13/3, 4/2 and 1/1 workers.
+
+## 6. Findings during the implementation
+
+1. **The plane was also the discriminator of a forwarded copy source.** `ResolveForwarded` read the header of a value only if
+   its ValidObject bit was set, because a stale value (a weak target, a queued trace entry) can point into the middle of a new
+   object, and the header word there is arbitrary data (the forwarding state is the first dword of the header slot; state 2
+   makes a reader wait, state 3 makes it follow the word at +8). Without the plane:
+   * `ResolveForwarded` is for values that are object starts by construction (references of live slots, roots, counted objects,
+     the objects of a span walk). It reads the header first and needs no metadata for the common case of state 0.
+   * `ResolveForwardedChecked` is for values that may be stale (`IsPromoted`, `IsMarked`, `ProcessTraceObject`,
+     `TryCopyMature`, `FixPacketReferences`). A counted start (count not zero, and not the first slot of a continuation line) is
+     trusted. For count zero the value is a copy source only if a span of the pause has an object that starts exactly there
+     (`FindInYoungSpans`); outside a pause there is no source. The span walk runs only when the header has a forwarding state.
+   * After `RetireSourceChunk` a source keeps its forwarding state in the header (the default variant cleared its bit). The
+     spans are gone at `Resume`, so the value is then no source for `ResolveForwardedChecked`, as before.
+   P4 `--object-start` has a check with arbitrary header bits and a mutation control (`WalkTrustedResolve`).
+2. **The count plane has non-zero entries that are not starts**: the first slot of each continuation line (finding in section 2,
+   item 4). `FindCountedSlotBelow`, `FindNextValidSlot` and `IsObjectStart` skip a slot whose line has a straddle byte.
+3. **A young pinned object is found only inside a pause** in the walk variant: it is in a span (the pinned allocator records one,
+   `ClosePinnedSpan`), it has no count, and there is no bit. In the default variant it was found at once. Nothing in the engine
+   asks for it outside a pause: the bulk barrier asks for objects whose unlogged bit is set (mature).
+4. `IsObjectStart` for a large object is an exact start in the large-object space (`GetAllocation`); the default variant read the
+   bit that was set at the allocation.
+5. `ValidObject` is not committed in the walk variant (`SideMetadataManager::Initialize` with a mask). That saves 1/64 of the
+   heap in native plane memory, and any access to the plane in the product code fails closed.
+
+## 7. How to build and validate both variants
+
+```
+bash docs/design/lxr-port/P31-object-start-walk/build-lxr.sh base          # libclrlxrgc.so      (ValidObject plane)
+bash docs/design/lxr-port/P31-object-start-walk/build-lxr.sh walk walk     # libclrlxrgc-walk.so (no plane)
+bash docs/design/lxr-port/P31-object-start-walk/validate-variant.sh default Release   # P2.1-P2.5, P3.1-P3.4, P4 (all selectors)
+bash docs/design/lxr-port/P31-object-start-walk/validate-variant.sh walk Release
+bash docs/design/lxr-port/P31-object-start-walk/compare-digests.sh                    # cycle sweep / heap walk equal in both
+bash docs/design/lxr-port/P31-object-start-walk/run-walk-controls.sh                  # mutation checks of the walk variant
+```
+`LXR_OBJECT_START_WALK=1` in the environment makes the P2.2-P2.5 and P4 scripts build the walk variant. The managed stress
+test is `managed/InteriorStress` (see its header). Selectors that are flaky under load in both variants:
+`--mature-released-candidate` and `--p8-storage`.

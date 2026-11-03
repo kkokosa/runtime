@@ -381,6 +381,7 @@ HRESULT LxrGcHeap::Initialize()
         !ReadBooleanSetting("LXRHeapSizing", &m_sizing_configuration.enabled) ||
         !ReadSetting("LXRNurseryCapMB", &nurseryCapMB, 10, SIZE_MAX >> 20) ||
         !ReadBooleanSetting("LXRPolicyTrace", &m_policy_trace) ||
+        !ReadBooleanSetting("LXRLookupStats", &m_lookup_stats) ||
         !ReadBooleanSetting("LXRPrezero", &configuration.prezero) ||
         !ReadBooleanSetting("LXRPrezeroThread", &configuration.prezeroThread) ||
         !ReadSetting("LXRPrezeroMarginBlocks", &configuration.prezeroMarginBlocks, 10, 4096) ||
@@ -1396,6 +1397,15 @@ void LxrGcHeap::Suspend(void* context)
 void LxrGcHeap::Resume(bool finished, void* context)
 {
     LxrGcHeap* heap = static_cast<LxrGcHeap*>(context);
+    if (heap->m_lookup_stats)
+    {
+        fprintf(stderr, "LXRLOOKUP pause=%u calls=%llu ticks=%llu spans=%llu checked=%llu freq=%llu\n",
+            heap->m_collections.load(), static_cast<unsigned long long>(heap->m_engine.GetLookupMetric(0)),
+            static_cast<unsigned long long>(heap->m_engine.GetLookupMetric(1)),
+            static_cast<unsigned long long>(heap->m_engine.GetLookupMetric(2)),
+            static_cast<unsigned long long>(heap->m_engine.GetLookupMetric(3)),
+            static_cast<unsigned long long>(minipal_hires_tick_frequency()));
+    }
     LxrPauseTimers& timers = heap->m_engine.GetPauseTimers();
     {
         LxrPhaseScope resume(timers, LxrPauseTimers::ResumeRuntime);

@@ -3458,7 +3458,7 @@ Object* LxrReferenceCounting::ResolveForwarded(Object* object) const
 
 Object* LxrReferenceCounting::ResolveForwardedChecked(Object* object) const
 {
-#if !defined(LXR_OBJECT_START_WALK) || (defined(LXR_SIDE_METADATA_TEST_PLATFORM) && defined(LXR_WALK_TRUSTED_RESOLVE_CONTROL))
+#if !defined(LXR_OBJECT_START_WALK) || (defined(LXR_WALK_TRUSTED_RESOLVE_CONTROL))
     // (Control for the walk variant: a stale value is trusted like a start.)
     return ResolveForwarded(object);
 #else
@@ -3500,7 +3500,7 @@ Object* LxrReferenceCounting::ResolveForwardedChecked(Object* object) const
 #ifdef LXR_OBJECT_START_WALK
 bool LxrReferenceCounting::IsContinuationSlot(size_t slot) const
 {
-#if defined(LXR_SIDE_METADATA_TEST_PLATFORM) && defined(LXR_WALK_NO_CONTINUATION_SKIP_CONTROL)
+#if defined(LXR_WALK_NO_CONTINUATION_SKIP_CONTROL)
     // Control: the count of a continuation line is taken for the start of an object.
     (void)slot;
     return false;
@@ -3508,7 +3508,7 @@ bool LxrReferenceCounting::IsContinuationSlot(size_t slot) const
     uintptr_t start = GetReservationStart() + slot * sizeof(uintptr_t);
     return (start & ImmixBlockGeometry::LineMask) == 0 &&
         m_straddle_metadata.Load(start, SideMetadataMemoryOrder::Relaxed) != 0;
-#endif // LXR_SIDE_METADATA_TEST_PLATFORM && LXR_WALK_NO_CONTINUATION_SKIP_CONTROL
+#endif // LXR_WALK_NO_CONTINUATION_SKIP_CONTROL
 }
 
 size_t LxrReferenceCounting::FindCountedSlotBelow(size_t lowerSlot, size_t slot) const
@@ -3566,22 +3566,22 @@ size_t LxrReferenceCounting::FindCountedSlotBelow(size_t lowerSlot, size_t slot)
         {
             return SIZE_MAX;
         }
-#if defined(LXR_SIDE_METADATA_TEST_PLATFORM) && defined(LXR_WALK_ONE_WORD_CONTROL)
+#if defined(LXR_WALK_ONE_WORD_CONTROL)
         // Control: the scan looks at one word of the count plane only.
         return SIZE_MAX;
-#endif // LXR_SIDE_METADATA_TEST_PLATFORM && LXR_WALK_ONE_WORD_CONTROL
+#endif // LXR_WALK_ONE_WORD_CONTROL
         slot = wordFirst - 1;
     }
 }
 
 void LxrReferenceCounting::ClosePinnedSpan(uintptr_t end)
 {
-#if defined(LXR_SIDE_METADATA_TEST_PLATFORM) && defined(LXR_WALK_NO_PINNED_SPAN_CONTROL)
+#if defined(LXR_WALK_NO_PINNED_SPAN_CONTROL)
     // Control: a pinned object has no span.
     (void)end;
     m_pinned_span_start = 0;
     return;
-#endif // LXR_SIDE_METADATA_TEST_PLATFORM && LXR_WALK_NO_PINNED_SPAN_CONTROL
+#endif // LXR_WALK_NO_PINNED_SPAN_CONTROL
     uintptr_t start = m_pinned_span_start;
     m_pinned_span_start = 0;
     if (start == 0 || end <= start)
@@ -6719,12 +6719,12 @@ LxrRcResult LxrReferenceCounting::FindContainingObjectCore(uintptr_t address, Ob
         {
             return LxrRcResult::InvalidArgument;
         }
-#if defined(LXR_SIDE_METADATA_TEST_PLATFORM) && defined(LXR_WALK_NO_EXTENT_CONTROL)
+#if defined(LXR_WALK_NO_EXTENT_CONTROL)
         // Control: the candidate is accepted without asking whether it contains the address.
         if (address >= reinterpret_cast<uintptr_t>(candidate))
 #else
         if (address >= reinterpret_cast<uintptr_t>(candidate) && address - cursor < size)
-#endif // LXR_SIDE_METADATA_TEST_PLATFORM && LXR_WALK_NO_EXTENT_CONTROL
+#endif // LXR_WALK_NO_EXTENT_CONTROL
         {
             *object = candidate;
             return LxrRcResult::Success;
@@ -7411,12 +7411,12 @@ size_t LxrReferenceCounting::FindNextValidSlot(size_t first, size_t limit) const
             BitScanForward64(&bit, folded);
             size_t candidate = first + bit / bits;
             // The first slot of a line of the large-object space is never a continuation slot.
-#if defined(LXR_SIDE_METADATA_TEST_PLATFORM) && defined(LXR_WALK_ENUM_CONTINUATION_CONTROL)
+#if defined(LXR_WALK_ENUM_CONTINUATION_CONTROL)
             // Control: the enumeration takes the count of a continuation line for an object start.
             if (true)
 #else
             if (candidate >= limit || candidate >= largeStart || !IsContinuationSlot(candidate))
-#endif // LXR_SIDE_METADATA_TEST_PLATFORM && LXR_WALK_ENUM_CONTINUATION_CONTROL
+#endif // LXR_WALK_ENUM_CONTINUATION_CONTROL
             {
                 std::atomic_thread_fence(std::memory_order_acquire);
                 return candidate;
