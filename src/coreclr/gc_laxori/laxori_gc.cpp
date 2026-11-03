@@ -746,6 +746,7 @@ Object* LaxoriGcHeap::AllocShared(gc_alloc_context* context, size_t size, uint32
         LaxoriRcResult grown = TryGrow(size >= LaxoriLargeObjectSpace::MinimumObjectBytes, size);
         if (grown == LaxoriRcResult::Success)
         {
+            m_engine.ResetAllocationCursors();
             result = m_engine.Allocate(mutator, size, &object, pinned);
         }
         else if (grown != LaxoriRcResult::AllocationFailure && grown != LaxoriRcResult::OutOfMemory)
@@ -755,11 +756,23 @@ Object* LaxoriGcHeap::AllocShared(gc_alloc_context* context, size_t size, uint32
     }
     if (result == LaxoriRcResult::AllocationFailure && !m_shutdown.load())
     {
-        if (CollectForPressure(true, false) != LaxoriRcResult::Success)
+        // An emergency collection that runs during a concurrent trace only ends the trace (a final mark), and the
+        // garbage that died after the trace began stays. The next one is a full collection. The program runs again as
+        // soon as a pause is over, and the other threads can use the space that it freed before this thread allocates.
+        // So the allocation is given a few collections before it fails.
+        for (int attempt = 0; attempt < MaximumEmergencyCollections && result == LaxoriRcResult::AllocationFailure &&
+            !m_shutdown.load(); attempt++)
         {
-            Fatal("LAXORI emergency full collection failed.");
+            if (CollectForPressure(true, false) != LaxoriRcResult::Success)
+            {
+                Fatal("LAXORI emergency full collection failed.");
+            }
+            // The allocation cursors move forward only. The pause sets them back, and then the other threads move them
+            // past the blocks that the lazy sweep of the pause has not freed yet. The collection has waited for that
+            // sweep, so those blocks are free now but lie behind the cursors.
+            m_engine.ResetAllocationCursors();
+            result = m_engine.Allocate(mutator, size, &object, pinned);
         }
-        result = m_engine.Allocate(mutator, size, &object, pinned);
     }
     if (result == LaxoriRcResult::AllocationFailure)
     {
@@ -1873,6 +1886,13 @@ void LaxoriGcHeap::AddRoot(Object* object, uint32_t flags, bool trace)
     {
         Object* containing = nullptr;
         LaxoriRcResult result = m_engine.FindContainingObject(reinterpret_cast<uintptr_t>(object), &containing);
+        if (result == LaxoriRcResult::InvalidArgument)
+        {
+            // No live object contains the address. The runtime lets a byref point one byte past the end of an object
+            // (the end pointer of an array loop), and such a byref can outlive the object. The standard collector
+            // ignores an interior pointer for which find_object finds nothing, and so does this one.
+            return;
+        }
         if (result != LaxoriRcResult::Success)
         {
             m_scan_failure.store(result);

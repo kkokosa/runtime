@@ -16,6 +16,24 @@ with `DOTNET_GCPath`.
 | Speed | **No wall-time gain.** CPU and pauses fall on `requests` and `binarytrees`; `listsuffix` is 25 to 29 percent slower; the other workloads are equal to LXR. |
 | Cycle recovery by trial deletion (item i of the description) | **Not implemented.** The shared heap uses the LXR trace (inherited). |
 | P31 count-plane object starts (port of LXR a3a225d40a9) | Done, **default**. Bitmap build kept as `libclrlaxorigc-bitmap.so`. See "Update: P31" below. |
+| Two inherited LXR defects behind `PrivateTests all 2 13` failures (LXR 1d351781d03) | Ported and fixed. 13-thread failure rate 0/80 (was 12/20 in L1). See "Update: P32" below. |
+
+## Update: P32 interior roots past the end of an object, and early allocation failure (LXR 1d351781d03)
+
+The 13-thread `PrivateTests` failure ("engine failure 1") had two causes in the LXR engine, and gc_laxori had both (copied code):
+1. `LaxoriGcHeap::AddRoot` treated an interior root one byte past the end of an array (no containing object) as fatal. It now ignores
+   it. `LaxoriReferenceCounting::RelocateRoot` moves such a root with the object that ends at the address (not pinned by it).
+2. `LaxoriGcHeap::AllocShared` gave up after one emergency collection, and the allocation cursors were not reset. It now runs up to 3
+   emergency collections (`MaximumEmergencyCollections`) with `ResetAllocationCursors()` before each retry (also after `TryGrow` succeeds).
+
+Laxori-specific: the thread-local scan (`UpdateFn` in `laxori_private.cpp`) ignored a byref one past the end of a marked object that lies
+in a gap or at the end of the region, so the byref did not follow the array when the region was compacted. It now moves with the object.
+(If another object starts at that address, the byref is taken for an interior byref of that object, as before.) `MarkFn` still does not
+keep the array alive because of such a byref. This path has no test that fails without the change: in the managed test `endref` the byref
+points at the next (dead) object, which the mark keeps and which slides by the same distance. Only the last object of a region needs the new code.
+
+Regression checks: P4 `--s3-bookkeeping` (new `pastEnd` root, 1325 of 1325 in both builds), the whole P4 (105380 of 105380), the managed
+test `PrivateTests endref`, and the failure rates in `results/p32/` (`scripts/p13-multi.sh`).
 
 ## Update: thread-local GC cost diagnosis and fix (see `results/TLGC-DIAGNOSIS.md`)
 

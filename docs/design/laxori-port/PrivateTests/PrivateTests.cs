@@ -477,11 +477,50 @@ internal static unsafe class Program
         foreach (var th in ts) th.Join();
     }
 
+    // A byref one element past the end of an array (the end pointer of a loop). While the array is alive the byref has to move with it. When
+    // nothing else keeps the array, no object contains the address and the collector has to ignore it (it used to be a fatal error).
+    [MethodImpl(MethodImplOptions.NoInlining)]
+    static ref long EndOf(long[] array) => ref Unsafe.Add(ref MemoryMarshal.GetArrayDataReference(array), array.Length);
+
+    [MethodImpl(MethodImplOptions.NoInlining)]
+    static long EndOnly(int length, ref long st)
+    {
+        ref long end = ref EndOf(new long[length]);
+        Garbage(3000, ref st);
+        return Unsafe.AsPointer(ref end) == null ? 0 : length;
+    }
+
+    [MethodImpl(MethodImplOptions.NoInlining)]
+    static void TestEndRef(int scale, int thread)
+    {
+        long st = s_seed * 5 + thread;
+        for (int round = 0; round < 40 * scale; round++)
+        {
+            Garbage(1000 + Rnd(ref st, 1000), ref st);
+            long[] arr = new long[8 + Rnd(ref st, 40)];
+            for (int i = 0; i < arr.Length; i++) arr[i] = round + i;
+            ref long end = ref EndOf(arr);
+            Garbage(3000 + Rnd(ref st, 3000), ref st);
+            long distance = Unsafe.ByteOffset(ref MemoryMarshal.GetArrayDataReference(arr), ref end);
+            if (distance != arr.Length * (long)sizeof(long)) throw new InvalidOperationException("end byref did not follow its array");
+            long sum = 0;
+            for (ref long p = ref MemoryMarshal.GetArrayDataReference(arr); Unsafe.IsAddressLessThan(ref p, ref end); p = ref Unsafe.Add(ref p, 1))
+            {
+                sum += p;
+                if ((sum & 1023) == 1) Garbage(50, ref st);
+            }
+            long expected = 0;
+            for (int i = 0; i < arr.Length; i++) expected += round + i;
+            if (sum != expected) throw new InvalidOperationException("loop with an end byref read wrong values");
+            EndOnly(4 + Rnd(ref st, 30), ref st);
+        }
+    }
+
     static readonly (string name, Action<int, int> body)[] s_tests =
     {
         ("stack", TestStack), ("interior", TestInterior), ("graph", TestGraph), ("escape", TestEscape), ("bulk", TestBulk),
         ("handles", TestHandles), ("finalizers", TestFinalizers), ("collect", TestCollect), ("sync", TestSync), ("handoff", TestHandoff),
-        ("trace", TestTrace),
+        ("trace", TestTrace), ("endref", TestEndRef),
     };
 
     static int Main(string[] args)

@@ -158,6 +158,8 @@ private:
     static constexpr size_t LargeBytes = 16 * 1024 * 1024;
     static constexpr size_t MaximumMutators = 1024;
     static constexpr size_t MaximumRoots = 131072;
+    // How many emergency collections an allocation that finds no memory may run before it fails.
+    static constexpr int MaximumEmergencyCollections = 3;
     static constexpr size_t MaximumFrozenSegments = 256;
     static constexpr uint32_t Timeout = 30000;
     // P29. How long the pause thread and the scan executor spin for each other before they sleep, in microseconds.

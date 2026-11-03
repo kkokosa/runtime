@@ -722,6 +722,19 @@ void LaxoriGcHeap::UpdateFn(Object** slot, ScanContext* scan, uint32_t flags)
         object = heap->FindObject(region, location, region.parseEnd);
         if (object == nullptr)
         {
+            // A byref one past the end of a live object (the end pointer of an array loop) lies in a gap or at the end of the
+            // region. It did not keep the object alive, but it moves with the object, as in LaxoriReferenceCounting::RelocateRoot.
+            Object* previous = location % sizeof(uintptr_t) == 0 ?
+                heap->FindObject(region, location - sizeof(uintptr_t), region.parseEnd) : nullptr;
+            if (previous != nullptr && heap->BitTest(reinterpret_cast<uintptr_t>(previous)) &&
+                reinterpret_cast<uintptr_t>(previous) + LocalSize(previous) == location)
+            {
+                int32_t move = GetPad(previous);
+                if (move != 0)
+                {
+                    *slot = reinterpret_cast<Object*>(location - static_cast<uintptr_t>(move));
+                }
+            }
             return;
         }
     }
