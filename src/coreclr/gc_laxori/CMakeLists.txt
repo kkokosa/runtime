@@ -73,3 +73,18 @@ add_library_clr(clrlaxorigc SHARED ${LAXORI_SOURCES} $<TARGET_OBJECTS:laxori_wri
 add_dependencies(clrlaxorigc eventing_headers)
 target_link_libraries(clrlaxorigc PRIVATE ${LAXORI_LINK_LIBRARIES})
 install_clr(TARGETS clrlaxorigc DESTINATIONS . sharedFramework COMPONENT runtime)
+
+# The default library finds object starts from the count plane (no ValidObject plane), like the default LXR library.
+if(NOT CLR_CMAKE_LAXORI_OBJECT_START_BITMAP)
+  target_compile_definitions(clrlaxorigc PRIVATE LAXORI_OBJECT_START_WALK)
+endif()
+
+# Second library built from the same sources for comparison: object starts come from the ValidObject bit plane.
+# Select it with DOTNET_GCPath=<dir>/libclrlaxorigc-bitmap.so.
+if(CLR_CMAKE_LAXORI_BUILD_BITMAP_VARIANT AND NOT CLR_CMAKE_LAXORI_OBJECT_START_BITMAP)
+  add_library_clr(clrlaxorigc_bitmap SHARED ${LAXORI_SOURCES} $<TARGET_OBJECTS:laxori_writebarrier>)
+  add_dependencies(clrlaxorigc_bitmap eventing_headers)
+  target_link_libraries(clrlaxorigc_bitmap PRIVATE ${LAXORI_LINK_LIBRARIES})
+  set_target_properties(clrlaxorigc_bitmap PROPERTIES OUTPUT_NAME clrlaxorigc-bitmap)
+  install_clr(TARGETS clrlaxorigc_bitmap DESTINATIONS . sharedFramework COMPONENT runtime)
+endif()

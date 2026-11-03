@@ -321,6 +321,8 @@ private:
     std::atomic<uint64_t> m_sizing_growths{0};
     std::atomic<uint64_t> m_cause_counts[8]{};
     bool m_policy_trace = false;
+    // Prints the interior-lookup counters of the engine at the end of every pause (LAXORILookupStats).
+    bool m_lookup_stats = false;
     ObjectReferenceEnumerationParameters m_enumeration;
     ObjectHeaderBitsParameters m_header_bits{};
     FrozenSegment m_frozen[MaximumFrozenSegments];

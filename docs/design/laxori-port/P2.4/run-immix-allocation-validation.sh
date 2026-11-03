@@ -24,6 +24,7 @@ command=(
   -Wno-unused-parameter
   -pthread
   -DBUILD_AS_STANDALONE
+  $([[ -n "${LAXORI_OBJECT_START_BITMAP:-}" ]] || echo -DLAXORI_OBJECT_START_WALK)
   -DTARGET_UNIX
   -DHOST_UNIX
   -DTARGET_LINUX

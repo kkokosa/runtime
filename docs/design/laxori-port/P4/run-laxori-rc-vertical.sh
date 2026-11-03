@@ -15,6 +15,11 @@ elif [[ "$configuration" != Debug ]]; then
     echo "Unsupported configuration: $configuration" >&2
     exit 1
 fi
+# The engine uses count-plane object starts (no ValidObject plane) unless LAXORI_OBJECT_START_BITMAP=1 is set (P31).
+# Every control below can run in both variants.
+if [[ -z "${LAXORI_OBJECT_START_BITMAP:-}" ]]; then
+    flags+=(-DLAXORI_OBJECT_START_WALK)
+fi
 case "$control" in
     None) ;;
     EarlyRoot) flags+=(-DLAXORI_RC_EARLY_ROOT_CONTROL -Wno-unused-function) ;;
@@ -50,6 +55,12 @@ case "$control" in
     PauseTraceStore) flags+=(-DLAXORI_PAUSE_TRACE_REPLAY_STORE_CONTROL) ;;
     PreZeroTakeAsClean) flags+=(-DLAXORI_PREZERO_TAKE_AS_CLEAN_CONTROL) ;;
     PreZeroNoPauseGate) flags+=(-DLAXORI_PREZERO_NO_PAUSE_GATE_CONTROL) ;;
+    WalkNoContinuationSkip) flags+=(-DLAXORI_OBJECT_START_WALK -DLAXORI_WALK_NO_CONTINUATION_SKIP_CONTROL) ;;
+    WalkOneWord) flags+=(-DLAXORI_OBJECT_START_WALK -DLAXORI_WALK_ONE_WORD_CONTROL) ;;
+    WalkNoExtent) flags+=(-DLAXORI_OBJECT_START_WALK -DLAXORI_WALK_NO_EXTENT_CONTROL) ;;
+    WalkNoPinnedSpan) flags+=(-DLAXORI_OBJECT_START_WALK -DLAXORI_WALK_NO_PINNED_SPAN_CONTROL) ;;
+    WalkTrustedResolve) flags+=(-DLAXORI_OBJECT_START_WALK -DLAXORI_WALK_TRUSTED_RESOLVE_CONTROL) ;;
+    WalkEnumContinuation) flags+=(-DLAXORI_OBJECT_START_WALK -DLAXORI_WALK_ENUM_CONTINUATION_CONTROL) ;;
     *) echo "Unsupported control: $control" >&2; exit 1 ;;
 esac
 gc="$root/src/coreclr/gc"
@@ -92,6 +103,7 @@ case "$control" in
     TraceBatch*) selectors=(--trace-batching) ;;
     PauseTrace*) selectors=(--pause-trace) ;;
     PreZero*) selectors=(--prezero) ;;
+    Walk*) selectors=(--object-start) ;;
 esac
 "$output/laxori-rc-validation" "${selectors[@]}" > "$output/run.log" 2>&1 || status=$?
 if [[ "$control" != None ]]; then

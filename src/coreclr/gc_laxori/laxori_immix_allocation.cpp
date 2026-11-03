@@ -106,7 +106,9 @@ SideMetadataResult ImmixAllocationManager::Initialize(
 
     m_metadata = metadata;
     m_reference_count = metadata->GetAccessor(LaxoriSideMetadataKind::ReferenceCount);
+#ifndef LAXORI_OBJECT_START_WALK
     m_valid_object = metadata->GetAccessor(LaxoriSideMetadataKind::ValidObject);
+#endif // !LAXORI_OBJECT_START_WALK
     m_field_unlogged = metadata->GetAccessor(LaxoriSideMetadataKind::FieldUnlogged);
     m_object_mark = metadata->GetAccessor(LaxoriSideMetadataKind::ObjectMark);
     m_line_reuse = metadata->GetAccessor(LaxoriSideMetadataKind::LineReuse);
@@ -1179,16 +1181,19 @@ SideMetadataResult ImmixAllocationManager::InitializeFieldLogRange(
 {
 #if !BIGENDIAN && !defined(_DEBUG) && !defined(LAXORI_SIDE_METADATA_TEST_PLATFORM) && !defined(LAXORI_F9_TEST_HOOKS)
     uint32_t shift;
+#ifndef LAXORI_OBJECT_START_WALK
     if (m_valid_object.IsValid())
     {
         memset(const_cast<uint8_t*>(m_valid_object.LocateByte(start, &shift)), 0, size >> 6);
     }
+#endif // !LAXORI_OBJECT_START_WALK
     memset(const_cast<uint8_t*>(m_field_unlogged.LocateByte(start, &shift)), copy ? 0xff : 0, size >> 6);
     return SideMetadataResult::Success;
 #else
     // The ValidObject plane exists because .NET needs the start of the object that contains an interior pointer; the Java
     // LAXORI has no such plane. A stale bit of a dead object must not lie in a range that new objects use, so the plane is
     // cleared here, on the same schedule as the unlog and mark tables of the Java LAXORI (at the refill of the range).
+#if !defined(LAXORI_OBJECT_START_WALK) || defined(LAXORI_WALK_WRITE_VALID_CONTROL)
 #if !defined(LAXORI_SIDE_METADATA_TEST_PLATFORM) || !defined(LAXORI_VALID_CLEAR_CONTROL)
     if (m_metadata->IsSpecEnabled(LaxoriSideMetadataKind::ValidObject))
     {
@@ -1199,6 +1204,7 @@ SideMetadataResult ImmixAllocationManager::InitializeFieldLogRange(
         }
     }
 #endif // !LAXORI_SIDE_METADATA_TEST_PLATFORM || !defined(LAXORI_VALID_CLEAR_CONTROL)
+#endif // !LAXORI_OBJECT_START_WALK || LAXORI_WALK_WRITE_VALID_CONTROL
     // P28 (F9). The Java LAXORI does not clear the count plane and the straddle plane at a refill: the counts and the straddle
     // marks of a dead object are cleared when the object dies (rc.rs, rc_work.rs: unmark_straddle_object), and the tables of a
     // block are cleared only when a defrag source is released. So a free block and a hole have zero counts and no straddle

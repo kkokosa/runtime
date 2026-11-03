@@ -921,7 +921,9 @@ SideMetadataResult ImmixBlockManager::TryReleaseNursery(
     }
 #endif // _DEBUG
     const LaxoriSideMetadataKind reset[] = {
+#ifndef LAXORI_OBJECT_START_WALK
         LaxoriSideMetadataKind::ValidObject,
+#endif // !LAXORI_OBJECT_START_WALK
         LaxoriSideMetadataKind::FieldUnlogged,
         LaxoriSideMetadataKind::ReferenceCountStraddle,
     };
@@ -1063,6 +1065,7 @@ SideMetadataResult ImmixBlockManager::ReleaseNurseryBatchQuiescent(
             }
             continue;
         }
+#ifndef LAXORI_OBJECT_START_WALK
         // The valid bits of the sources that the pause copied out of this block were not cleared one by one (the retiring
         // of a source skips a block that this function releases), and the block can hold bits of dead objects that were
         // never sources. One fill of the plane covers all of them.
@@ -1071,6 +1074,7 @@ SideMetadataResult ImmixBlockManager::ReleaseNurseryBatchQuiescent(
         {
             return result;
         }
+#endif // !LAXORI_OBJECT_START_WALK
         updated++;
     }
     *released = updated;
@@ -1145,7 +1149,9 @@ SideMetadataResult ImmixBlockManager::TryReleaseIfRcDead(
         return SideMetadataResult::Success;
     }
     const LaxoriSideMetadataKind reset[] = {
+#ifndef LAXORI_OBJECT_START_WALK
         LaxoriSideMetadataKind::ValidObject,
+#endif // !LAXORI_OBJECT_START_WALK
         LaxoriSideMetadataKind::FieldUnlogged,
         LaxoriSideMetadataKind::ReferenceCountStraddle,
     };

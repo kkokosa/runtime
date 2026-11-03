@@ -777,7 +777,13 @@ LaxoriRcResult LaxoriReferenceCounting::Initialize(
         return buffers;
     }
     if (m_layout.Create(logBits, &m_layout) != SideMetadataResult::Success ||
+#ifdef LAXORI_OBJECT_START_WALK
+        // The walk variant never commits, reads or writes the ValidObject plane.
+        m_metadata.Initialize(&m_layout, ((UINT64_C(1) << LaxoriSideMetadataLayout::SpecCount) - 1) &
+            ~(UINT64_C(1) << static_cast<size_t>(LaxoriSideMetadataKind::ValidObject))) != SideMetadataResult::Success)
+#else
         m_metadata.Initialize(&m_layout) != SideMetadataResult::Success)
+#endif // LAXORI_OBJECT_START_WALK
     {
         return Fail(LaxoriRcResult::MetadataFailure);
     }
@@ -801,7 +807,11 @@ LaxoriRcResult LaxoriReferenceCounting::Initialize(
         !(m_rc_metadata = m_metadata.GetAccessor(LaxoriSideMetadataKind::ReferenceCount)).IsValid() ||
         !(m_mark_metadata = m_metadata.GetAccessor(LaxoriSideMetadataKind::ObjectMark)).IsValid() ||
         !(m_unlogged_metadata = m_metadata.GetAccessor(LaxoriSideMetadataKind::FieldUnlogged)).IsValid() ||
+#ifdef LAXORI_OBJECT_START_WALK
+        !(m_straddle_metadata = m_metadata.GetAccessor(LaxoriSideMetadataKind::ReferenceCountStraddle)).IsValid() ||
+#else
         !(m_valid_metadata = m_metadata.GetAccessor(LaxoriSideMetadataKind::ValidObject)).IsValid() ||
+#endif // LAXORI_OBJECT_START_WALK
         !(m_defrag_metadata = m_metadata.GetAccessor(LaxoriSideMetadataKind::BlockDefrag)).IsValid() ||
         !(m_line_reuse_metadata = m_metadata.GetAccessor(LaxoriSideMetadataKind::LineReuse)).IsValid() ||
         !(m_page_reuse_metadata = m_metadata.GetAccessor(LaxoriSideMetadataKind::LargeObjectPageReuse)).IsValid() ||
@@ -2258,6 +2268,10 @@ LaxoriRcResult LaxoriReferenceCounting::Allocate(
         {
             ImmixMarkingContext marking = m_marking.load(std::memory_order_acquire)
                 ? ImmixMarkingContext::ConcurrentOrFinalMark : ImmixMarkingContext::Inactive;
+#ifdef LAXORI_OBJECT_START_WALK
+            // The hole is left behind: the span of its objects ends at the used point.
+            ClosePinnedSpan(m_pinned_allocator.GetCursor());
+#endif // LAXORI_OBJECT_START_WALK
             result = m_pinned_allocator.TryRefill(
                 recycled ? ImmixAllocationSource::MutatorPinnedRecycled : ImmixAllocationSource::MutatorPinnedFresh,
                 marking, &status);
@@ -2272,6 +2286,13 @@ LaxoriRcResult LaxoriReferenceCounting::Allocate(
             }
             result = m_pinned_allocator.TryAllocate(request, &start, &status);
         }
+#ifdef LAXORI_OBJECT_START_WALK
+        if (result == SideMetadataResult::Success && status == ImmixAllocationStatus::Allocated &&
+            m_pinned_span_start == 0)
+        {
+            m_pinned_span_start = start;
+        }
+#endif // LAXORI_OBJECT_START_WALK
         m_pinned_lock.clear(std::memory_order_release);
         if (result != SideMetadataResult::Success || status != ImmixAllocationStatus::Allocated)
         {
@@ -2763,6 +2784,10 @@ LaxoriRcResult LaxoriReferenceCounting::FlushMutators()
     }
     if (!m_observer)
     {
+#ifdef LAXORI_OBJECT_START_WALK
+        // The pinned allocator records a span like a mutator does. Mutators are stopped, so no pinned allocation runs.
+        ClosePinnedSpan(m_pinned_allocator.GetCursor());
+#endif // LAXORI_OBJECT_START_WALK
         while (m_detached_lock.test_and_set(std::memory_order_acquire))
         {
             YieldProcessor();
@@ -2798,6 +2823,10 @@ LaxoriRcResult LaxoriReferenceCounting::FlushMutators()
 
 void LaxoriReferenceCounting::MarkPromotedStart(uintptr_t start)
 {
+#ifdef LAXORI_OBJECT_START_WALK
+    // The walk variant keeps no start plane: the count that the caller stores next is the record of the start.
+    (void)start;
+#else
 #if defined(LAXORI_SIDE_METADATA_TEST_PLATFORM) && defined(LAXORI_D2_NO_PROMOTE_VALID_CONTROL)
     // Control: a survivor gets no ValidObject bit.
     (void)start;
@@ -2809,6 +2838,7 @@ void LaxoriReferenceCounting::MarkPromotedStart(uintptr_t start)
     {
         m_valid_metadata.Store(start, 1, SideMetadataMemoryOrder::SequentiallyConsistent);
     }
+#endif // LAXORI_OBJECT_START_WALK
 }
 
 LaxoriRcResult LaxoriReferenceCounting::FindInYoungSpans(uintptr_t address, Object** object, bool requireCounted) const
@@ -3558,6 +3588,16 @@ Object* LaxoriReferenceCounting::ResolveForwarded(Object* object) const
         return object;
     }
     uintptr_t start = Start(object);
+#ifdef LAXORI_OBJECT_START_WALK
+    // The walk variant has no start plane to tell a copy source from an arbitrary address. The value must be the start
+    // of an object (young, or counted), as the references of live slots, roots and counted objects are. A value that may
+    // be stale goes through ResolveForwardedChecked. A header that has no forwarding state is the common case, and
+    // costs no metadata read.
+    if (!IsImmix(start) || start % sizeof(uintptr_t) != 0)
+    {
+        return object;
+    }
+#else
     // P22 (D2). A young object has no ValidObject bit, but a source that the pause copies gets the bit before the
     // claim (TryCopyNursery) and keeps it until RetireSourceChunk. So the bit tells a source from an arbitrary
     // or stale address (the trace queue and the decrement stream can name a dead object, and the memory may now hold
@@ -3567,6 +3607,7 @@ Object* LaxoriReferenceCounting::ResolveForwarded(Object* object) const
     {
         return object;
     }
+#endif // LAXORI_OBJECT_START_WALK
     ObjHeader* header = object->GetHeader();
     uint32_t state = header->GetGCReservedBits(m_configuration.forwardingMask, m_configuration.forwardingShift);
     if (state == 2)
@@ -3584,6 +3625,155 @@ Object* LaxoriReferenceCounting::ResolveForwarded(Object* object) const
     _ASSERTE(state == 0);
     return object;
 }
+
+Object* LaxoriReferenceCounting::ResolveForwardedChecked(Object* object) const
+{
+#if !defined(LAXORI_OBJECT_START_WALK) || (defined(LAXORI_WALK_TRUSTED_RESOLVE_CONTROL))
+    // (Control for the walk variant: a stale value is trusted like a start.)
+    return ResolveForwarded(object);
+#else
+    if ((!m_configuration.evacuateNursery && !m_configuration.evacuateMature) || object == nullptr)
+    {
+        return object;
+    }
+    uintptr_t start = Start(object);
+    if (!IsImmix(start) || start % sizeof(uintptr_t) != 0)
+    {
+        return object;
+    }
+    size_t slot = (start - GetReservationStart()) / sizeof(uintptr_t);
+    if (m_rc_metadata.Load(start, SideMetadataMemoryOrder::Relaxed) != 0)
+    {
+        // A counted start has a valid header. The first slot of a continuation line also holds a count, but it lies inside
+        // another object, and its header is arbitrary data.
+        return IsContinuationSlot(slot) ? object : ResolveForwarded(object);
+    }
+    // Count zero: a young object, a dead object, or an address inside an object. Only the young object that the pause
+    // claimed as a copy source has a forwarding state. The sources are in the spans of the pause, which exist until
+    // Resume; a value that no span starts an object at is not a source. The header is read first only to skip the walk
+    // for the common case of a header without a forwarding state.
+    if (m_young_spans.Size() == 0 ||
+        object->GetHeader()->GetGCReservedBits(m_configuration.forwardingMask, m_configuration.forwardingShift) == 0)
+    {
+        return object;
+    }
+    m_lookup_metrics[3].fetch_add(1, std::memory_order_relaxed);
+    Object* found = nullptr;
+    if (FindInYoungSpans(reinterpret_cast<uintptr_t>(object), &found, false) != LaxoriRcResult::Success || found != object)
+    {
+        return object;
+    }
+    return ResolveForwarded(object);
+#endif // !LAXORI_OBJECT_START_WALK
+}
+
+#ifdef LAXORI_OBJECT_START_WALK
+bool LaxoriReferenceCounting::IsContinuationSlot(size_t slot) const
+{
+#if defined(LAXORI_WALK_NO_CONTINUATION_SKIP_CONTROL)
+    // Control: the count of a continuation line is taken for the start of an object.
+    (void)slot;
+    return false;
+#else
+    uintptr_t start = GetReservationStart() + slot * sizeof(uintptr_t);
+    return (start & ImmixBlockGeometry::LineMask) == 0 &&
+        m_straddle_metadata.Load(start, SideMetadataMemoryOrder::Relaxed) != 0;
+#endif // LAXORI_WALK_NO_CONTINUATION_SKIP_CONTROL
+}
+
+size_t LaxoriReferenceCounting::FindCountedSlotBelow(size_t lowerSlot, size_t slot) const
+{
+    // The count plane has 2, 4 or 8 bits per slot. One 64-bit word covers 64 / bits slots, and the arena start is aligned to
+    // a block, so a slot index and its position in the word agree.
+    uintptr_t arena = GetReservationStart();
+    uint32_t bits = static_cast<uint32_t>(1) << m_rc_metadata.GetLogBitsPerValue();
+    uint64_t lowest = 0;
+    for (uint32_t position = 0; position < 64; position += bits)
+    {
+        lowest |= UINT64_C(1) << position;
+    }
+    while (true)
+    {
+        SideMetadataLocation location = m_rc_metadata.Locate(arena + slot * sizeof(uintptr_t));
+        uint64_t word = static_cast<uint64_t>(
+            SideMetadataAccessor::LoadWord(location.word, SideMetadataMemoryOrder::Relaxed));
+        // One bit per slot (the lowest bit of its field) that says that the count is not zero.
+        uint64_t folded = word;
+        for (uint32_t shift = 1; shift < bits; shift <<= 1)
+        {
+            folded |= folded >> shift;
+        }
+        folded &= lowest;
+        // Only the slots at or below the slot (the slots of the word that lie above it are not part of the search).
+        uint32_t slotInWord = location.shift / bits;
+        uint32_t keep = (slotInWord + 1) * bits;
+        if (keep < 64)
+        {
+            folded &= (UINT64_C(1) << keep) - 1;
+        }
+        while (folded != 0)
+        {
+#ifdef TARGET_WINDOWS
+            DWORD top;
+#else
+            uint32_t top;
+#endif // TARGET_WINDOWS
+            BitScanReverse64(&top, folded);
+            size_t candidate = slot - slotInWord + top / bits;
+            if (candidate < lowerSlot)
+            {
+                return SIZE_MAX;
+            }
+            if (!IsContinuationSlot(candidate))
+            {
+                std::atomic_thread_fence(std::memory_order_acquire);
+                return candidate;
+            }
+            folded &= ~(UINT64_C(1) << top);
+        }
+        size_t wordFirst = slot - slotInWord;
+        if (wordFirst <= lowerSlot)
+        {
+            return SIZE_MAX;
+        }
+#if defined(LAXORI_WALK_ONE_WORD_CONTROL)
+        // Control: the scan looks at one word of the count plane only.
+        return SIZE_MAX;
+#endif // LAXORI_WALK_ONE_WORD_CONTROL
+        slot = wordFirst - 1;
+    }
+}
+
+void LaxoriReferenceCounting::ClosePinnedSpan(uintptr_t end)
+{
+#if defined(LAXORI_WALK_NO_PINNED_SPAN_CONTROL)
+    // Control: a pinned object has no span.
+    (void)end;
+    m_pinned_span_start = 0;
+    return;
+#endif // LAXORI_WALK_NO_PINNED_SPAN_CONTROL
+    uintptr_t start = m_pinned_span_start;
+    m_pinned_span_start = 0;
+    if (start == 0 || end <= start)
+    {
+        return;
+    }
+    while (m_detached_lock.test_and_set(std::memory_order_acquire))
+    {
+        YieldProcessor();
+    }
+    bool pushed = m_detached_spans.Push(start, end);
+    m_detached_lock.clear(std::memory_order_release);
+    if (!pushed)
+    {
+        Fail(LaxoriRcResult::OutOfMemory);
+        return;
+    }
+    m_span_metrics[0].fetch_add(1, std::memory_order_relaxed);
+    m_span_metrics[1].fetch_add(end - start, std::memory_order_relaxed);
+    m_metrics[AllocatedBytes].fetch_add(end - start, std::memory_order_relaxed);
+}
+#endif // LAXORI_OBJECT_START_WALK
 
 LaxoriRcResult LaxoriReferenceCounting::RelocateRoot(Object** slot, bool interior, bool pinned) const
 {
@@ -4254,7 +4444,7 @@ LaxoriRcResult LaxoriReferenceCounting::AllocateCopy(size_t size, size_t worker,
 LaxoriRcResult LaxoriReferenceCounting::TryCopyMature(Object** reference)
 {
     Object* source = *reference;
-    *reference = ResolveForwarded(source);
+    *reference = ResolveForwardedChecked(source);
     if (*reference != source || source == nullptr || !IsMatureCandidate(Start(source)) ||
         (GetTracePhase() != LaxoriTracePhase::Full && GetTracePhase() != LaxoriTracePhase::FinalMark))
     {
@@ -5560,7 +5750,7 @@ void LaxoriReferenceCounting::FixPacketReferences(Work* work)
             continue;
         }
 #endif // LAXORI_SIDE_METADATA_TEST_PLATFORM && LAXORI_PENDING_READER_REBASE_CONTROL
-        Object* fixedObject = ResolveForwarded(object);
+        Object* fixedObject = ResolveForwardedChecked(object);
         if (fixedObject != object)
         {
             m_walk[4].fetch_add(1, std::memory_order_relaxed);
@@ -5866,7 +6056,15 @@ LaxoriRcResult LaxoriReferenceCounting::RetireSourceChunk(void* opaque)
             }
         }
 #endif // !LAXORI_S4_NO_NURSERY_RELEASE_CONTROL
+#ifdef LAXORI_OBJECT_START_WALK
+        // The walk variant has no ValidObject plane to clear. A nursery source is young: it has no count, and the span
+        // that named it is gone at Resume. (The header of the source keeps its forwarding state; a reader finds out that
+        // the value is not a source of the pause because no span of the pause starts an object there.)
+        (void)cachedBlock;
+        (void)cachedReleased;
+#else
         m_valid_metadata.Store(start, 0, SideMetadataMemoryOrder::SequentiallyConsistent);
+#endif // LAXORI_OBJECT_START_WALK
     }
     if (matureBytes != 0)
     {
@@ -6601,7 +6799,26 @@ LaxoriRcResult LaxoriReferenceCounting::LoadCount(Object* object, uintptr_t* cou
     return result == SideMetadataResult::Success ? LaxoriRcResult::Success : LaxoriRcResult::MetadataFailure;
 }
 
+static int64_t LookupClock()
+{
+#ifdef LAXORI_SIDE_METADATA_TEST_PLATFORM
+    return std::chrono::duration_cast<std::chrono::nanoseconds>(
+        std::chrono::steady_clock::now().time_since_epoch()).count();
+#else
+    return minipal_hires_ticks();
+#endif // LAXORI_SIDE_METADATA_TEST_PLATFORM
+}
+
 LaxoriRcResult LaxoriReferenceCounting::FindContainingObject(uintptr_t address, Object** object, bool requireCounted) const
+{
+    int64_t begin = LookupClock();
+    LaxoriRcResult result = FindContainingObjectCore(address, object, requireCounted);
+    m_lookup_metrics[0].fetch_add(1, std::memory_order_relaxed);
+    m_lookup_metrics[1].fetch_add(static_cast<uint64_t>(LookupClock() - begin), std::memory_order_relaxed);
+    return result;
+}
+
+LaxoriRcResult LaxoriReferenceCounting::FindContainingObjectCore(uintptr_t address, Object** object, bool requireCounted) const
 {
     if (object == nullptr || (!IsImmix(address) && !IsLarge(address)))
     {
@@ -6621,7 +6838,11 @@ LaxoriRcResult LaxoriReferenceCounting::FindContainingObject(uintptr_t address, 
             return LaxoriRcResult::MetadataFailure;
         }
         Object* candidate = Reference(allocation.object);
+#ifdef LAXORI_OBJECT_START_WALK
+        if (address < reinterpret_cast<uintptr_t>(candidate))
+#else
         if (address < reinterpret_cast<uintptr_t>(candidate) || !IsObjectStart(candidate))
+#endif // LAXORI_OBJECT_START_WALK
         {
             return LaxoriRcResult::InvalidArgument;
         }
@@ -6638,8 +6859,49 @@ LaxoriRcResult LaxoriReferenceCounting::FindContainingObject(uintptr_t address, 
         &&
         FindInYoungSpans(address, object, requireCounted) == LaxoriRcResult::Success)
     {
+        m_lookup_metrics[2].fetch_add(1, std::memory_order_relaxed);
         return LaxoriRcResult::Success;
     }
+#ifdef LAXORI_OBJECT_START_WALK
+    // The walk variant has no ValidObject plane. The nearest counted start at or below the address is the start of the
+    // object that contains it: the count of a dead object is cleared when the object dies (F9), an interior slot of a live
+    // object has no count, and the first slot of each continuation line of a long object is skipped (FindCountedSlotBelow).
+    // A young object has no count: an address inside it is found above, in the spans of the pause.
+    {
+        uintptr_t arena = GetReservationStart();
+        size_t found = FindCountedSlotBelow(
+            (lower - arena) / sizeof(uintptr_t), (address - arena) / sizeof(uintptr_t));
+        if (found == SIZE_MAX)
+        {
+            return LaxoriRcResult::InvalidArgument;
+        }
+        uintptr_t cursor = arena + found * sizeof(uintptr_t);
+        Object* candidate = Reference(cursor);
+        // A forwarded source has its first field overwritten by the forwarding pointer, so an array or string
+        // length is lost. The copy has the same size.
+        Object* sizeSource = ResolveForwarded(candidate);
+        if (sizeSource != candidate && !IsObjectStart(sizeSource))
+        {
+            return LaxoriRcResult::InvalidArgument;
+        }
+        size_t size = ObjectSize(sizeSource);
+        if (size < MIN_OBJECT_SIZE || size > upper - cursor)
+        {
+            return LaxoriRcResult::InvalidArgument;
+        }
+#if defined(LAXORI_WALK_NO_EXTENT_CONTROL)
+        // Control: the candidate is accepted without asking whether it contains the address.
+        if (address >= reinterpret_cast<uintptr_t>(candidate))
+#else
+        if (address >= reinterpret_cast<uintptr_t>(candidate) && address - cursor < size)
+#endif // LAXORI_WALK_NO_EXTENT_CONTROL
+        {
+            *object = candidate;
+            return LaxoriRcResult::Success;
+        }
+        return LaxoriRcResult::InvalidArgument;
+    }
+#else
     uintptr_t cursor = address & ~(sizeof(uintptr_t) - 1);
     // The nearest ValidObject bit at or below the address is the start of the object that contains it. An object
     // range is cleared (ValidObject and counts) before an allocation or a copy reuses it, and only the start of a
@@ -6684,6 +6946,7 @@ LaxoriRcResult LaxoriReferenceCounting::FindContainingObject(uintptr_t address, 
         cursor -= sizeof(uintptr_t);
     }
     return LaxoriRcResult::InvalidArgument;
+#endif // LAXORI_OBJECT_START_WALK
 }
 
 LaxoriRcMetrics LaxoriReferenceCounting::GetMetrics() const
@@ -7284,6 +7547,56 @@ size_t LaxoriReferenceCounting::FindNextValidSlot(size_t first, size_t limit) co
     size_t largeStart = m_configuration.immixBytes / sizeof(uintptr_t);
     size_t largeEnd = largeStart + m_large.GetAdmittedBytes() / sizeof(uintptr_t);
     uintptr_t arena = GetReservationStart();
+#ifdef LAXORI_OBJECT_START_WALK
+    // The walk variant has no ValidObject plane: the starts of the counted objects are the non-zero counts, except the first
+    // slot of each continuation line of a long object.
+    uint32_t bits = static_cast<uint32_t>(1) << m_rc_metadata.GetLogBitsPerValue();
+    uint64_t lowest = 0;
+    for (uint32_t position = 0; position < 64; position += bits)
+    {
+        lowest |= UINT64_C(1) << position;
+    }
+    while (first < largeEnd && first < limit)
+    {
+        if (first >= immixEnd && first < largeStart)
+        {
+            first = largeStart;
+        }
+        SideMetadataLocation location = m_rc_metadata.Locate(arena + first * sizeof(uintptr_t));
+        uint64_t word = static_cast<uint64_t>(
+            SideMetadataAccessor::LoadWord(location.word, SideMetadataMemoryOrder::Relaxed)) >> location.shift;
+        uint64_t folded = word;
+        for (uint32_t shift = 1; shift < bits; shift <<= 1)
+        {
+            folded |= folded >> shift;
+        }
+        folded &= lowest;
+        while (folded != 0)
+        {
+#ifdef TARGET_WINDOWS
+            DWORD bit;
+#else
+            uint32_t bit;
+#endif // TARGET_WINDOWS
+            BitScanForward64(&bit, folded);
+            size_t candidate = first + bit / bits;
+            // The first slot of a line of the large-object space is never a continuation slot.
+#if defined(LAXORI_WALK_ENUM_CONTINUATION_CONTROL)
+            // Control: the enumeration takes the count of a continuation line for an object start.
+            if (true)
+#else
+            if (candidate >= limit || candidate >= largeStart || !IsContinuationSlot(candidate))
+#endif // LAXORI_WALK_ENUM_CONTINUATION_CONTROL
+            {
+                std::atomic_thread_fence(std::memory_order_acquire);
+                return candidate;
+            }
+            folded &= folded - 1;
+        }
+        first += (64 - location.shift) / bits;
+    }
+    return total;
+#else
     while (first < largeEnd && first < limit)
     {
         if (first >= immixEnd && first < largeStart)
@@ -7308,6 +7621,7 @@ size_t LaxoriReferenceCounting::FindNextValidSlot(size_t first, size_t limit) co
         first += 64 - location.shift;
     }
     return total;
+#endif // LAXORI_OBJECT_START_WALK
 }
 
 LaxoriRcResult LaxoriReferenceCounting::RequestGrowth(bool large, size_t minimumBytes)
@@ -8475,7 +8789,7 @@ LaxoriRcResult LaxoriReferenceCounting::ProcessPauseTraceObject(
 LaxoriRcResult LaxoriReferenceCounting::ProcessTraceObject(
     Object* object, size_t* directBudget, TraceBatch* targets)
 {
-    object = ResolveForwarded(object);
+    object = ResolveForwardedChecked(object);
     if (object == nullptr)
     {
         return LaxoriRcResult::Success;
@@ -8989,7 +9303,7 @@ LaxoriRcResult LaxoriReferenceCounting::TraceRoots(const uintptr_t* objects, siz
 
 bool LaxoriReferenceCounting::IsMarked(Object* object) const
 {
-    object = ResolveForwarded(object);
+    object = ResolveForwardedChecked(object);
     if (object == nullptr || !OwnsAddress(Start(object)) || Start(object) % sizeof(uintptr_t) != 0)
     {
         return false;
@@ -9014,12 +9328,28 @@ bool LaxoriReferenceCounting::IsObjectStart(Object* object) const
         return false;
     }
 #endif // !LAXORI_SIDE_METADATA_TEST_PLATFORM || !LAXORI_OBJECT_INTERIOR_CONTROL
+#ifdef LAXORI_OBJECT_START_WALK
+    // No start plane. A large object starts where the large-object space has an allocation; an Immix object starts where
+    // the count is not zero (and the slot is not the first slot of a continuation line, which holds a count too).
+    if (IsLarge(start))
+    {
+        LaxoriLargeObjectAllocation allocation;
+        return m_large.GetAllocation(start, &allocation) == LaxoriLargeObjectResult::Success;
+    }
+    return m_rc_metadata.Load(start, SideMetadataMemoryOrder::Relaxed) != 0 &&
+        !IsContinuationSlot((start - GetReservationStart()) / sizeof(uintptr_t));
+#else
     return m_valid_metadata.Load(start, SideMetadataMemoryOrder::Relaxed) != 0;
+#endif // LAXORI_OBJECT_START_WALK
 }
 
 bool LaxoriReferenceCounting::IsLargeObject(Object* object) const
 {
+#ifdef LAXORI_OBJECT_START_WALK
+    return IsLarge(Start(object)) && IsObjectStart(object);
+#else
     return IsObjectStart(object) && IsLarge(Start(object));
+#endif // LAXORI_OBJECT_START_WALK
 }
 
 size_t LaxoriReferenceCounting::GetLargeObjectSize(uintptr_t start) const
@@ -9151,7 +9481,9 @@ LaxoriRcResult LaxoriReferenceCounting::SweepCycleRange(size_t first, size_t lim
             break;
         }
         m_rc_metadata.Store(start, 0, SideMetadataMemoryOrder::SequentiallyConsistent);
+#ifndef LAXORI_OBJECT_START_WALK
         m_valid_metadata.Store(start, 0, SideMetadataMemoryOrder::SequentiallyConsistent);
+#endif // !LAXORI_OBJECT_START_WALK
         objects++;
         bytes += size;
     }
@@ -9272,7 +9604,9 @@ LaxoriRcResult LaxoriReferenceCounting::PoisonRangeForTest(uintptr_t start, size
 {
     for (uintptr_t address = start; address < start + bytes; address += sizeof(uintptr_t))
     {
+#ifndef LAXORI_OBJECT_START_WALK
         m_valid_metadata.Store(address, 1, SideMetadataMemoryOrder::SequentiallyConsistent);
+#endif // !LAXORI_OBJECT_START_WALK
         if (counts)
         {
             m_rc_metadata.Store(address, 1, SideMetadataMemoryOrder::SequentiallyConsistent);
@@ -9298,7 +9632,9 @@ LaxoriRcResult LaxoriReferenceCounting::GetRangeStateForTest(
     *state = {};
     for (uintptr_t address = start; address < start + bytes; address += sizeof(uintptr_t))
     {
+#ifndef LAXORI_OBJECT_START_WALK
         state->validSlots += m_valid_metadata.Load(address, SideMetadataMemoryOrder::Relaxed) != 0;
+#endif // !LAXORI_OBJECT_START_WALK
         state->countedSlots += m_rc_metadata.Load(address, SideMetadataMemoryOrder::Relaxed) != 0;
         state->unloggedSlots += m_unlogged_metadata.Load(address, SideMetadataMemoryOrder::Relaxed) != 0;
         state->markedSlots += m_mark_metadata.Load(address, SideMetadataMemoryOrder::Relaxed) != 0;

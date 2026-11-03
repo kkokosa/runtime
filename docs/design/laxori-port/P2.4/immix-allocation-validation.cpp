@@ -15,6 +15,13 @@
 
 namespace
 {
+    // The default variant clears the ValidObject plane when it hands out a range. The walk variant (LAXORI_OBJECT_START_WALK) never
+    // writes it, so the poison that these tests put in the plane is still there after the refill.
+#ifdef LAXORI_OBJECT_START_WALK
+    constexpr uintptr_t ValidAfterRefill = 1;
+#else
+    constexpr uintptr_t ValidAfterRefill = 0;
+#endif // LAXORI_OBJECT_START_WALK
 #ifdef HOST_64BIT
     constexpr uintptr_t DataStart = UINT64_C(0x0000000300000000);
     constexpr size_t DefaultBlockCount = 8;
@@ -1200,7 +1207,7 @@ namespace
         Expect("f9 fresh refill ready", status == ImmixAllocationStatus::Ready);
         uintptr_t freshBlock = first.GetBlock();
         Expect("f9 fresh block clears ValidObject", planeIs(LaxoriSideMetadataKind::ValidObject, freshBlock,
-            ImmixBlockGeometry::BlockBytes, 0));
+            ImmixBlockGeometry::BlockBytes, ValidAfterRefill));
         Expect("f9 fresh block clears the unlog table", planeIs(LaxoriSideMetadataKind::FieldUnlogged, freshBlock,
             ImmixBlockGeometry::BlockBytes, 0));
         Expect("f9 fresh block clears the mark table", planeIs(LaxoriSideMetadataKind::ObjectMark, freshBlock,
@@ -1264,7 +1271,7 @@ namespace
         Expect("f9 the search of one hole read 10 lines of 128",
             fixture.allocation.GetLineProbesForTest() - before == 10);
         Expect("f9 the recycled hole clears ValidObject and the unlog table",
-            planeIs(LaxoriSideMetadataKind::ValidObject, LineAddress(reusable, 7), 2 * ImmixBlockGeometry::LineBytes, 0) &&
+            planeIs(LaxoriSideMetadataKind::ValidObject, LineAddress(reusable, 7), 2 * ImmixBlockGeometry::LineBytes, ValidAfterRefill) &&
             planeIs(LaxoriSideMetadataKind::FieldUnlogged, LineAddress(reusable, 7), 2 * ImmixBlockGeometry::LineBytes, 0));
         Expect("f9 the recycled hole leaves its neighbours alone",
             planeIs(LaxoriSideMetadataKind::ValidObject, LineAddress(reusable, 6), ImmixBlockGeometry::LineBytes, 1) &&
@@ -1383,7 +1390,7 @@ namespace
             planeIs(LaxoriSideMetadataKind::ValidObject, LineAddress(blockB, 4), 2 * ImmixBlockGeometry::LineBytes, 1) &&
             planeIs(LaxoriSideMetadataKind::FieldUnlogged, LineAddress(blockB, 4), 2 * ImmixBlockGeometry::LineBytes, 1));
         Expect("item4 the hole that was taken has clear planes",
-            planeIs(LaxoriSideMetadataKind::ValidObject, LineAddress(blockB, 9), 6 * ImmixBlockGeometry::LineBytes, 0) &&
+            planeIs(LaxoriSideMetadataKind::ValidObject, LineAddress(blockB, 9), 6 * ImmixBlockGeometry::LineBytes, ValidAfterRefill) &&
             planeIs(LaxoriSideMetadataKind::FieldUnlogged, LineAddress(blockB, 9), 6 * ImmixBlockGeometry::LineBytes, 0));
 
         ExpectMetadata("item4 second refill for a request of 4 lines",

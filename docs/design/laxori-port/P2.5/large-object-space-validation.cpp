@@ -719,9 +719,16 @@ int main()
             Load(metadata, LaxoriSideMetadataKind::LargeObjectMarkNursery, first.object) ==
                 LaxoriLargeObjectSpace::NurseryBit,
             "fresh nursery state");
+#ifdef LAXORI_OBJECT_START_WALK
+        // The walk variant never writes the ValidObject plane: a large object is found by its allocation record.
+        Check(
+            Load(metadata, LaxoriSideMetadataKind::ValidObject, first.object) == 0,
+            "fresh object leaves the ValidObject plane alone");
+#else
         Check(
             Load(metadata, LaxoriSideMetadataKind::ValidObject, first.object) == 1,
             "fresh valid object");
+#endif // LAXORI_OBJECT_START_WALK
         Check(
             Load(metadata, LaxoriSideMetadataKind::ReferenceCount, first.object) == 0,
             "fresh reference count");

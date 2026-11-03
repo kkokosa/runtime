@@ -519,7 +519,9 @@ LaxoriLargeObjectResult LaxoriLargeObjectSpace::Initialize(
 
     const LaxoriSideMetadataKind required[] =
     {
+#ifndef LAXORI_OBJECT_START_WALK
         LaxoriSideMetadataKind::ValidObject,
+#endif // !LAXORI_OBJECT_START_WALK
         LaxoriSideMetadataKind::ReferenceCount,
         LaxoriSideMetadataKind::FieldUnlogged,
         LaxoriSideMetadataKind::ObjectMark,
@@ -795,7 +797,9 @@ LaxoriLargeObjectResult LaxoriLargeObjectSpace::ResetAllocationMetadata(
 {
     const LaxoriSideMetadataKind resetKinds[] =
     {
+#ifndef LAXORI_OBJECT_START_WALK
         LaxoriSideMetadataKind::ValidObject,
+#endif // !LAXORI_OBJECT_START_WALK
         LaxoriSideMetadataKind::ReferenceCount,
         LaxoriSideMetadataKind::FieldUnlogged,
         LaxoriSideMetadataKind::ObjectMark,
@@ -850,6 +854,7 @@ LaxoriLargeObjectResult LaxoriLargeObjectSpace::InitializeAllocationMetadata(
         allocation.object,
         state,
         SideMetadataMemoryOrder::SequentiallyConsistent);
+#ifndef LAXORI_OBJECT_START_WALK
     if (metadataResult == SideMetadataResult::Success)
     {
         metadataResult = m_metadata->Store(
@@ -858,6 +863,7 @@ LaxoriLargeObjectResult LaxoriLargeObjectSpace::InitializeAllocationMetadata(
             1,
             SideMetadataMemoryOrder::SequentiallyConsistent);
     }
+#endif // !LAXORI_OBJECT_START_WALK
     return FromMetadataResult(metadataResult);
 }
 

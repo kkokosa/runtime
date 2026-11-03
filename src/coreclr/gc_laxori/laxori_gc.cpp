@@ -387,6 +387,7 @@ HRESULT LaxoriGcHeap::Initialize()
         !ReadBooleanSetting("LAXORIHeapSizing", &m_sizing_configuration.enabled) ||
         !ReadSetting("LAXORINurseryCapMB", &nurseryCapMB, 10, SIZE_MAX >> 20) ||
         !ReadBooleanSetting("LAXORIPolicyTrace", &m_policy_trace) ||
+        !ReadBooleanSetting("LAXORILookupStats", &m_lookup_stats) ||
         !ReadBooleanSetting("LAXORIPrezero", &configuration.prezero) ||
         !ReadBooleanSetting("LAXORIPrezeroThread", &configuration.prezeroThread) ||
         !ReadSetting("LAXORIPrezeroMarginBlocks", &configuration.prezeroMarginBlocks, 10, 4096) ||
@@ -1482,6 +1483,15 @@ void LaxoriGcHeap::Suspend(void* context)
 void LaxoriGcHeap::Resume(bool finished, void* context)
 {
     LaxoriGcHeap* heap = static_cast<LaxoriGcHeap*>(context);
+    if (heap->m_lookup_stats)
+    {
+        fprintf(stderr, "LAXORILOOKUP pause=%u calls=%llu ticks=%llu spans=%llu checked=%llu freq=%llu\n",
+            heap->m_collections.load(), static_cast<unsigned long long>(heap->m_engine.GetLookupMetric(0)),
+            static_cast<unsigned long long>(heap->m_engine.GetLookupMetric(1)),
+            static_cast<unsigned long long>(heap->m_engine.GetLookupMetric(2)),
+            static_cast<unsigned long long>(heap->m_engine.GetLookupMetric(3)),
+            static_cast<unsigned long long>(minipal_hires_tick_frequency()));
+    }
     LaxoriPauseTimers& timers = heap->m_engine.GetPauseTimers();
     {
         LaxoriPhaseScope resume(timers, LaxoriPauseTimers::ResumeRuntime);
@@ -2065,7 +2075,7 @@ bool LaxoriGcHeap::IsThreadUsingAllocationContextHeap(gc_alloc_context* context,
 
 bool LaxoriGcHeap::IsPromoted(Object* object)
 {
-    object = m_engine.ResolveForwarded(object);
+    object = m_engine.ResolveForwardedChecked(object);
     if (object == nullptr)
     {
         return true;

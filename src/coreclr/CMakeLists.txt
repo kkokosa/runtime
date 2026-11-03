@@ -74,7 +74,11 @@ OPTION(CLR_CMAKE_ENABLE_SATORI_GC
 OPTION(CLR_CMAKE_ENABLE_LXR_GC
   "Build the experimental selectable LXR collector" OFF)
 OPTION(CLR_CMAKE_ENABLE_LAXORI_GC
-  "Build the experimental selectable Laxori collector (request-private regions over an LXR engine)" OFF)
+  "Build the experimental selectable Laxori collector (thread-local private regions over an LXR engine)" OFF)
+OPTION(CLR_CMAKE_LAXORI_OBJECT_START_BITMAP
+  "Laxori: make libclrlaxorigc.so itself the ValidObject bit-plane build (default: object starts from the count plane)" OFF)
+OPTION(CLR_CMAKE_LAXORI_BUILD_BITMAP_VARIANT
+  "Laxori: also build libclrlaxorigc-bitmap.so (ValidObject plane) from the same sources for comparison" ON)
 
 if(CLR_CMAKE_ENABLE_LAXORI_GC)
   if(NOT CLR_CMAKE_TARGET_ARCH_AMD64 OR NOT CLR_CMAKE_TARGET_LINUX)
