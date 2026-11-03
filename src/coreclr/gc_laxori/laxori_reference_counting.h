@@ -479,6 +479,11 @@ public:
         RegionsAcquired, RegionsDissolvedAtPause, RegionsDissolvedFull, RegionsDissolvedEscape, RegionsDissolvedExit,
         LocalCollections, LocalSkipped, LocalMarkAborted, LocalNotWorth, LocalSurvivorBytes, LocalReclaimedBytes,
         EscapeSlowCalls, EscapedObjects, EscapedBytes, ForeignEscapes, AcquireFailures, BulkEscapes,
+        // Diagnostics of the thread-local collector (DOTNET_LAXORITlTimers=1; zero otherwise). Cycles are TSC cycles.
+        TlCalls,
+        TlCycTotal, TlCycEsc, TlCycStackMark, TlCycSync, TlCycProp, TlCycPlan, TlCycStackUpd, TlCycObjUpd, TlCycCompact, TlCycFailed,
+        TlStackScans, TlRoots, TlRootsIn, TlEscObjs, TlEscBytes, TlSyncObjs, TlPropObjs, TlPlanObjs, TlMovedBytes, TlUpdObjs,
+        TlDissolveCyc, TlDissolveCnt, TlGapZeroCyc, TlGapZeroBytes, TlPauseDissolveCyc, TlTscKHz,
         RegionMetricCount,
     };
     // P22 (D2). The mutator's buffer ends at cursor (the used point: the address of the next object header). The span of

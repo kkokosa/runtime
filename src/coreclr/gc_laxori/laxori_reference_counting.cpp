@@ -1654,6 +1654,7 @@ LaxoriRcResult LaxoriReferenceCounting::DissolveRegion(LaxoriRcMutator* mutator,
         return LaxoriRcResult::Success;
     }
     size_t first = (region.start - reinterpret_cast<uintptr_t>(m_arena)) >> ImmixBlockGeometry::BlockLogBytes;
+    uint64_t dissolveStart = __builtin_ia32_rdtsc();
     for (size_t block = 0; block < region.blocks; block++)
     {
         __atomic_store_n(&m_region_owner[first + block], static_cast<uint64_t>(0), __ATOMIC_RELEASE);
@@ -1665,6 +1666,8 @@ LaxoriRcResult LaxoriReferenceCounting::DissolveRegion(LaxoriRcMutator* mutator,
     }
     free(region.gaps);
     region = LaxoriPrivateRegion();
+    CountRegionMetric(TlDissolveCyc, __builtin_ia32_rdtsc() - dissolveStart);
+    CountRegionMetric(TlDissolveCnt);
     return closed;
 }
 
@@ -2731,7 +2734,9 @@ LaxoriRcResult LaxoriReferenceCounting::FlushMutators()
             {
                 // Laxori. A pause dissolves the private region: its objects are young objects like all others.
                 CountRegionMetric(RegionsDissolvedAtPause);
+                uint64_t dissolveStart = __builtin_ia32_rdtsc();
                 closed = DissolveRegion(&mutator, mutator.region.parseEnd);
+                CountRegionMetric(TlPauseDissolveCyc, __builtin_ia32_rdtsc() - dissolveStart);
             }
             if (closed != LaxoriRcResult::Success)
             {

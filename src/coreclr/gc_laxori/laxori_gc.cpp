@@ -2950,6 +2950,10 @@ uint64_t LaxoriGcHeap::GetPrototypeMetric(uint32_t metric) const
 {
     if (metric >= 700 && metric < 700 + LaxoriReferenceCounting::RegionMetricCount)
     {
+        if (metric - 700 == LaxoriReferenceCounting::TlTscKHz)
+        {
+            return TscKHz();
+        }
         return m_engine.GetRegionMetric(metric - 700);
     }
     LaxoriRcMetrics rc = m_engine.GetMetrics();

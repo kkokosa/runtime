@@ -117,12 +117,28 @@ namespace
     }
 }
 
+// Diagnostics of the thread-local collector (DOTNET_LAXORITlTimers=1). One accumulator for each collection attempt; it is added to
+// the engine metrics at the end of LocalCollect. A null pointer means "off".
+struct TlAcc
+{
+    uint64_t cyc[10] = {};   // Total, Esc, StackMark, Sync, Prop, Plan, StackUpd, ObjUpd, Compact, Failed
+    uint64_t cnt[10] = {};   // StackScans, Roots, RootsIn, EscObjs, EscBytes, SyncObjs, PropObjs, PlanObjs, MovedBytes, UpdObjs
+};
+enum { C_Total, C_Esc, C_StackMark, C_Sync, C_Prop, C_Plan, C_StackUpd, C_ObjUpd, C_Compact, C_Failed };
+enum { N_StackScans, N_Roots, N_RootsIn, N_EscObjs, N_EscBytes, N_SyncObjs, N_PropObjs, N_PlanObjs, N_MovedBytes, N_UpdObjs };
+thread_local TlAcc* t_acc = nullptr;
+inline uint64_t TlNow() { return t_acc != nullptr ? __builtin_ia32_rdtsc() : 0; }
+inline void TlAdd(int cyc, uint64_t since) { if (t_acc != nullptr) { t_acc->cyc[cyc] += __builtin_ia32_rdtsc() - since; } }
+inline void TlCount(int n, uint64_t amount = 1) { if (t_acc != nullptr) { t_acc->cnt[n] += amount; } }
+
 struct LaxoriGcHeap::LocalGcContext
 {
     LaxoriGcHeap* heap;
     LaxoriPrivateRegion* region;
     size_t maxSurvivors;
     bool aborted;
+    uint64_t roots = 0;
+    uint64_t rootsIn = 0;
 };
 
 // ---- bitmap helpers ----
@@ -506,7 +522,13 @@ void LaxoriGcHeap::OpenGap(gc_alloc_context* context, LaxoriRcMutator* mutator, 
     const LaxoriPrivateGap gap = region.gaps[gapIndex];
     if (!region.freshGaps && m_test_control != 4)
     {
+        uint64_t zeroStart = m_tl_timers ? __builtin_ia32_rdtsc() : 0;
         memset(reinterpret_cast<void*>(gap.start), 0, gap.end - gap.start);
+        if (m_tl_timers)
+        {
+            m_engine.CountRegionMetric(LaxoriReferenceCounting::TlGapZeroCyc, __builtin_ia32_rdtsc() - zeroStart);
+            m_engine.CountRegionMetric(LaxoriReferenceCounting::TlGapZeroBytes, gap.end - gap.start);
+        }
     }
     uint32_t* index = m_private_index + ((region.start - m_arena) >> IndexShift);
     size_t granules = (region.end - region.start) >> IndexShift;
@@ -645,10 +667,12 @@ void LaxoriGcHeap::MarkFn(Object** slot, ScanContext* scan, uint32_t flags)
     LaxoriPrivateRegion& region = *local->region;
     uintptr_t location = reinterpret_cast<uintptr_t>(*slot);
     bool interior = (flags & GC_CALL_INTERIOR) != 0;
+    local->roots++;
     if (!(interior ? heap->InRegionInterior(region, location) : heap->InRegion(region, location)))
     {
         return;
     }
+    local->rootsIn++;
     Object* object = reinterpret_cast<Object*>(location);
     if (interior)
     {
@@ -686,10 +710,12 @@ void LaxoriGcHeap::UpdateFn(Object** slot, ScanContext* scan, uint32_t flags)
     LaxoriPrivateRegion& region = *local->region;
     uintptr_t location = reinterpret_cast<uintptr_t>(*slot);
     bool interior = (flags & GC_CALL_INTERIOR) != 0;
+    local->roots++;
     if (!(interior ? heap->InRegionInterior(region, location) : heap->InRegion(region, location)))
     {
         return;
     }
+    local->rootsIn++;
     Object* object = reinterpret_cast<Object*>(location);
     if (interior)
     {
@@ -721,8 +747,11 @@ bool LaxoriGcHeap::LocalMark(LaxoriPrivateRegion& region)
     const uintptr_t limit = region.parseEnd;
     // Escaped objects are roots. At this point only Escaped bits and exposed slots are set, so the first set bit after an
     // object is the Escaped bit of the next escaped object (at its pointer plus one word).
+    uint64_t t0 = TlNow();
     size_t index = (first - m_arena) >> 3;
     size_t end = (limit - m_arena) >> 3;
+    uint64_t escObjects = 0;
+    uint64_t escBytes = 0;
     while (index < end)
     {
         uint64_t word = m_private_bits[index >> 6] >> (index & 63);
@@ -738,34 +767,52 @@ bool LaxoriGcHeap::LocalMark(LaxoriPrivateRegion& region)
         }
         Object* object = reinterpret_cast<Object*>(m_arena + ((index - 1) << 3));
         BitSet(reinterpret_cast<uintptr_t>(object));
-        index = (reinterpret_cast<uintptr_t>(object) + LocalSize(object) - m_arena) >> 3;
+        size_t escSize = LocalSize(object);
+        escObjects++;
+        escBytes += escSize;
+        index = (reinterpret_cast<uintptr_t>(object) + escSize - m_arena) >> 3;
     }
+    TlAdd(C_Esc, t0);
+    TlCount(N_EscObjs, escObjects);
+    TlCount(N_EscBytes, escBytes);
 
     LocalGcContext local{this, &region, m_region_bytes / 8, false};
     ScanContext scan;
     scan.promotion = TRUE;
     scan._unused1 = &local;
+    t0 = TlNow();
     GCToEEInterface::GcScanCurrentStackRoots(reinterpret_cast<promote_func*>(MarkFn), &scan);
+    TlAdd(C_StackMark, t0);
+    TlCount(N_StackScans);
+    TlCount(N_Roots, local.roots);
+    TlCount(N_RootsIn, local.rootsIn);
 
     // The sync-block table of the runtime holds raw pointers to the objects that have a sync block, dead or alive, and it is
     // updated only by a pause. An object with a sync block therefore stays where it is and stays alive until the region is
     // dissolved. The walk finds the dead ones too: the objects between two gaps are contiguous.
-    WalkRegionObjects(region, [&](Object* walked, size_t size)
+    t0 = TlNow();
+    uint64_t walked = 0;
+    WalkRegionObjects(region, [&](Object* walkedObject, size_t size)
     {
         if (m_test_control == 5)
         {
             return;
         }
-        uintptr_t address = reinterpret_cast<uintptr_t>(walked);
-        if (!BitTest(address) && HasSyncBlock(walked))
+        walked++;
+        uintptr_t address = reinterpret_cast<uintptr_t>(walkedObject);
+        if (!BitTest(address) && HasSyncBlock(walkedObject))
         {
             BitSet(address);
             BitSet(address + 2 * sizeof(uintptr_t));
             region.survivors += size;
-            PushMarkStack(region, walked);
+            PushMarkStack(region, walkedObject);
         }
     });
+    TlAdd(C_Sync, t0);
+    TlCount(N_SyncObjs, walked);
 
+    t0 = TlNow();
+    uint64_t propagated = 0;
     Object* object = PopMarkStack(region);
     while (object != nullptr)
     {
@@ -775,8 +822,11 @@ bool LaxoriGcHeap::LocalMark(LaxoriPrivateRegion& region)
             while (PopMarkStack(region) != nullptr)
             {
             }
+            TlAdd(C_Prop, t0);
+            TlCount(N_PropObjs, propagated);
             return false;
         }
+        propagated++;
         GCReferenceRangeIterator iterator(object);
         GCReferenceRange range;
         while (iterator.Next(&range))
@@ -799,6 +849,8 @@ bool LaxoriGcHeap::LocalMark(LaxoriPrivateRegion& region)
         }
         object = PopMarkStack(region);
     }
+    TlAdd(C_Prop, t0);
+    TlCount(N_PropObjs, propagated);
     return region.survivors < local.maxSurvivors;
 }
 
@@ -822,8 +874,11 @@ bool LaxoriGcHeap::LocalPlan(LaxoriPrivateRegion& region, size_t* freeBytes)
         region.nextGapCount = list.count;
     };
     uintptr_t destination = region.start;   // header address where the next object lands
+    uint64_t planObjects = 0;
+    uint64_t movedBytes = 0;
     for (Object* object = NextMarked(first, limit); object != nullptr;)
     {
+        planObjects++;
         uintptr_t address = reinterpret_cast<uintptr_t>(object);
         uintptr_t header = address - sizeof(uintptr_t);
         size_t size = LocalSize(object);
@@ -849,10 +904,13 @@ bool LaxoriGcHeap::LocalPlan(LaxoriPrivateRegion& region, size_t* freeBytes)
         if (target != header)
         {
             SetPad(object, static_cast<int32_t>(header - target));
+            movedBytes += size;
         }
         destination = target + size;
         object = NextMarked(address + size, limit);
     }
+    TlCount(N_PlanObjs, planObjects);
+    TlCount(N_MovedBytes, movedBytes);
     if (limit > destination && !AppendGaps(list, destination, limit))
     {
         store();
@@ -878,11 +936,19 @@ void LaxoriGcHeap::LocalUpdate(LaxoriPrivateRegion& region)
     ScanContext scan;
     scan.promotion = FALSE;
     scan._unused1 = &local;
+    uint64_t t0 = TlNow();
     GCToEEInterface::GcScanCurrentStackRoots(reinterpret_cast<promote_func*>(UpdateFn), &scan);
+    TlAdd(C_StackUpd, t0);
+    TlCount(N_StackScans);
+    TlCount(N_Roots, local.roots);
+    TlCount(N_RootsIn, local.rootsIn);
 
+    t0 = TlNow();
+    uint64_t updated = 0;
     const uintptr_t first = region.start + sizeof(uintptr_t);
     for (Object* object = NextMarked(first, region.parseEnd); object != nullptr;)
     {
+        updated++;
         uintptr_t address = reinterpret_cast<uintptr_t>(object);
         size_t size = LocalSize(object);
         // An escaped object refers only to escaped objects (and to objects outside the region): nothing to update.
@@ -909,10 +975,13 @@ void LaxoriGcHeap::LocalUpdate(LaxoriPrivateRegion& region)
         }
         object = NextMarked(address + size, region.parseEnd);
     }
+    TlAdd(C_ObjUpd, t0);
+    TlCount(N_UpdObjs, updated);
 }
 
 void LaxoriGcHeap::LocalCompact(LaxoriPrivateRegion& region)
 {
+    uint64_t t0 = TlNow();
     const uintptr_t first = region.start + sizeof(uintptr_t);
     for (Object* object = NextMarked(first, region.parseEnd); object != nullptr;)
     {
@@ -934,9 +1003,34 @@ void LaxoriGcHeap::LocalCompact(LaxoriPrivateRegion& region)
         }
         object = NextMarked(next, region.parseEnd);
     }
+    TlAdd(C_Compact, t0);
 }
 
 bool LaxoriGcHeap::LocalCollect(LaxoriRcMutator* mutator)
+{
+    TlAcc acc;
+    t_acc = m_tl_timers ? &acc : nullptr;
+    uint64_t start = TlNow();
+    bool result = LocalCollectCore(mutator);
+    if (t_acc != nullptr)
+    {
+        acc.cyc[C_Total] = __builtin_ia32_rdtsc() - start;
+        if (!result)
+        {
+            acc.cyc[C_Failed] = acc.cyc[C_Total];
+        }
+        m_engine.CountRegionMetric(LaxoriReferenceCounting::TlCalls);
+        for (int i = 0; i < 10; i++)
+        {
+            m_engine.CountRegionMetric(LaxoriReferenceCounting::TlCycTotal + i, acc.cyc[i]);
+            m_engine.CountRegionMetric(LaxoriReferenceCounting::TlStackScans + i, acc.cnt[i]);
+        }
+        t_acc = nullptr;
+    }
+    return result;
+}
+
+bool LaxoriGcHeap::LocalCollectCore(LaxoriRcMutator* mutator)
 {
     LaxoriPrivateRegion& region = mutator->Region();
     if (m_verify_private)
@@ -975,7 +1069,10 @@ bool LaxoriGcHeap::LocalCollect(LaxoriRcMutator* mutator)
         return false;
     }
     size_t freeBytes = 0;
-    if (!LocalPlan(region, &freeBytes) || freeBytes < m_region_bytes / 4)
+    uint64_t planStart = TlNow();
+    bool planned = LocalPlan(region, &freeBytes);
+    TlAdd(C_Plan, planStart);
+    if (!planned || freeBytes < m_region_bytes / 4)
     {
         notPaid();
         ClearPads(region);
@@ -1116,10 +1213,22 @@ void LaxoriGcHeap::VerifyRegion(LaxoriPrivateRegion& region, const char* where)
     }
 }
 
+uint64_t LaxoriGcHeap::TscKHz() const
+{
+    // TSC cycles per millisecond since the start of the tier (minipal_hires_ticks is in the unit of minipal_hires_tick_frequency).
+    int64_t ticks = static_cast<int64_t>(minipal_hires_ticks()) - m_tsc_ns_start;
+    uint64_t cycles = __builtin_ia32_rdtsc() - m_tsc_start;
+    uint64_t frequency = static_cast<uint64_t>(minipal_hires_tick_frequency());
+    return ticks > 0 ? static_cast<uint64_t>((static_cast<double>(cycles) / static_cast<double>(ticks)) * static_cast<double>(frequency) / 1000.0) : 0;
+}
+
 bool LaxoriGcHeap::InitializePrivateTier(size_t regionKB, bool enabled, bool collectEscaped, size_t escapedCollectDiv)
 {
     m_private_enabled = enabled;
     m_verify_private = getenv("DOTNET_LAXORIVerifyPrivate") != nullptr;
+    m_tl_timers = getenv("DOTNET_LAXORITlTimers") != nullptr;
+    m_tsc_start = __builtin_ia32_rdtsc();
+    m_tsc_ns_start = static_cast<int64_t>(minipal_hires_ticks());
     {
         const char* control = getenv("DOTNET_LAXORITestControl");
         m_test_control = control != nullptr ? atoi(control) : 0;

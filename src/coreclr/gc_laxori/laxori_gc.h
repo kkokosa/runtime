@@ -233,6 +233,13 @@ private:
     void EscapeCheck(Object** destination, Object* reference);
     void EscapeBulk(void* destination, const void* source, size_t length);
     bool LocalCollect(LaxoriRcMutator* mutator);
+    bool LocalCollectCore(LaxoriRcMutator* mutator);
+    bool m_tl_timers = false;                // DOTNET_LAXORITlTimers=1: cycle and count diagnostics of the thread-local collector
+    uint64_t m_tsc_start = 0;
+    int64_t m_tsc_ns_start = 0;
+public:
+    uint64_t TscKHz() const;
+private:
     void VerifyRegion(LaxoriPrivateRegion& region, const char* where);
     bool m_verify_private = false;
     // Test-only control (DOTNET_LAXORITestControl): 1 skips the update of the stack roots, 2 skips the update of the references

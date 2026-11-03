@@ -259,6 +259,38 @@ internal static unsafe class Program
         }
     }
 
+    static ulong BaseMetric(uint i) => s_metric == null ? 0 : s_metric(i);
+    static readonly Node?[] s_ring = new Node?[3000];
+
+    // Interaction with the concurrent SATB trace of the shared heap (run with a low DOTNET_LAXORITraceThreshold so that traces run).
+    // Every round publishes a new cyclic graph into a shared ring (the old graph becomes cyclic garbage that only the trace can
+    // reclaim), keeps the old graph alive only through a private holder across a lot of allocation (a reference that was deleted from
+    // the heap while a trace may run: the SATB logging must keep it), and reads random shared graphs back into private objects.
+    [MethodImpl(MethodImplOptions.NoInlining)]
+    static void TestTrace(int scale, int thread)
+    {
+        long st = s_seed * 31 + thread;
+        for (int round = 0; round < 3000 * scale; round++)
+        {
+            Node a = Node.Make(thread * 10000000L + round, null, null);
+            Node b = Node.Make(thread * 10000000L + round + 5000000, a, null);
+            Node c = Node.Make(thread * 10000000L + round + 7000000, b, a);
+            a.A = c; a.Sum = a.Compute();      // a cycle a -> c -> b -> a (private stores, no exposure)
+            int slot = Rnd(ref st, s_ring.Length);
+            Node? old = Interlocked.Exchange(ref s_ring[slot], c);
+            Node holder = Node.Make(round, old, null);   // a private object that is the only holder of the deleted graph
+            Garbage(200 + Rnd(ref st, 300), ref st);
+            holder.Verify("trace holder");
+            old?.VerifyGraph("trace old");
+            Node? other = s_ring[Rnd(ref st, s_ring.Length)];
+            Node reader = Node.Make(9000000L + round, other, null);
+            Garbage(100, ref st);
+            other?.VerifyGraph("trace other");
+            reader.Verify("trace reader");
+            if ((round & 255) == 0) foreach (var n in s_ring) n?.VerifyGraph("trace ring");
+        }
+    }
+
     static void VerifyShared(string where)
     {
         foreach (var n in s_table) n?.VerifyGraph(where + "/table");
@@ -449,6 +481,7 @@ internal static unsafe class Program
     {
         ("stack", TestStack), ("interior", TestInterior), ("graph", TestGraph), ("escape", TestEscape), ("bulk", TestBulk),
         ("handles", TestHandles), ("finalizers", TestFinalizers), ("collect", TestCollect), ("sync", TestSync), ("handoff", TestHandoff),
+        ("trace", TestTrace),
     };
 
     static int Main(string[] args)
@@ -485,6 +518,10 @@ internal static unsafe class Program
             string[] names = { "acquired", "dissolvedPause", "dissolvedFull", "dissolvedEscape", "dissolvedExit", "localCollections", "localSkipped", "markAborted", "notWorth", "survivorBytes", "reclaimedBytes", "escapeCalls", "escapedObjects", "escapedBytes", "foreign", "acquireFailures", "bulkEscapes" };
             for (uint i = 0; i < names.Length; i++) Console.Write(names[i] + "=" + Metric(i) + " ");
             Console.WriteLine();
+            Console.WriteLine("trace: initialMarks=" + BaseMetric(10) + " finalMarks=" + BaseMetric(11) + " fullMarks=" + BaseMetric(12) +
+                " concurrentSlices=" + BaseMetric(29) + " satbEntries=" + BaseMetric(15) + " cycleObjects=" + BaseMetric(19) + " collections=" + BaseMetric(5));
+            if (Environment.GetEnvironmentVariable("PT_EXPECT_TRACE") == "1")
+                Check(BaseMetric(10) > 0 && BaseMetric(11) > 0, "no concurrent trace ran (initial " + BaseMetric(10) + ", final " + BaseMetric(11) + ")");
             Check(Metric(14) == 0, "foreign escapes (a reference to a region of another thread)");
             if (Environment.GetEnvironmentVariable("DOTNET_LAXORIPrivate") != "0" && which == "all")
                 Check(Metric(5) > collections0, "no thread-local collection ran");
