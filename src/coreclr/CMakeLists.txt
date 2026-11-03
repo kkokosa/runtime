@@ -75,6 +75,8 @@ OPTION(CLR_CMAKE_ENABLE_LXR_GC
   "Build the experimental selectable LXR collector" OFF)
 OPTION(CLR_CMAKE_LXR_OBJECT_START_WALK
   "Build the LXR collector without the ValidObject plane (object starts come from the count plane and the young spans)" OFF)
+OPTION(CLR_CMAKE_LXR_BUILD_WALK_VARIANT
+  "When LXR is enabled, also build libclrlxrgc-walk.so (the count-plane variant) next to libclrlxrgc.so" ON)
 
 if(CLR_CMAKE_ENABLE_LXR_GC)
   if(NOT CLR_CMAKE_TARGET_ARCH_AMD64 OR

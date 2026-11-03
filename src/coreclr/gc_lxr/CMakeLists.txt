@@ -96,3 +96,14 @@ if(CLR_CMAKE_LXR_OBJECT_START_WALK)
   set_target_properties(clrlxrgc PROPERTIES OUTPUT_NAME clrlxrgc-walk)
 endif()
 install_clr(TARGETS clrlxrgc DESTINATIONS . sharedFramework COMPONENT runtime)
+
+# Second library built from the same sources: object starts come from the count plane
+# (no ValidObject plane). Select it with DOTNET_GCPath=<dir>/libclrlxrgc-walk.so.
+if(CLR_CMAKE_LXR_BUILD_WALK_VARIANT AND NOT CLR_CMAKE_LXR_OBJECT_START_WALK)
+  add_library_clr(clrlxrgc_walk SHARED ${LXR_SOURCES} $<TARGET_OBJECTS:lxr_writebarrier>)
+  add_dependencies(clrlxrgc_walk eventing_headers)
+  target_link_libraries(clrlxrgc_walk PRIVATE ${LXR_LINK_LIBRARIES})
+  target_compile_definitions(clrlxrgc_walk PRIVATE LXR_OBJECT_START_WALK)
+  set_target_properties(clrlxrgc_walk PROPERTIES OUTPUT_NAME clrlxrgc-walk)
+  install_clr(TARGETS clrlxrgc_walk DESTINATIONS . sharedFramework COMPONENT runtime)
+endif()

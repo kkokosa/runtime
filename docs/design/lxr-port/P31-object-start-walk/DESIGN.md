@@ -235,6 +235,13 @@ crash hunt of at least 100 runs at 13/3, 4/2 and 1/1 workers.
 
 ## 7. How to build and validate both variants
 
+The default LXR build (`-DCLR_CMAKE_ENABLE_LXR_GC=ON`) now builds both libraries from the same sources:
+`libclrlxrgc.so` (ValidObject plane, still the library the product setting loads by default) and `libclrlxrgc-walk.so`
+(count-plane object starts, no ValidObject plane). Select the walk library with `DOTNET_GCPath=<dir>/libclrlxrgc-walk.so`.
+The CMake option `CLR_CMAKE_LXR_BUILD_WALK_VARIANT` (default ON) turns the second library off. With
+`CLR_CMAKE_LXR_OBJECT_START_WALK=ON` the single library itself is the walk variant, as described below.
+Make the walk library the default only after GC-stress and a second-machine check (section 8).
+
 ```
 bash docs/design/lxr-port/P31-object-start-walk/build-lxr.sh base          # libclrlxrgc.so      (ValidObject plane)
 bash docs/design/lxr-port/P31-object-start-walk/build-lxr.sh walk walk     # libclrlxrgc-walk.so (no plane)
