@@ -235,24 +235,31 @@ crash hunt of at least 100 runs at 13/3, 4/2 and 1/1 workers.
 
 ## 7. How to build and validate both variants
 
-The default LXR build (`-DCLR_CMAKE_ENABLE_LXR_GC=ON`) now builds both libraries from the same sources:
-`libclrlxrgc.so` (ValidObject plane, still the library the product setting loads by default) and `libclrlxrgc-walk.so`
-(count-plane object starts, no ValidObject plane). Select the walk library with `DOTNET_GCPath=<dir>/libclrlxrgc-walk.so`.
-The CMake option `CLR_CMAKE_LXR_BUILD_WALK_VARIANT` (default ON) turns the second library off. With
-`CLR_CMAKE_LXR_OBJECT_START_WALK=ON` the single library itself is the walk variant, as described below.
-Make the walk library the default only after GC-stress and a second-machine check (section 8).
+**The count-plane variant (no ValidObject plane) is the default LXR collector.** The default LXR build
+(`-DCLR_CMAKE_ENABLE_LXR_GC=ON`) builds `libclrlxrgc.so` with count-plane object starts (engine macro
+`LXR_OBJECT_START_WALK`, set by CMake on the target). It also builds `libclrlxrgc-bitmap.so` from the same sources, with
+the ValidObject plane, for comparison. Select it with `DOTNET_GCPath=<dir>/libclrlxrgc-bitmap.so`. CMake options:
+`CLR_CMAKE_LXR_BUILD_BITMAP_VARIANT` (default ON) turns the second library off. `CLR_CMAKE_LXR_OBJECT_START_BITMAP=ON`
+makes `libclrlxrgc.so` itself the ValidObject build (and no second library is built). The older names
+`CLR_CMAKE_LXR_OBJECT_START_WALK`, `CLR_CMAKE_LXR_BUILD_WALK_VARIANT` and `libclrlxrgc-walk.so` existed only on the
+branch before this change. Windows and ARM64 were not tested for this variant (section 8).
 
 ```
-bash docs/design/lxr-port/P31-object-start-walk/build-lxr.sh base          # libclrlxrgc.so      (ValidObject plane)
-bash docs/design/lxr-port/P31-object-start-walk/build-lxr.sh walk walk     # libclrlxrgc-walk.so (no plane)
+bash docs/design/lxr-port/P31-object-start-walk/build-lxr.sh walk                     # libclrlxrgc.so (default, no plane)
+bash docs/design/lxr-port/P31-object-start-walk/build-lxr.sh base bitmap              # libclrlxrgc.so (ValidObject plane)
 bash docs/design/lxr-port/P31-object-start-walk/validate-variant.sh default Release   # P2.1-P2.5, P3.1-P3.4, P4 (all selectors)
-bash docs/design/lxr-port/P31-object-start-walk/validate-variant.sh walk Release
+bash docs/design/lxr-port/P31-object-start-walk/validate-variant.sh bitmap Release
 bash docs/design/lxr-port/P31-object-start-walk/compare-digests.sh                    # cycle sweep / heap walk equal in both
 bash docs/design/lxr-port/P31-object-start-walk/run-walk-controls.sh                  # mutation checks of the walk variant
 ```
-`LXR_OBJECT_START_WALK=1` in the environment makes the P2.2-P2.5 and P4 scripts build the walk variant. The managed stress
+`LXR_OBJECT_START_BITMAP=1` in the environment makes the P2.2-P2.5 and P4 scripts build the ValidObject variant; without it
+they build the default (count plane). The Windows scripts and `P17-pause-cost-and-reserve/native-*` do not define
+`LXR_OBJECT_START_WALK`, so they still build the ValidObject variant. The managed stress
 test is `managed/InteriorStress` (see its header). Selectors that are flaky under load in both variants:
 `--mature-released-candidate` and `--p8-storage`.
+
+Section 8 and later use the names of the time of the measurement: "walk" is the count-plane variant (now the default),
+"base" is the ValidObject variant (now `libclrlxrgc-bitmap.so`).
 
 ## 8. Results
 

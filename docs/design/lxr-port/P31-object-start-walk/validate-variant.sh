@@ -3,8 +3,9 @@
 # The .NET Foundation licenses this file to you under the MIT license.
 #
 # Runs the validation suites P2.1-P2.5, P3.1-P3.4 and P4 (all selectors) for one variant of the LXR collector.
-#   usage: validate-variant.sh <default|walk> [Release|Debug] [output directory]
-# The walk variant is built with LXR_OBJECT_START_WALK=1 (no ValidObject plane). The scripts of the suites take the variable.
+#   usage: validate-variant.sh <default|bitmap> [Release|Debug] [output directory]
+# "default" is the count-plane build (no ValidObject plane). "bitmap" is built with LXR_OBJECT_START_BITMAP=1.
+# The scripts of the suites take the variable.
 set -u
 variant="$1"
 configuration="${2:-Release}"
@@ -12,7 +13,7 @@ root="$(cd "$(dirname "${BASH_SOURCE[0]}")/../../../.." && pwd)"
 d="$root/docs/design/lxr-port"
 out="${3:-/root/p31/val-$variant-$configuration}"
 rm -rf "$out"; mkdir -p "$out"
-if [[ "$variant" == walk ]]; then export LXR_OBJECT_START_WALK=1; else unset LXR_OBJECT_START_WALK; fi
+if [[ "$variant" == bitmap ]]; then export LXR_OBJECT_START_BITMAP=1; else unset LXR_OBJECT_START_BITMAP; fi
 status=0
 run() { # name, command...
     local name="$1"; shift

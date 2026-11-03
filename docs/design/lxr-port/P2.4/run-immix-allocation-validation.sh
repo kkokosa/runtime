@@ -24,7 +24,7 @@ command=(
   -Wno-unused-parameter
   -pthread
   -DBUILD_AS_STANDALONE
-  ${LXR_OBJECT_START_WALK:+-DLXR_OBJECT_START_WALK}
+  $([[ -n "${LXR_OBJECT_START_BITMAP:-}" ]] || echo -DLXR_OBJECT_START_WALK)
   -DTARGET_UNIX
   -DHOST_UNIX
   -DTARGET_LINUX

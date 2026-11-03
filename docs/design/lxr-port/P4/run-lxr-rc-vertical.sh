@@ -15,8 +15,9 @@ elif [[ "$configuration" != Debug ]]; then
     echo "Unsupported configuration: $configuration" >&2
     exit 1
 fi
-# LXR_OBJECT_START_WALK=1 builds the engine without the ValidObject plane (P31). Every control below can run in both variants.
-if [[ "${LXR_OBJECT_START_WALK:-0}" == 1 ]]; then
+# The engine uses count-plane object starts (no ValidObject plane) unless LXR_OBJECT_START_BITMAP=1 is set (P31).
+# Every control below can run in both variants.
+if [[ -z "${LXR_OBJECT_START_BITMAP:-}" ]]; then
     flags+=(-DLXR_OBJECT_START_WALK)
 fi
 case "$control" in

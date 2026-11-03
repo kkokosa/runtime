@@ -3,14 +3,15 @@
 # The .NET Foundation licenses this file to you under the MIT license.
 #
 # Builds the LXR collector library in one build directory.
-#   usage: build-lxr.sh <subdir> [walk] [extra cmake args...]
-#   build-lxr.sh base             -> artifacts/obj/coreclr/linux.x64.Release/base/gc_lxr/libclrlxrgc.so       (ValidObject plane)
-#   build-lxr.sh walk walk        -> artifacts/obj/coreclr/linux.x64.Release/walk/gc_lxr/libclrlxrgc-walk.so  (no ValidObject plane)
+#   usage: build-lxr.sh <subdir> [bitmap] [extra cmake args...]
+#   build-lxr.sh walk             -> artifacts/obj/coreclr/linux.x64.Release/walk/gc_lxr/libclrlxrgc.so   (default: count-plane object starts, no ValidObject plane)
+#   build-lxr.sh base bitmap      -> artifacts/obj/coreclr/linux.x64.Release/base/gc_lxr/libclrlxrgc.so   (ValidObject plane)
+# The default full LXR build also builds libclrlxrgc-bitmap.so (target clrlxrgc_bitmap) next to libclrlxrgc.so.
 set -uo pipefail
 root="$(cd "$(dirname "${BASH_SOURCE[0]}")/../../../.." && pwd)"
 sub="$1"; shift
 variant=""
-if [[ "${1:-}" == "walk" ]]; then variant="-DCLR_CMAKE_LXR_OBJECT_START_WALK=ON"; shift; fi
+if [[ "${1:-}" == "bitmap" ]]; then variant="-DCLR_CMAKE_LXR_OBJECT_START_BITMAP=ON"; shift; fi
 extra="${*:-}"
 cd "$root"
 export CC=/usr/bin/clang-14 CXX=/usr/bin/clang++-14 CLR_OBJCOPY=/usr/bin/objcopy
