@@ -193,7 +193,7 @@ With the switch ON:
   `RetireSourceChunk`, `SweepCycleRange`, large-object `ResetAllocationMetadata` and `InitializeAllocationMetadata`).
 * `FindContainingObject` uses spans, then the count scan. `IsObjectStart` is `count != 0` (Immix) or a registered allocation
   (large).
-* `SweepCycleRange`, `WalkObjects`, `WalkObjectStarts`, `FindNextObject`, `GetMarkedBytes` use `FindNextCountedSlot`.
+* `SweepCycleRange`, `WalkObjects`, `WalkObjectStarts`, `FindNextObject`, `GetMarkedBytes` use `FindNextValidSlot` (in the walk variant it enumerates counted slots).
 * The pinned allocator records a young span (merged at pause start like the mutator spans).
 * Counters (both variants): number of interior lookups and their cost in ticks, per pause.
 
