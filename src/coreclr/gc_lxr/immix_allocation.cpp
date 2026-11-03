@@ -1069,7 +1069,7 @@ SideMetadataResult ImmixAllocationManager::InitializeFieldLogRange(
     // The ValidObject plane exists because .NET needs the start of the object that contains an interior pointer; the Java
     // LXR has no such plane. A stale bit of a dead object must not lie in a range that new objects use, so the plane is
     // cleared here, on the same schedule as the unlog and mark tables of the Java LXR (at the refill of the range).
-#ifndef LXR_OBJECT_START_WALK
+#if !defined(LXR_OBJECT_START_WALK) || defined(LXR_WALK_WRITE_VALID_CONTROL)
 #if !defined(LXR_SIDE_METADATA_TEST_PLATFORM) || !defined(LXR_VALID_CLEAR_CONTROL)
     if (m_metadata->IsSpecEnabled(LxrSideMetadataKind::ValidObject))
     {
@@ -1080,7 +1080,7 @@ SideMetadataResult ImmixAllocationManager::InitializeFieldLogRange(
         }
     }
 #endif // !LXR_SIDE_METADATA_TEST_PLATFORM || !defined(LXR_VALID_CLEAR_CONTROL)
-#endif // !LXR_OBJECT_START_WALK
+#endif // !LXR_OBJECT_START_WALK || LXR_WALK_WRITE_VALID_CONTROL
     // P28 (F9). The Java LXR does not clear the count plane and the straddle plane at a refill: the counts and the straddle
     // marks of a dead object are cleared when the object dies (rc.rs, rc_work.rs: unmark_straddle_object), and the tables of a
     // block are cleared only when a defrag source is released. So a free block and a hole have zero counts and no straddle

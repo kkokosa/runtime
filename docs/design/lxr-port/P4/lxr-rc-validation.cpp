@@ -8158,6 +8158,605 @@ namespace
 
     constexpr uintptr_t BlockOf(uintptr_t address) { return address & ~ImmixBlockGeometry::BlockMask; }
 
+    // ---- P31: the start of the object that contains an address. The default variant finds it with the ValidObject plane; the
+    // walk variant (LXR_OBJECT_START_WALK) with the count plane and the spans of the pause. The checks below hold for both
+    // (selector --object-start), and the digest lines let a script compare the two variants. ----
+
+    // Every address inside the object resolves to the object, and the address of the next header slot does not.
+    bool EveryOffsetResolves(LxrReferenceCounting& engine, Object* object, uint64_t* lookups)
+    {
+        size_t size = SizeOf(object);
+        uintptr_t base = reinterpret_cast<uintptr_t>(object);
+        for (size_t offset = 0; offset + sizeof(uintptr_t) < size; offset++)
+        {
+            Object* found = nullptr;
+            if (engine.FindContainingObject(base + offset, &found) != LxrRcResult::Success || found != object)
+            {
+                std::fprintf(stderr, "lookup at +%zu of an object of %zu bytes found %p, not %p\n", offset, size,
+                    static_cast<void*>(found), static_cast<void*>(object));
+                return false;
+            }
+            ++*lookups;
+        }
+        Object* beyond = nullptr;
+        return !(engine.FindContainingObject(base + size - sizeof(uintptr_t), &beyond) == LxrRcResult::Success &&
+            beyond == object);
+    }
+
+    struct StartWalkCapture
+    {
+        const std::vector<Object*>* expected;
+        const std::vector<Object*>* roots;
+        bool visitedExactly = false;
+        size_t visited = 0;
+        uint64_t visitedBytes = 0;
+    };
+
+    // Runs at the start of a pause: WalkObjects must visit exactly the objects that an earlier pause promoted.
+    LxrRcResult CaptureStartWalk(LxrReferenceCounting* engine, void* context)
+    {
+        StartWalkCapture* capture = static_cast<StartWalkCapture*>(context);
+        struct Seen
+        {
+            std::vector<Object*> objects;
+            uint64_t bytes = 0;
+        } seen;
+        auto collect = [](Object* object, size_t size, void* state)
+        {
+            Seen* seen = static_cast<Seen*>(state);
+            seen->objects.push_back(object);
+            seen->bytes += size;
+            return true;
+        };
+        if (engine->WalkObjects(collect, &seen) != LxrRcResult::Success)
+        {
+            return LxrRcResult::InvariantViolation;
+        }
+        std::vector<Object*> expected = *capture->expected;
+        std::sort(expected.begin(), expected.end());
+        std::sort(seen.objects.begin(), seen.objects.end());
+        capture->visitedExactly = seen.objects == expected;
+        capture->visited = seen.objects.size();
+        capture->visitedBytes = seen.bytes;
+        Roots roots{capture->roots};
+        return Capture(engine, &roots);
+    }
+
+    // Objects of 24 bytes to 16000 bytes (one line, many lines, nearly a block), promoted in place or copied, and a large object.
+    void ValidateObjectStartEveryOffset(bool moving)
+    {
+        static const uint32_t sizes[] = {24, 32, 40, 56, 120, 232, 248, 256, 264, 280, 504, 512, 520, 768, 1000, 1024, 2000,
+            4096, 8000, 16000};
+        LxrReferenceCounting engine;
+        LxrRcMutator* mutator = nullptr;
+        MovingRoots roots;
+        int identity;
+        if (!(moving ? InitializeMoving(engine, &roots, 16, &mutator, &identity, 8)
+                     : Initialize(engine, 8, &mutator, &identity)))
+        {
+            return;
+        }
+        std::vector<std::unique_ptr<Type>> types;
+        for (uint32_t size : sizes)
+        {
+            types.push_back(std::make_unique<Type>(size, 0));
+        }
+        Helper helper{&engine, mutator};
+        std::vector<Object*> objects;
+        for (size_t round = 0; round < 3; round++)
+        {
+            for (size_t index = 0; index < types.size(); index++)
+            {
+                Type& type = *types[(index * 7 + round * 3) % types.size()];
+                Object* object = helper.NewObject(type);
+                if (object == nullptr)
+                {
+                    return;
+                }
+                // The words inside the object look like the start of an object (a MethodTable pointer), so that a record that
+                // is taken for an object start inside the object gives a size and not a crash.
+                for (size_t offset = sizeof(uintptr_t); offset + 2 * sizeof(uintptr_t) <= SizeOf(object); offset += sizeof(uintptr_t))
+                {
+                    *reinterpret_cast<MethodTable**>(reinterpret_cast<uint8_t*>(object) + offset) = type.table;
+                }
+                objects.push_back(object);
+            }
+        }
+        helper.Retire();
+        Type largeType(static_cast<uint32_t>(LxrLargeObjectSpace::MinimumObjectBytes + 4096), 0);
+        Object* large = Allocate(engine, mutator, largeType);
+        if (large == nullptr)
+        {
+            return;
+        }
+        objects.push_back(large);
+        if (moving)
+        {
+            roots.objects = objects;
+            if (!RunPauseAndDrain(engine, CaptureMoving, &roots, "the pause that copies the objects completes"))
+            {
+                return;
+            }
+            objects = roots.objects;
+        }
+        else if (!Epoch(engine, objects))
+        {
+            return;
+        }
+        size_t counted = 0;
+        size_t bad = 0;
+        uint64_t lookups = 0;
+        for (Object* object : objects)
+        {
+            counted += Count(engine, object) == 1;
+            bad += EveryOffsetResolves(engine, object, &lookups) ? 0 : 1;
+        }
+        Check(counted == objects.size(), moving ? "the copies are counted" : "the objects are promoted in place");
+        Check(bad == 0 && lookups > 100000,
+            moving ? "every address inside every copied object resolves to the copy"
+                   : "every address inside every promoted object resolves to it");
+        StartWalkCapture capture{&objects, &objects};
+        if (moving)
+        {
+            roots.objects = objects;
+        }
+        Check(engine.Collect(CaptureStartWalk, &capture, Timeout) == LxrRcResult::Success &&
+                engine.Drain(Timeout) == LxrRcResult::Success && capture.visitedExactly,
+            "WalkObjects visits exactly the promoted objects, and no continuation line of a long object");
+        Check(engine.DetachMutator(mutator) == LxrRcResult::Success, "every-offset owner detaches");
+    }
+
+    // The objects between a head and a tail die, the lines that they freed are reused, and the head and the tail of a dead
+    // object stay in lines that are live. Every address that a live object contains resolves to it, every other address
+    // resolves to nothing, and a dead object is not found.
+    void ValidateObjectStartHoleReuse()
+    {
+        LxrReferenceCounting engine;
+        LxrRcMutator* mutator = nullptr;
+        int identity;
+        if (!Initialize(engine, 8, &mutator, &identity))
+        {
+            return;
+        }
+        Type head(24, 0);
+        Type body(1000, 0);
+        Type tail(32, 0);
+        Type shortTail(120, 0);
+        Helper helper{&engine, mutator};
+        std::vector<Object*> keep;
+        std::vector<Object*> dead;
+        std::vector<std::pair<uintptr_t, uintptr_t>> deadExtents;
+        for (size_t round = 0; round < 20; round++)
+        {
+            Object* first = helper.NewObject(head);
+            Object* middle = helper.NewObject(body);
+            Object* last = helper.NewObject(round % 2 == 0 ? tail : shortTail);
+            if (first == nullptr || middle == nullptr || last == nullptr)
+            {
+                return;
+            }
+            keep.push_back(first);
+            keep.push_back(last);
+            dead.push_back(middle);
+            deadExtents.push_back({StartOf(middle), StartOf(middle) + SizeOf(middle)});
+        }
+        helper.Retire();
+        std::vector<Object*> all = keep;
+        all.insert(all.end(), dead.begin(), dead.end());
+        if (!Epoch(engine, all) || !Epoch(engine, keep) || !Epoch(engine, keep))
+        {
+            return;
+        }
+        size_t deadCounted = 0;
+        size_t deadFound = 0;
+        for (Object* object : dead)
+        {
+            deadCounted += Count(engine, object) != 0;
+            for (size_t offset : {size_t{0}, size_t{100}, size_t{500}, size_t{990}})
+            {
+                Object* found = nullptr;
+                deadFound += engine.FindContainingObject(reinterpret_cast<uintptr_t>(object) + offset, &found) ==
+                    LxrRcResult::Success && found == object;
+            }
+        }
+        Check(deadCounted == 0 && deadFound == 0, "a dead mature object has no count and is not found");
+        helper = Helper{&engine, mutator};
+        Type kinds[] = {Type(24, 0), Type(56, 0), Type(120, 0), Type(248, 0)};
+        std::mt19937 random(7);
+        std::vector<Object*> fresh;
+        for (size_t index = 0; index < 600; index++)
+        {
+            Object* object = helper.NewObject(kinds[random() % 4]);
+            if (object == nullptr)
+            {
+                return;
+            }
+            fresh.push_back(object);
+        }
+        helper.Retire();
+        size_t inHoles = 0;
+        for (Object* object : fresh)
+        {
+            for (const auto& extent : deadExtents)
+            {
+                inHoles += StartOf(object) >= extent.first && StartOf(object) < extent.second;
+            }
+        }
+        Check(inHoles != 0, "new objects take lines that the dead objects freed");
+        std::vector<Object*> live = keep;
+        live.insert(live.end(), fresh.begin(), fresh.end());
+        if (!Epoch(engine, live))
+        {
+            return;
+        }
+        uint64_t lookups = 0;
+        size_t bad = 0;
+        for (Object* object : live)
+        {
+            bad += EveryOffsetResolves(engine, object, &lookups) ? 0 : 1;
+        }
+        Check(bad == 0, "every address inside every live object resolves to it after the freed lines were reused");
+        std::vector<std::pair<uintptr_t, uintptr_t>> liveExtents;
+        for (Object* object : live)
+        {
+            liveExtents.push_back({reinterpret_cast<uintptr_t>(object), reinterpret_cast<uintptr_t>(object) + SizeOf(object) - 8});
+        }
+        size_t mismatches = 0;
+        size_t addresses = 0;
+        for (const auto& extent : deadExtents)
+        {
+            for (uintptr_t address = extent.first - 64; address < extent.second + 64; address++)
+            {
+                Object* expected = nullptr;
+                for (const auto& live : liveExtents)
+                {
+                    if (address >= live.first && address < live.second)
+                    {
+                        expected = reinterpret_cast<Object*>(live.first);
+                        break;
+                    }
+                }
+                Object* found = nullptr;
+                LxrRcResult result = engine.FindContainingObject(address, &found);
+                mismatches += expected != nullptr ? (result != LxrRcResult::Success || found != expected)
+                                                  : result == LxrRcResult::Success;
+                addresses++;
+            }
+        }
+        Check(mismatches == 0 && addresses > 20000,
+            "an address in the old extent of a dead object resolves to the live object that covers it now, or to nothing");
+        Check(engine.DetachMutator(mutator) == LxrRcResult::Success, "hole reuse owner detaches");
+    }
+
+    // A young pinned-object-heap object has no count and no start record before the pause. The pause finds it through an
+    // interior root.
+    void ValidateObjectStartPinnedYoung()
+    {
+        LxrReferenceCounting engine;
+        LxrRcMutator* mutator = nullptr;
+        MovingRoots roots;
+        int identity;
+        if (!InitializeMoving(engine, &roots, 16, &mutator, &identity, 8))
+        {
+            return;
+        }
+        Type pinnedType(96, 0);
+        Object* first = AllocatePinnedObject(engine, mutator, pinnedType);
+        Object* second = AllocatePinnedObject(engine, mutator, pinnedType);
+        if (first == nullptr || second == nullptr)
+        {
+            return;
+        }
+        Object* interior = reinterpret_cast<Object*>(reinterpret_cast<uintptr_t>(second) + 40);
+        roots.objects = {first};
+        roots.interior = interior;
+        roots.pinInterior = true;
+        Check(RunPauseAndDrain(engine, CaptureMoving, &roots, "a pause with an interior root into a young pinned object completes"),
+            "the pause finds the young pinned object that holds the interior root");
+        Check(Count(engine, first) == 1 && Count(engine, second) == 1 && roots.interior == interior && roots.objects[0] == first,
+            "the pinned objects are counted and stay where they are");
+        Object* found = nullptr;
+        Check(engine.FindContainingObject(reinterpret_cast<uintptr_t>(second) + 40, &found) == LxrRcResult::Success &&
+                found == second,
+            "the promoted pinned object is found outside a pause");
+        Check(engine.DetachMutator(mutator) == LxrRcResult::Success, "pinned owner detaches");
+    }
+
+    struct StaleProbe
+    {
+        MovingRoots* roots;
+        Object* stale;
+        Object* resolved = nullptr;
+    };
+
+    LxrRcResult CaptureStaleProbe(LxrReferenceCounting* engine, void* context)
+    {
+        StaleProbe* probe = static_cast<StaleProbe*>(context);
+        probe->resolved = engine->ResolveForwardedChecked(probe->stale);
+        return CaptureMoving(engine, probe->roots);
+    }
+
+    // A value that may be stale (a weak target) can point into the middle of a young object. The header word at such an address
+    // is arbitrary data. Here it has the forwarding state of a copy source, and the word after it is a pointer to a counted
+    // object. ResolveForwardedChecked must not take it for a source.
+    void ValidateObjectStartStaleValue()
+    {
+        LxrReferenceCounting engine;
+        LxrRcMutator* mutator = nullptr;
+        MovingRoots roots;
+        int identity;
+        if (!InitializeMoving(engine, &roots, 16, &mutator, &identity, 8))
+        {
+            return;
+        }
+        Type small(24, 0);
+        Type wide(256, 0);
+        Object* counted = Allocate(engine, mutator, small);
+        if (counted == nullptr)
+        {
+            return;
+        }
+        roots.objects = {counted};
+        if (!RunPauseAndDrain(engine, CaptureMoving, &roots, "the counted object is promoted"))
+        {
+            return;
+        }
+        counted = roots.objects[0];
+        Object* victim = Allocate(engine, mutator, wide);
+        if (victim == nullptr)
+        {
+            return;
+        }
+        uint8_t* bytes = reinterpret_cast<uint8_t*>(victim);
+        // The forwarding state is kept in the first dword of the header slot (the GC reserved bits).
+        *reinterpret_cast<uint32_t*>(bytes + 8) |= 3;
+        *reinterpret_cast<Object**>(bytes + 24) = counted;
+        Object* stale = reinterpret_cast<Object*>(bytes + 16);
+        roots.objects = {counted, victim};
+        StaleProbe probe{&roots, stale};
+        Check(engine.Collect(CaptureStaleProbe, &probe, Timeout) == LxrRcResult::Success &&
+                engine.Drain(Timeout) == LxrRcResult::Success,
+            "the pause with a stale value in the middle of a young object completes");
+        Check(probe.resolved == stale,
+            "a value inside a young object is not taken for a forwarded source because of arbitrary header bits");
+        Check(engine.DetachMutator(mutator) == LxrRcResult::Success, "stale value owner detaches");
+    }
+
+    // Lookups of live mature objects while the lazy decrements and sweep of a pause run on the workers and other threads
+    // allocate in the holes of the same blocks.
+    void ValidateObjectStartConcurrent(uint32_t seed)
+    {
+        LxrReferenceCounting engine;
+        LxrRcMutator* mutator = nullptr;
+        int identity;
+        if (!Initialize(engine, 8, &mutator, &identity))
+        {
+            return;
+        }
+        std::mt19937 random(seed);
+        static const uint32_t sizes[] = {24, 48, 120, 248, 264, 600};
+        std::vector<std::unique_ptr<Type>> types;
+        for (uint32_t size : sizes)
+        {
+            types.push_back(std::make_unique<Type>(size, 0));
+        }
+        Helper helper{&engine, mutator};
+        std::vector<Object*> live;
+        std::vector<Object*> dead;
+        for (size_t index = 0; index < 700; index++)
+        {
+            Object* object = helper.NewObject(*types[random() % types.size()]);
+            if (object == nullptr)
+            {
+                return;
+            }
+            (random() % 3 == 0 ? dead : live).push_back(object);
+        }
+        helper.Retire();
+        std::vector<Object*> all = live;
+        all.insert(all.end(), dead.begin(), dead.end());
+        if (!Epoch(engine, all))
+        {
+            return;
+        }
+        Roots roots{&live};
+        if (!Check(engine.Collect(Capture, &roots, Timeout) == LxrRcResult::Success,
+                "the pause that kills a third of the objects completes"))
+        {
+            return;
+        }
+        std::atomic<bool> stop{false};
+        std::atomic<size_t> wrong{0};
+        std::atomic<uint64_t> found{0};
+        std::vector<std::thread> threads;
+        for (size_t reader = 0; reader < 3; reader++)
+        {
+            threads.emplace_back([&, reader]()
+            {
+                std::mt19937 local(seed * 31 + static_cast<uint32_t>(reader));
+                while (!stop.load(std::memory_order_acquire))
+                {
+                    Object* object = live[local() % live.size()];
+                    size_t size = SizeOf(object);
+                    size_t offset = local() % (size - sizeof(uintptr_t));
+                    Object* result = nullptr;
+                    if (engine.FindContainingObject(reinterpret_cast<uintptr_t>(object) + offset, &result, false) ==
+                            LxrRcResult::Success && result == object)
+                    {
+                        found.fetch_add(1, std::memory_order_relaxed);
+                    }
+                    else
+                    {
+                        wrong.fetch_add(1, std::memory_order_relaxed);
+                    }
+                }
+            });
+        }
+        std::vector<std::thread> allocators;
+        std::vector<LxrRcMutator*> mutators(2, nullptr);
+        std::vector<int> identities(2);
+        for (size_t index = 0; index < 2; index++)
+        {
+            if (!Check(engine.AttachMutator(&identities[index], &mutators[index]) == LxrRcResult::Success,
+                    "a second allocating mutator attaches"))
+            {
+                stop.store(true);
+                for (std::thread& thread : threads)
+                {
+                    thread.join();
+                }
+                return;
+            }
+        }
+        for (size_t index = 0; index < 2; index++)
+        {
+            allocators.emplace_back([&, index]()
+            {
+                std::mt19937 local(seed * 17 + static_cast<uint32_t>(index));
+                Type small(24 + 8 * static_cast<uint32_t>(index), 0);
+                for (size_t count = 0; count < 1500; count++)
+                {
+                    Object* object = nullptr;
+                    if (engine.Allocate(mutators[index], small.table->GetBaseSize() + 8 * (local() % 8), &object) !=
+                            LxrRcResult::Success)
+                    {
+                        break;
+                    }
+                    object->RawSetMethodTable(small.table);
+                }
+            });
+        }
+        for (std::thread& thread : allocators)
+        {
+            thread.join();
+        }
+        stop.store(true, std::memory_order_release);
+        for (std::thread& thread : threads)
+        {
+            thread.join();
+        }
+        Check(wrong.load() == 0 && found.load() > 1000,
+            "lookups of live objects stay exact while workers sweep and other threads allocate");
+        for (LxrRcMutator* other : mutators)
+        {
+            Check(engine.DetachMutator(other) == LxrRcResult::Success, "a second allocating mutator detaches");
+        }
+        Check(engine.Drain(Timeout) == LxrRcResult::Success && engine.GetFailure() == LxrRcResult::Success,
+            "the lazy work of the pause completes");
+        Check(Epoch(engine, live), "the next pause completes");
+        size_t alive = 0;
+        for (Object* object : live)
+        {
+            alive += Count(engine, object) != 0;
+        }
+        Check(alive == live.size(), "the live objects are still counted");
+        Check(engine.DetachMutator(mutator) == LxrRcResult::Success, "concurrent owner detaches");
+    }
+
+    // A deterministic graph with cycles, thinned over several full traces. The numbers that it prints must be the same in both
+    // variants (compare-digests.sh): the cycle sweep and the heap walk find the same objects whatever the object-start record is.
+    void ValidateObjectStartDigest()
+    {
+        std::mt19937 random(20260401);
+        LxrReferenceCounting engine;
+        LxrRcMutator* mutator = nullptr;
+        int identity;
+        if (!Initialize(engine, 2, &mutator, &identity))
+        {
+            return;
+        }
+        static const uint32_t sizes[] = {24, 32, 64, 120, 248, 264, 520, 1000, 2000};
+        std::vector<std::unique_ptr<Type>> types;
+        for (uint32_t size : sizes)
+        {
+            types.push_back(std::make_unique<Type>(size, 1));
+        }
+        std::vector<Object*> objects;
+        for (size_t index = 0; index < 400; index++)
+        {
+            Object* object = Allocate(engine, mutator, *types[random() % types.size()]);
+            if (object == nullptr)
+            {
+                return;
+            }
+            objects.push_back(object);
+        }
+        for (Object* object : objects)
+        {
+            if (!Store(engine, mutator, Field(object), objects[random() % objects.size()]))
+            {
+                return;
+            }
+        }
+        std::vector<Object*> candidates = objects;
+        std::vector<Object*> roots;
+        for (Object* object : candidates)
+        {
+            if (random() % 2 == 0)
+            {
+                roots.push_back(object);
+            }
+        }
+        if (!Epoch(engine, roots))
+        {
+            return;
+        }
+        std::vector<Object*> alive;
+        for (int phase = 0; phase < 5; phase++)
+        {
+            alive.clear();
+            uint64_t aliveBytes = 0;
+            for (Object* object : candidates)
+            {
+                if (Count(engine, object) != 0)
+                {
+                    alive.push_back(object);
+                    aliveBytes += SizeOf(object);
+                }
+            }
+            std::vector<Object*> next;
+            for (Object* object : alive)
+            {
+                if (random() % 10 < 7)
+                {
+                    next.push_back(object);
+                }
+            }
+            StartWalkCapture capture{&alive, &next};
+            if (!Check(engine.Collect(CaptureStartWalk, &capture, Timeout) == LxrRcResult::Success &&
+                    engine.Drain(Timeout) == LxrRcResult::Success && capture.visitedExactly,
+                    "WalkObjects visits exactly the counted objects before the pause"))
+            {
+                return;
+            }
+            if (!TracePause(engine, next, LxrPauseKind::Full))
+            {
+                return;
+            }
+            LxrTraceMetrics trace = engine.GetTraceMetrics();
+            std::printf("DIGEST phase=%d alive=%zu aliveBytes=%llu walked=%zu walkedBytes=%llu cycleObjects=%llu cycleBytes=%llu\n",
+                phase, alive.size(), static_cast<unsigned long long>(aliveBytes), capture.visited,
+                static_cast<unsigned long long>(capture.visitedBytes), static_cast<unsigned long long>(trace.cycleObjects),
+                static_cast<unsigned long long>(trace.cycleBytes));
+            candidates = alive;
+        }
+        Check(engine.DetachMutator(mutator) == LxrRcResult::Success, "digest owner detaches");
+    }
+
+    void ValidateObjectStart()
+    {
+        ValidateObjectStartEveryOffset(false);
+        ValidateObjectStartEveryOffset(true);
+        ValidateObjectStartHoleReuse();
+        ValidateObjectStartPinnedYoung();
+        ValidateObjectStartStaleValue();
+        for (uint32_t seed = 1; seed <= 4; seed++)
+        {
+            ValidateObjectStartConcurrent(seed);
+        }
+        ValidateObjectStartDigest();
+    }
+
     // Refill: the whole range of a buffer is made clean before the first object is allocated, so no later step
     // clears anything per object. The planes of every block are poisoned first, so a plane that the refill does not
     // clear shows up. With a trace running, the range is also marked in bulk.
@@ -10127,6 +10726,12 @@ int main(int argc, char** argv)
         }
         std::printf("%s: %d/%d remset current-owner boundary checks\n",
             Failures == 0 ? "PASS" : "FAIL", Checks - Failures, Checks);
+        return Failures == 0 ? 0 : 1;
+    }
+    if (argc == 2 && strcmp(argv[1], "--object-start") == 0)
+    {
+        ValidateObjectStart();
+        std::printf("%s: %d/%d object start checks\n", Failures == 0 ? "PASS" : "FAIL", Checks - Failures, Checks);
         return Failures == 0 ? 0 : 1;
     }
     if (argc == 2 && strcmp(argv[1], "--nursery") == 0)

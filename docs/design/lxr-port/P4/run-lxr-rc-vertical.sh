@@ -54,6 +54,12 @@ case "$control" in
     PauseTraceStore) flags+=(-DLXR_PAUSE_TRACE_REPLAY_STORE_CONTROL) ;;
     PreZeroTakeAsClean) flags+=(-DLXR_PREZERO_TAKE_AS_CLEAN_CONTROL) ;;
     PreZeroNoPauseGate) flags+=(-DLXR_PREZERO_NO_PAUSE_GATE_CONTROL) ;;
+    WalkNoContinuationSkip) flags+=(-DLXR_OBJECT_START_WALK -DLXR_WALK_NO_CONTINUATION_SKIP_CONTROL) ;;
+    WalkOneWord) flags+=(-DLXR_OBJECT_START_WALK -DLXR_WALK_ONE_WORD_CONTROL) ;;
+    WalkNoExtent) flags+=(-DLXR_OBJECT_START_WALK -DLXR_WALK_NO_EXTENT_CONTROL) ;;
+    WalkNoPinnedSpan) flags+=(-DLXR_OBJECT_START_WALK -DLXR_WALK_NO_PINNED_SPAN_CONTROL) ;;
+    WalkTrustedResolve) flags+=(-DLXR_OBJECT_START_WALK -DLXR_WALK_TRUSTED_RESOLVE_CONTROL) ;;
+    WalkEnumContinuation) flags+=(-DLXR_OBJECT_START_WALK -DLXR_WALK_ENUM_CONTINUATION_CONTROL) ;;
     *) echo "Unsupported control: $control" >&2; exit 1 ;;
 esac
 gc="$root/src/coreclr/gc"
@@ -96,6 +102,7 @@ case "$control" in
     TraceBatch*) selectors=(--trace-batching) ;;
     PauseTrace*) selectors=(--pause-trace) ;;
     PreZero*) selectors=(--prezero) ;;
+    Walk*) selectors=(--object-start) ;;
 esac
 "$output/lxr-rc-validation" "${selectors[@]}" > "$output/run.log" 2>&1 || status=$?
 if [[ "$control" != None ]]; then
