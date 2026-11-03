@@ -23,6 +23,15 @@ namespace
     int s_cases;
     std::atomic<int> s_invariantChecks;
 
+    // The default variant registers an object start in the ValidObject plane, and a checked access to an address that is not
+    // registered fails. The walk variant (LXR_OBJECT_START_WALK) has no such plane: the table does not know which address is
+    // an object start, and the access succeeds (the engine finds the start in the count plane and the young spans).
+#ifdef LXR_OBJECT_START_WALK
+    constexpr SideMetadataResult UnregisteredResult = SideMetadataResult::Success;
+#else
+    constexpr SideMetadataResult UnregisteredResult = SideMetadataResult::AddressNotOwned;
+#endif // LXR_OBJECT_START_WALK
+
     void Expect(const char* name, bool condition)
     {
         s_checks++;
@@ -533,7 +542,7 @@ int main()
         Expect(
             "unregistered exact start rejected",
             fixture.table.Load(object, &count) ==
-                SideMetadataResult::AddressNotOwned);
+                UnregisteredResult);
         Expect("object initialized", InitializeObject(fixture, object));
         Expect(
             "registered exact start accepted",
@@ -550,7 +559,7 @@ int main()
         Expect(
             "interior exact lattice slot rejected",
             fixture.table.Load(object + 8, &count) ==
-                SideMetadataResult::AddressNotOwned);
+                UnregisteredResult);
     });
 
     RunCase("misaligned byref rejected", []()
@@ -753,7 +762,7 @@ int main()
         Expect(
             "reset object no longer registered",
             fixture.table.Load(object, &count) ==
-                SideMetadataResult::AddressNotOwned);
+                UnregisteredResult);
     });
 
     RunCase("continuation extent requires reclamation before reuse", []()
@@ -885,7 +894,7 @@ int main()
         Expect(
             "block reset clears validity",
             fixture.table.Load(object, &count) ==
-                SideMetadataResult::AddressNotOwned);
+                UnregisteredResult);
         blocks.Shutdown();
     });
 

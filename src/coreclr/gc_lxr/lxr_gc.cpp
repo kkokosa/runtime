@@ -1979,7 +1979,7 @@ bool LxrGcHeap::IsThreadUsingAllocationContextHeap(gc_alloc_context* context, in
 
 bool LxrGcHeap::IsPromoted(Object* object)
 {
-    object = m_engine.ResolveForwarded(object);
+    object = m_engine.ResolveForwardedChecked(object);
     if (object == nullptr)
     {
         return true;

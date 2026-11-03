@@ -719,9 +719,16 @@ int main()
             Load(metadata, LxrSideMetadataKind::LargeObjectMarkNursery, first.object) ==
                 LxrLargeObjectSpace::NurseryBit,
             "fresh nursery state");
+#ifdef LXR_OBJECT_START_WALK
+        // The walk variant never writes the ValidObject plane: a large object is found by its allocation record.
+        Check(
+            Load(metadata, LxrSideMetadataKind::ValidObject, first.object) == 0,
+            "fresh object leaves the ValidObject plane alone");
+#else
         Check(
             Load(metadata, LxrSideMetadataKind::ValidObject, first.object) == 1,
             "fresh valid object");
+#endif // LXR_OBJECT_START_WALK
         Check(
             Load(metadata, LxrSideMetadataKind::ReferenceCount, first.object) == 0,
             "fresh reference count");

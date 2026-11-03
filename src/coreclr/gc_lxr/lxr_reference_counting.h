@@ -472,6 +472,11 @@ public:
     // Like TraceRoot for many objects, with one drain at the end. The values are object addresses.
     LxrRcResult TraceRoots(const uintptr_t* objects, size_t count);
     Object* ResolveForwarded(Object* object) const;
+    // For a value that may be stale: a weak target, or a trace entry that names an object that has died since. The
+    // default variant tells a source from an arbitrary address by its ValidObject bit, and the call is the same as
+    // ResolveForwarded. The walk variant reads the header of an address only if it is a counted start, or if a span of
+    // the pause has an object that starts there (the header of an address inside another object is arbitrary data).
+    Object* ResolveForwardedChecked(Object* object) const;
     LxrRcResult RelocateRoot(Object** slot, bool interior, bool pinned) const;
     LxrNurseryMetrics GetNurseryMetrics() const;
     LxrMatureMetrics GetMatureMetrics() const;
@@ -500,6 +505,7 @@ public:
     // the span from its start, by size). Outside a pause the engine has no span list, so an address inside a young
     // object is not found.
     LxrRcResult FindContainingObject(uintptr_t address, Object** object, bool requireCounted = false) const;
+    LxrRcResult FindContainingObjectCore(uintptr_t address, Object** object, bool requireCounted) const;
     LxrRcMetrics GetMetrics() const;
     LxrRcResult GetFailure() const;
     LxrRcPhase GetPhase() const;
@@ -614,6 +620,12 @@ public:
     size_t GetPauseSurvivorBytes() const;
     // P22 (D2). Span statistics: 0 = spans closed, 1 = bytes in closed spans, 2 = spans of the last pause.
     uint64_t GetSpanMetric(size_t metric) const { return m_span_metrics[metric].load(std::memory_order_relaxed); }
+    // Interior lookups (FindContainingObject): 0 = calls, 1 = ticks, 2 = answered by the young spans, 3 = checked
+    // resolutions of a stale value that walked a span.
+    uint64_t GetLookupMetric(size_t metric) const
+    {
+        return metric < 4 ? m_lookup_metrics[metric].load(std::memory_order_relaxed) : UINT64_MAX;
+    }
     // Item 4. 0 = objects from the overflow allocator, 1 = their bytes, 2 = clean blocks it took, 3 = holes that a refill
     // passed over, 4 = recycled lines consumed, 5 = clean blocks acquired, 6 = recycled blocks acquired,
     // 7 = the overflow allocator is enabled.
@@ -801,6 +813,23 @@ private:
     // P22 (D2). The ValidObject bit of an Immix object that is about to get its first count. It must be visible before
     // the count is, because another worker that sees the count may trace the object.
     void MarkPromotedStart(uintptr_t start);
+#ifdef LXR_OBJECT_START_WALK
+    // The walk variant has no ValidObject plane (see docs/design/lxr-port/P31-object-start-walk/DESIGN.md). A counted object
+    // starts at a slot whose count is not zero. One more kind of slot holds a count: the first slot of each continuation line of
+    // an object that is longer than a line (the count is the line's liveness; its straddle byte is set). Such a slot is not
+    // an object start.
+    bool IsContinuationSlot(size_t slot) const;
+    // The nearest slot in [lowerSlot, slot] that starts a counted object, or SIZE_MAX.
+    size_t FindCountedSlotBelow(size_t lowerSlot, size_t slot) const;
+    // The pinned allocator records the span of its objects as a mutator does. The span is closed at end (a used point).
+    // The caller holds m_pinned_lock, or the world is stopped.
+    void ClosePinnedSpan(uintptr_t end);
+    uintptr_t m_pinned_span_start = 0;
+    SideMetadataAccessor m_straddle_metadata;
+#endif // LXR_OBJECT_START_WALK
+    // Interior lookups: 0 = calls, 1 = ticks, 2 = found in the young spans, 3 = checked resolutions of a stale value that
+    // needed a span walk (walk variant).
+    mutable std::atomic<uint64_t> m_lookup_metrics[4]{};
     LxrRcResult PrepareWork();
     Work* NewWork(
         WorkKind kind, const uintptr_t* references, size_t count, LxrWorkBucketStage stage,

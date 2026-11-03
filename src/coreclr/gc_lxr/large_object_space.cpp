@@ -519,7 +519,9 @@ LxrLargeObjectResult LxrLargeObjectSpace::Initialize(
 
     const LxrSideMetadataKind required[] =
     {
+#ifndef LXR_OBJECT_START_WALK
         LxrSideMetadataKind::ValidObject,
+#endif // !LXR_OBJECT_START_WALK
         LxrSideMetadataKind::ReferenceCount,
         LxrSideMetadataKind::FieldUnlogged,
         LxrSideMetadataKind::ObjectMark,
@@ -795,7 +797,9 @@ LxrLargeObjectResult LxrLargeObjectSpace::ResetAllocationMetadata(
 {
     const LxrSideMetadataKind resetKinds[] =
     {
+#ifndef LXR_OBJECT_START_WALK
         LxrSideMetadataKind::ValidObject,
+#endif // !LXR_OBJECT_START_WALK
         LxrSideMetadataKind::ReferenceCount,
         LxrSideMetadataKind::FieldUnlogged,
         LxrSideMetadataKind::ObjectMark,
@@ -850,6 +854,7 @@ LxrLargeObjectResult LxrLargeObjectSpace::InitializeAllocationMetadata(
         allocation.object,
         state,
         SideMetadataMemoryOrder::SequentiallyConsistent);
+#ifndef LXR_OBJECT_START_WALK
     if (metadataResult == SideMetadataResult::Success)
     {
         metadataResult = m_metadata->Store(
@@ -858,6 +863,7 @@ LxrLargeObjectResult LxrLargeObjectSpace::InitializeAllocationMetadata(
             1,
             SideMetadataMemoryOrder::SequentiallyConsistent);
     }
+#endif // !LXR_OBJECT_START_WALK
     return FromMetadataResult(metadataResult);
 }
 

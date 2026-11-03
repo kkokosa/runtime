@@ -106,7 +106,9 @@ SideMetadataResult ImmixAllocationManager::Initialize(
 
     m_metadata = metadata;
     m_reference_count = metadata->GetAccessor(LxrSideMetadataKind::ReferenceCount);
+#ifndef LXR_OBJECT_START_WALK
     m_valid_object = metadata->GetAccessor(LxrSideMetadataKind::ValidObject);
+#endif // !LXR_OBJECT_START_WALK
     m_field_unlogged = metadata->GetAccessor(LxrSideMetadataKind::FieldUnlogged);
     m_object_mark = metadata->GetAccessor(LxrSideMetadataKind::ObjectMark);
     m_line_reuse = metadata->GetAccessor(LxrSideMetadataKind::LineReuse);
@@ -1055,16 +1057,19 @@ SideMetadataResult ImmixAllocationManager::InitializeFieldLogRange(
 {
 #if !BIGENDIAN && !defined(_DEBUG) && !defined(LXR_SIDE_METADATA_TEST_PLATFORM) && !defined(LXR_F9_TEST_HOOKS)
     uint32_t shift;
+#ifndef LXR_OBJECT_START_WALK
     if (m_valid_object.IsValid())
     {
         memset(const_cast<uint8_t*>(m_valid_object.LocateByte(start, &shift)), 0, size >> 6);
     }
+#endif // !LXR_OBJECT_START_WALK
     memset(const_cast<uint8_t*>(m_field_unlogged.LocateByte(start, &shift)), copy ? 0xff : 0, size >> 6);
     return SideMetadataResult::Success;
 #else
     // The ValidObject plane exists because .NET needs the start of the object that contains an interior pointer; the Java
     // LXR has no such plane. A stale bit of a dead object must not lie in a range that new objects use, so the plane is
     // cleared here, on the same schedule as the unlog and mark tables of the Java LXR (at the refill of the range).
+#ifndef LXR_OBJECT_START_WALK
 #if !defined(LXR_SIDE_METADATA_TEST_PLATFORM) || !defined(LXR_VALID_CLEAR_CONTROL)
     if (m_metadata->IsSpecEnabled(LxrSideMetadataKind::ValidObject))
     {
@@ -1075,6 +1080,7 @@ SideMetadataResult ImmixAllocationManager::InitializeFieldLogRange(
         }
     }
 #endif // !LXR_SIDE_METADATA_TEST_PLATFORM || !defined(LXR_VALID_CLEAR_CONTROL)
+#endif // !LXR_OBJECT_START_WALK
     // P28 (F9). The Java LXR does not clear the count plane and the straddle plane at a refill: the counts and the straddle
     // marks of a dead object are cleared when the object dies (rc.rs, rc_work.rs: unmark_straddle_object), and the tables of a
     // block are cleared only when a defrag source is released. So a free block and a hole have zero counts and no straddle

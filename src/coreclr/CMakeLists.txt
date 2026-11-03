@@ -73,6 +73,8 @@ OPTION(CLR_CMAKE_ENABLE_SATORI_GC
   "Build the Satori standalone collector (comparison build; AMD64 and ARM64 only)" OFF)
 OPTION(CLR_CMAKE_ENABLE_LXR_GC
   "Build the experimental selectable LXR collector" OFF)
+OPTION(CLR_CMAKE_LXR_OBJECT_START_WALK
+  "Build the LXR collector without the ValidObject plane (object starts come from the count plane and the young spans)" OFF)
 
 if(CLR_CMAKE_ENABLE_LXR_GC)
   if(NOT CLR_CMAKE_TARGET_ARCH_AMD64 OR

@@ -17,7 +17,9 @@ SideMetadataResult ReferenceCountTable::Initialize(
 {
     if ((metadata == nullptr) ||
         (layout == nullptr) ||
+#ifndef LXR_OBJECT_START_WALK
         !metadata->IsSpecEnabled(LxrSideMetadataKind::ValidObject) ||
+#endif // !LXR_OBJECT_START_WALK
         !metadata->IsSpecEnabled(LxrSideMetadataKind::ReferenceCount) ||
         !metadata->IsSpecEnabled(LxrSideMetadataKind::ReferenceCountStraddle))
     {
@@ -36,9 +38,15 @@ SideMetadataResult ReferenceCountTable::Initialize(
     m_metadata = metadata;
     m_log_reference_count_bits = referenceCount->log_bits_per_value;
     m_rc = metadata->GetAccessor(LxrSideMetadataKind::ReferenceCount);
+#ifndef LXR_OBJECT_START_WALK
     m_valid = metadata->GetAccessor(LxrSideMetadataKind::ValidObject);
+#endif // !LXR_OBJECT_START_WALK
     m_straddle = metadata->GetAccessor(LxrSideMetadataKind::ReferenceCountStraddle);
-    if (!m_rc.IsValid() || !m_valid.IsValid() || !m_straddle.IsValid())
+    if (!m_rc.IsValid() ||
+#ifndef LXR_OBJECT_START_WALK
+        !m_valid.IsValid() ||
+#endif // !LXR_OBJECT_START_WALK
+        !m_straddle.IsValid())
     {
         Shutdown();
         return SideMetadataResult::InvalidLayout;
@@ -228,12 +236,15 @@ SideMetadataResult ReferenceCountTable::ResetRangeQuiescent(
         return SideMetadataResult::InvalidArgument;
     }
 
-    SideMetadataResult result = m_metadata->ResetRangeQuiescent(
+    SideMetadataResult result = SideMetadataResult::Success;
+#ifndef LXR_OBJECT_START_WALK
+    result = m_metadata->ResetRangeQuiescent(
         LxrSideMetadataKind::ValidObject,
         start,
         size,
         0);
     if (result == SideMetadataResult::Success)
+#endif // !LXR_OBJECT_START_WALK
     {
         result = m_metadata->ResetRangeQuiescent(
             LxrSideMetadataKind::ReferenceCount,
@@ -388,7 +399,9 @@ SideMetadataResult ReferenceCountTable::DecrementWithDeathCore(
             {
                 return result;
             }
-            // Invalidate the old start while RC still prevents allocation into its lines.
+            // Invalidate the old start while RC still prevents allocation into its lines. The walk variant has no
+            // start plane: the count that the compare-exchange below takes to zero is the invalidation.
+#ifndef LXR_OBJECT_START_WALK
             if (Fast)
             {
                 m_valid.Store(object, 0, SideMetadataMemoryOrder::Relaxed);
@@ -403,6 +416,7 @@ SideMetadataResult ReferenceCountTable::DecrementWithDeathCore(
                     return result;
                 }
             }
+#endif // !LXR_OBJECT_START_WALK
         }
         uintptr_t observed;
         bool exchanged;
@@ -518,6 +532,7 @@ SideMetadataResult ReferenceCountTable::IsContinuationLine(
         line,
         SideMetadataMemoryOrder::Relaxed,
         &count);
+#ifndef LXR_OBJECT_START_WALK
     if (result == SideMetadataResult::Success)
     {
         result = m_metadata->Load(
@@ -526,16 +541,19 @@ SideMetadataResult ReferenceCountTable::IsContinuationLine(
             SideMetadataMemoryOrder::Relaxed,
             &valid);
     }
+#endif // !LXR_OBJECT_START_WALK
     if (result != SideMetadataResult::Success)
     {
         return result;
     }
     if (straddle == 0)
     {
+#ifndef LXR_OBJECT_START_WALK
         if ((count != 0) && (valid == 0))
         {
             return SideMetadataResult::InconsistentState;
         }
+#endif // !LXR_OBJECT_START_WALK
         *continuation = false;
         return SideMetadataResult::Success;
     }
@@ -555,7 +573,9 @@ SideMetadataResult ReferenceCountTable::ValidateAddress(
     if ((m_metadata == nullptr) ||
         ((object & (ObjectAlignment - 1)) != 0) ||
         !m_metadata->IsDataAddressOwned(object) ||
+#ifndef LXR_OBJECT_START_WALK
         !m_metadata->IsSpecEnabled(LxrSideMetadataKind::ValidObject) ||
+#endif // !LXR_OBJECT_START_WALK
         !m_metadata->IsSpecEnabled(LxrSideMetadataKind::ReferenceCount) ||
         !m_metadata->IsSpecEnabled(LxrSideMetadataKind::ReferenceCountStraddle))
     {
@@ -575,6 +595,11 @@ SideMetadataResult ReferenceCountTable::ValidateAddress(
     {
         return SideMetadataResult::InvalidLayout;
     }
+#ifdef LXR_OBJECT_START_WALK
+    // No start plane: an address is not "registered" in any table, so the check is the address check above.
+    (void)requireRegistered;
+    return SideMetadataResult::Success;
+#else
     if (!requireRegistered)
     {
         return SideMetadataResult::Success;
@@ -593,6 +618,7 @@ SideMetadataResult ReferenceCountTable::ValidateAddress(
     return valid == 1
         ? SideMetadataResult::Success
         : SideMetadataResult::AddressNotOwned;
+#endif // LXR_OBJECT_START_WALK
 }
 
 SideMetadataResult ReferenceCountTable::ValidateObjectRange(
@@ -638,6 +664,7 @@ SideMetadataResult ReferenceCountTable::ValidateUnregisteredObjectRange(
         return result;
     }
 
+#ifndef LXR_OBJECT_START_WALK
     uintptr_t valid;
     result = m_metadata->Load(
         LxrSideMetadataKind::ValidObject,
@@ -652,6 +679,7 @@ SideMetadataResult ReferenceCountTable::ValidateUnregisteredObjectRange(
     {
         return SideMetadataResult::InconsistentState;
     }
+#endif // !LXR_OBJECT_START_WALK
 
     uintptr_t line = object & ~ImmixBlockGeometry::LineMask;
     bool continuation;
@@ -691,6 +719,7 @@ SideMetadataResult ReferenceCountTable::ValidateContinuationLines(
                 SideMetadataMemoryOrder::Relaxed,
                 &count);
         }
+#ifndef LXR_OBJECT_START_WALK
         if (result == SideMetadataResult::Success)
         {
             result = m_metadata->Load(
@@ -699,6 +728,7 @@ SideMetadataResult ReferenceCountTable::ValidateContinuationLines(
                 SideMetadataMemoryOrder::Relaxed,
                 &valid);
         }
+#endif // !LXR_OBJECT_START_WALK
         if (result != SideMetadataResult::Success)
         {
             return result;
@@ -725,7 +755,13 @@ SideMetadataResult ReferenceCountTable::SetValidObject(
     uintptr_t value)
 {
     // Every caller has validated the object address, or comes from the allocation path of the engine.
+#ifdef LXR_OBJECT_START_WALK
+    // The walk variant has no start plane. The count plane is the object-start index (see P31 DESIGN.md).
+    (void)object;
+    (void)value;
+#else
     m_valid.Store(object, value, SideMetadataMemoryOrder::SequentiallyConsistent);
+#endif // LXR_OBJECT_START_WALK
     return SideMetadataResult::Success;
 }
 

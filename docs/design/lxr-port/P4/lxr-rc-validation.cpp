@@ -2219,9 +2219,13 @@ namespace
 
     void ValidateGrowthFailure()
     {
-        // Three object planes (S7 removed the two trace tables), four payload streams, fifteen metadata planes, then
-        // the managed heap.
+        // Three object planes (S7 removed the two trace tables), four payload streams, fifteen metadata planes (fourteen
+        // without the ValidObject plane of the default variant), then the managed heap.
+#ifdef LXR_OBJECT_START_WALK
+        constexpr int64_t CommitCalls = 22;
+#else
         constexpr int64_t CommitCalls = 23;
+#endif // LXR_OBJECT_START_WALK
         for (int64_t after = 0; after <= CommitCalls; after++)
         {
             LxrReferenceCounting engine;
@@ -6443,7 +6447,11 @@ namespace
             for (size_t block = watch->dirtyFirst; block < watch->dirtyEnd; block++)
             {
                 uintptr_t address = engine->GetReservationStart() + block * OvershootBlock;
+#ifdef LXR_OBJECT_START_WALK
+                for (LxrSideMetadataKind kind : {LxrSideMetadataKind::ReferenceCount})
+#else
                 for (LxrSideMetadataKind kind : {LxrSideMetadataKind::ReferenceCount, LxrSideMetadataKind::ValidObject})
+#endif // LXR_OBJECT_START_WALK
                 {
                     uintptr_t plane = PlaneAddress(layout, kind, address);
                     size_t bytes = kind == LxrSideMetadataKind::ReferenceCount ? OvershootBlock / 8 : OvershootBlock / 64;
@@ -6669,10 +6677,17 @@ namespace
         uintptr_t tail = arena + 20 * OvershootBlock;
         size_t tailBytes = 110 * OvershootBlock;
         uintptr_t rcPlane = PlaneAddress(layout, LxrSideMetadataKind::ReferenceCount, tail);
+#ifdef LXR_OBJECT_START_WALK
+        // The walk variant has no ValidObject plane.
+        int dataResident = ResidentPages(tail, tailBytes);
+        int rcResident = ResidentPages(rcPlane, tailBytes / 8);
+        int validResident = 0;
+#else
         uintptr_t validPlane = PlaneAddress(layout, LxrSideMetadataKind::ValidObject, tail);
         int dataResident = ResidentPages(tail, tailBytes);
         int rcResident = ResidentPages(rcPlane, tailBytes / 8);
         int validResident = ResidentPages(validPlane, tailBytes / 64);
+#endif // LXR_OBJECT_START_WALK
         Check(dataResident <= 0 && rcResident <= 0 && validResident <= 0,
             "the data and the planes of the returned range are no longer resident (Linux)");
         if (dataResident > 0 || rcResident > 0 || validResident > 0)
@@ -8189,7 +8204,12 @@ namespace
             LxrReferenceCounting::RangeStateForTest untouched;
             engine.GetRangeStateForTest(other, ImmixBlockGeometry::BlockBytes, &untouched);
             Check(engine.GetRangeStateForTest(other, ImmixBlockGeometry::BlockBytes, &untouched) ==
-                    LxrRcResult::Success && untouched.validSlots == SlotsPerBlock,
+                    LxrRcResult::Success &&
+#ifdef LXR_OBJECT_START_WALK
+                    untouched.unloggedSlots == SlotsPerBlock,
+#else
+                    untouched.validSlots == SlotsPerBlock,
+#endif // LXR_OBJECT_START_WALK
                 "a block that no buffer took keeps its poison");
             // The helper allocates 100 objects with no call into the engine, and nothing changes in the planes.
             size_t calls = helper.slowCalls;
@@ -8922,16 +8942,29 @@ namespace
         {
             return;
         }
+#ifdef LXR_OBJECT_START_WALK
+        // The walk variant records a young pinned object in a span that a pause reads, and no bit: the object is found
+        // by the pause, and not before it (the same limit as for any young object).
+        Check(!engine.IsObjectStart(pinned) && engine.IsPinnedBlock(StartOf(pinned)) && engine.IsOwnedObject(pinned),
+            "a small pinned-object-heap object has no start record before the pause, and is in a pinned block");
+#else
         Check(engine.IsObjectStart(pinned) && engine.IsPinnedBlock(StartOf(pinned)),
             "a small pinned-object-heap object has its bit at once, in a pinned block");
+#endif // LXR_OBJECT_START_WALK
         Check(engine.IsObjectStart(large) && engine.IsLargeObject(large),
             "a large object has its bit at once");
         Check(!engine.IsObjectStart(young) && engine.IsOwnedObject(young),
             "a small object of the ordinary heap has no bit, and is still an owned object");
         Object* found = nullptr;
+#ifdef LXR_OBJECT_START_WALK
+        Check(engine.FindContainingObject(reinterpret_cast<uintptr_t>(pinned) + 40, &found) ==
+                LxrRcResult::InvalidArgument,
+            "an interior address in a young pinned-object-heap object is not found outside a pause");
+#else
         Check(engine.FindContainingObject(reinterpret_cast<uintptr_t>(pinned) + 40, &found) == LxrRcResult::Success &&
                 found == pinned,
             "an interior address in a pinned-object-heap object is found outside a pause");
+#endif // LXR_OBJECT_START_WALK
         found = nullptr;
         Check(engine.FindContainingObject(reinterpret_cast<uintptr_t>(large) + 3000, &found) == LxrRcResult::Success &&
                 found == large,

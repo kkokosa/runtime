@@ -15,6 +15,10 @@ elif [[ "$configuration" != Debug ]]; then
     echo "Unsupported configuration: $configuration" >&2
     exit 1
 fi
+# LXR_OBJECT_START_WALK=1 builds the engine without the ValidObject plane (P31). Every control below can run in both variants.
+if [[ "${LXR_OBJECT_START_WALK:-0}" == 1 ]]; then
+    flags+=(-DLXR_OBJECT_START_WALK)
+fi
 case "$control" in
     None) ;;
     EarlyRoot) flags+=(-DLXR_RC_EARLY_ROOT_CONTROL -Wno-unused-function) ;;

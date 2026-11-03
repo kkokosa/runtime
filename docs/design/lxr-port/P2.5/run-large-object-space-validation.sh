@@ -15,7 +15,7 @@ mkdir -p "$output_root"
 command=(
   g++ -std=c++17 -O2 -Wall -Wextra -Werror
   -Wno-invalid-offsetof -Wno-strict-aliasing -Wno-unused-parameter -pthread
-  -DBUILD_AS_STANDALONE -DLXR_SIDE_METADATA_TEST_PLATFORM
+  -DBUILD_AS_STANDALONE -DLXR_SIDE_METADATA_TEST_PLATFORM ${LXR_OBJECT_START_WALK:+-DLXR_OBJECT_START_WALK}
   -DTARGET_UNIX -DHOST_UNIX -DTARGET_LINUX -DHOST_LINUX
   -DTARGET_AMD64 -DHOST_AMD64 -DTARGET_64BIT -DHOST_64BIT
   -I"$lxr_root"
