@@ -528,12 +528,23 @@ HRESULT LxrGcHeap::Initialize()
     parameters.ephemeral_high = g_gc_highest_address;
     // The runtime builds the barrier from GetAssignRefFunctions and keeps its patchable slots in sync with these
     // values; they must be set before the runtime installs the helpers.
+    if ((m_engine.GetFieldMetadataBase() & (sizeof(uint64_t) - 1)) != 0)
+    {
+        // The assembly barrier reads the FieldUnlogged plane in 8-byte words.
+        Fatal("LXR field-unlog plane is not 8-byte aligned.");
+    }
     LxrWriteBarrierSetGlobals(
         m_engine.GetFieldMetadataBase(),
         m_engine.GetReservationStart(),
         m_engine.GetReservationBytes(),
         reinterpret_cast<void*>(&LxrBarrierSlowPath),
         LxrWriteBarrierComputeXsaveMask());
+    {
+        uintptr_t rcBase;
+        uint8_t rcLogBytes, rcLogBits;
+        m_engine.GetReferenceCountPlane(&rcBase, &rcLogBytes, &rcLogBits);
+        LxrWriteBarrierSetReferenceCountPlane(rcBase, rcLogBytes, rcLogBits);
+    }
     GCToEEInterface::StompWriteBarrier(&parameters);
     gc_alloc_context* context = GCToEEInterface::GetAllocContext();
     if (context != nullptr && FindOrAttach(context, false) == nullptr)

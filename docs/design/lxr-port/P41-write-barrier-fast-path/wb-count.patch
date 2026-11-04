@@ -1,0 +1,142 @@
+diff --git a/src/coreclr/gc_lxr/amd64/lxr_writebarrier.S b/src/coreclr/gc_lxr/amd64/lxr_writebarrier.S
+index 2978feaa7c4..ecdefd89bf1 100644
+--- a/src/coreclr/gc_lxr/amd64/lxr_writebarrier.S
++++ b/src/coreclr/gc_lxr/amd64/lxr_writebarrier.S
+@@ -41,6 +41,8 @@
+ //   rsi - new reference
+ //
+ LEAF_ENTRY LxrCheckedAssignRef, _TEXT
++        mov     r8, qword ptr [rip + LOCAL_LABEL(CountSlot)]
++        inc     qword ptr [r8 + 8]
+         mov     rax, rdi
+         sub     rax, qword ptr [rip + LOCAL_LABEL(HeapLowSlot)]
+         cmp     rax, qword ptr [rip + LOCAL_LABEL(HeapSizeSlot)]
+@@ -56,6 +58,12 @@ LEAF_END_MARKED LxrCheckedAssignRef, _TEXT
+ //
+ LEAF_ENTRY LxrAssignRef, _TEXT
+ LOCAL_LABEL(AssignRefEntry):
++        mov     r8, qword ptr [rip + LOCAL_LABEL(CountSlot)]
++        inc     qword ptr [r8]
++        test    rsi, rsi
++        jnz     LOCAL_LABEL(CountNotNull)
++        inc     qword ptr [r8 + 24]
++LOCAL_LABEL(CountNotNull):
+         // metadata byte = base[dst >> 6], bit = (dst >> 3) & 7 (granularity: one bit for every 8 bytes)
+         mov     rax, rdi
+         shr     rax, 6
+@@ -78,6 +86,8 @@ LEAF_END_MARKED LxrAssignRef, _TEXT
+ //
+ NESTED_ENTRY LxrBarrierSlow, _TEXT, NoHandler
+ LOCAL_LABEL(SlowEntry):
++        mov     r8, qword ptr [rip + LOCAL_LABEL(CountSlot)]
++        inc     qword ptr [r8 + 16]
+         push_nonvol_reg rbp
+         mov     rbp, rsp
+         set_cfa_register rbp, 16
+@@ -171,6 +181,9 @@ LOCAL_LABEL(SlowPathSlot):
+ PATCH_LABEL LxrPatchable_XsaveMask
+ LOCAL_LABEL(XsaveMaskSlot):
+         .quad   0
++PATCH_LABEL LxrPatchable_Counters
++LOCAL_LABEL(CountSlot):
++        .quad   0
+ 
+         .global C_FUNC(LxrWriteBarrierBlock_End)
+ C_FUNC(LxrWriteBarrierBlock_End):
+diff --git a/src/coreclr/gc_lxr/lxr_gc.cpp b/src/coreclr/gc_lxr/lxr_gc.cpp
+index b4fb7398c5f..f056ad8bb31 100644
+--- a/src/coreclr/gc_lxr/lxr_gc.cpp
++++ b/src/coreclr/gc_lxr/lxr_gc.cpp
+@@ -822,8 +822,10 @@ void LxrGcHeap::LogOldValue(Object** slot)
+     }
+ }
+ 
++extern "C" void WbcSlowOldNull(void** slot);
+ void LxrGcHeap::BarrierSlowPath(Object** slot)
+ {
++    WbcSlowOldNull(reinterpret_cast<void**>(slot));
+     LogOldValue(slot);
+ }
+ 
+diff --git a/src/coreclr/gc_lxr/lxr_write_barrier.cpp b/src/coreclr/gc_lxr/lxr_write_barrier.cpp
+index 1f92bfda3e4..cb736f0cb08 100644
+--- a/src/coreclr/gc_lxr/lxr_write_barrier.cpp
++++ b/src/coreclr/gc_lxr/lxr_write_barrier.cpp
+@@ -10,6 +10,7 @@
+ #endif
+ 
+ extern "C" LxrWriteBarrierGlobals g_lxr_write_barrier_globals = {};
++extern "C" uintptr_t g_wbc_ptr;
+ 
+ static uintptr_t s_avLocations[] =
+ {
+@@ -27,9 +28,57 @@ static LxrWriteBarrierPatchable s_patchable[] =
+     { &LxrPatchable_HeapSize, &g_lxr_write_barrier_globals.heap_size },
+     { &LxrPatchable_SlowPath, &g_lxr_write_barrier_globals.slow_path },
+     { &LxrPatchable_XsaveMask, &g_lxr_write_barrier_globals.xsave_mask },
++    { &LxrPatchable_Counters, &g_wbc_ptr },
+     { nullptr, nullptr },
+ };
+ 
++#include <pthread.h>
++#include <unistd.h>
++#include <stdio.h>
++#include <string.h>
++#include <stdlib.h>
++#include <sys/stat.h>
++static uint64_t g_wbc[8] __attribute__((aligned(64)));
++uintptr_t g_wbc_ptr = reinterpret_cast<uintptr_t>(g_wbc);
++static void* WbcWatch(void*)
++{
++    const char* mark = getenv("PROF_MARK");
++    char path[512];
++    uint64_t at_start[8] = {};
++    bool started = false;
++    for (;;)
++    {
++        usleep(500);
++        if (mark == nullptr) continue;
++        struct stat st;
++        if (!started)
++        {
++            snprintf(path, sizeof(path), "%s.start", mark);
++            if (stat(path, &st) == 0) { memcpy(at_start, g_wbc, sizeof(at_start)); started = true; }
++        }
++        else
++        {
++            snprintf(path, sizeof(path), "%s.end", mark);
++            if (stat(path, &st) == 0)
++            {
++                uint64_t e[8]; memcpy(e, g_wbc, sizeof(e));
++                snprintf(path, sizeof(path), "%s.wbcount", mark);
++                FILE* f = fopen(path, "w");
++                fprintf(f, "assign_entries %llu\nchecked_entries %llu\nslow %llu\nnull_new %llu\nslow_old_null %llu\n",
++                    (unsigned long long)(e[0]-at_start[0]), (unsigned long long)(e[1]-at_start[1]), (unsigned long long)(e[2]-at_start[2]),
++                    (unsigned long long)(e[3]-at_start[3]), (unsigned long long)(e[4]-at_start[4]));
++                fclose(f);
++                return nullptr;
++            }
++        }
++    }
++}
++__attribute__((constructor)) static void WbcInit()
++{
++    pthread_t t; pthread_create(&t, nullptr, WbcWatch, nullptr); pthread_detach(t);
++}
++extern "C" void WbcSlowOldNull(void** slot) { if (*slot == nullptr) g_wbc[4]++; }
++
+ void LxrWriteBarrierGetBlockInfo(LxrWriteBarrierBlockInfo* info)
+ {
+     // Both entries cover the whole block: the runtime copies [first entry, end of the larger size), and the slow
+diff --git a/src/coreclr/gc_lxr/lxr_write_barrier.h b/src/coreclr/gc_lxr/lxr_write_barrier.h
+index 0ef02eddbac..55536cdb3a0 100644
+--- a/src/coreclr/gc_lxr/lxr_write_barrier.h
++++ b/src/coreclr/gc_lxr/lxr_write_barrier.h
+@@ -36,6 +36,7 @@ extern "C"
+     extern uint8_t LxrPatchable_HeapSize;
+     extern uint8_t LxrPatchable_SlowPath;
+     extern uint8_t LxrPatchable_XsaveMask;
++    extern uint8_t LxrPatchable_Counters;
+ }
+ 
+ // The values that the slots cache. The runtime copies the current value of each global into its slot (right after it

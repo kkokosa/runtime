@@ -27,6 +27,8 @@ static LxrWriteBarrierPatchable s_patchable[] =
     { &LxrPatchable_HeapSize, &g_lxr_write_barrier_globals.heap_size },
     { &LxrPatchable_SlowPath, &g_lxr_write_barrier_globals.slow_path },
     { &LxrPatchable_XsaveMask, &g_lxr_write_barrier_globals.xsave_mask },
+    { &LxrPatchable_RcBase, &g_lxr_write_barrier_globals.rc_base },
+    { &LxrPatchable_RcShifts, &g_lxr_write_barrier_globals.rc_shifts },
     { nullptr, nullptr },
 };
 
@@ -87,4 +89,11 @@ void LxrWriteBarrierSetGlobals(
     g_lxr_write_barrier_globals.heap_size = heapSize;
     g_lxr_write_barrier_globals.slow_path = reinterpret_cast<uintptr_t>(slowPath);
     g_lxr_write_barrier_globals.xsave_mask = xsaveMask;
+}
+
+void LxrWriteBarrierSetReferenceCountPlane(uintptr_t base, uint8_t logBytesPerValue, uint8_t logBitsPerValue)
+{
+    g_lxr_write_barrier_globals.rc_base = base;
+    g_lxr_write_barrier_globals.rc_shifts =
+        static_cast<uintptr_t>(logBytesPerValue) | (static_cast<uintptr_t>(logBitsPerValue) << 8);
 }

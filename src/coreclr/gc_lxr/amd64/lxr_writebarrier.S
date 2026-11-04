@@ -7,7 +7,8 @@
 // What the barrier does: before the reference store, it tests the "unlogged" bit of the destination field in side
 // metadata (one bit for every 8-byte field slot; a set bit means the field has not been logged in this epoch).
 // A clear bit: store and return. A set bit: call the C++ function LxrBarrierSlowPath(dst), which reads the old value
-// of the field, claims the bit and logs the old value. Then store.
+// of the field, claims the bit and logs the old value. Then store. Before the vector state is saved, the slow path
+// prefetches the reference-count entry of the old value, which the C++ code reads.
 //
 // Register contract (the one the JIT assumes for these helpers, see RBM_CALLEE_TRASH_WRITEBARRIER):
 //   in:     rdi = destination slot, rsi = new reference
@@ -56,16 +57,17 @@ LEAF_END_MARKED LxrCheckedAssignRef, _TEXT
 //
 LEAF_ENTRY LxrAssignRef, _TEXT
 LOCAL_LABEL(AssignRefEntry):
-        // metadata byte = base[dst >> 6], bit = (dst >> 3) & 7 (granularity: one bit for every 8 bytes)
+        // The plane is read as 8-byte words (its base is 8-byte aligned): word = base[dst >> 9] (an index of 8-byte
+        // words), bit = (dst >> 3) & 63. The same bit as "byte base[dst >> 6], bit (dst >> 3) & 7" on a little-endian
+        // machine, and bt with a register operand takes the bit number modulo 64, so there is no byte extract and no mask.
         mov     rax, rdi
-        shr     rax, 6
+        shr     rax, 9
         mov     r8, qword ptr [rip + LOCAL_LABEL(MetadataBaseSlot)]
 ALTERNATE_ENTRY LxrAssignRefMetadataAVLocation
-        movzx   eax, byte ptr [rax + r8]
-        mov     ecx, edi
-        shr     ecx, 3
-        and     ecx, 7
-        bt      eax, ecx
+        mov     rax, qword ptr [rax*8 + r8]
+        mov     rcx, rdi
+        shr     rcx, 3
+        bt      rax, rcx
         jc      LOCAL_LABEL(SlowEntry)
 ALTERNATE_ENTRY LxrAssignRefAVLocation
         mov     [rdi], rsi
@@ -86,6 +88,25 @@ LOCAL_LABEL(SlowEntry):
         push    rsi
         sub     rsp, LXR_XSAVE_FRAME_SIZE
         and     rsp, -64
+
+        // Prefetch the reference-count entry of the old value, before the vector state is saved: the C++ code reads it,
+        // and the read is a cache miss on the program thread (the old value is anywhere in the heap). The save and
+        // restore of the vector state below takes about as long as the miss, so the line is there when it is needed.
+        // The address is base + ((((start >> log bytes) << log bits) >> 6) << 3), as SideMetadataAccessor::Locate
+        // computes it, with start = old value - 8 (the object header comes first). A prefetch never faults, so the old
+        // value is only a hint: the C++ code reads the field again.
+        mov     rax, qword ptr [rdi]
+        test    rax, rax
+        jz      LOCAL_LABEL(SkipPrefetch)
+        sub     rax, 8
+        movzx   ecx, byte ptr [rip + LOCAL_LABEL(RcShiftsSlot)]
+        shr     rax, cl
+        movzx   ecx, byte ptr [rip + LOCAL_LABEL(RcShiftsSlot) + 1]
+        shl     rax, cl
+        shr     rax, 6
+        mov     r8, qword ptr [rip + LOCAL_LABEL(RcBaseSlot)]
+        prefetcht0 [r8 + rax*8]
+LOCAL_LABEL(SkipPrefetch):
 
 #ifndef LXR_WB_CONTROL_NO_VECTOR_SAVE
         // the header of the xsave area must be zero before xrstor sees it
@@ -170,6 +191,13 @@ LOCAL_LABEL(SlowPathSlot):
         .quad   0
 PATCH_LABEL LxrPatchable_XsaveMask
 LOCAL_LABEL(XsaveMaskSlot):
+        .quad   0
+PATCH_LABEL LxrPatchable_RcBase
+LOCAL_LABEL(RcBaseSlot):
+        .quad   0
+// byte 0: log2 of the data bytes of one reference-count entry, byte 1: log2 of its bits
+PATCH_LABEL LxrPatchable_RcShifts
+LOCAL_LABEL(RcShiftsSlot):
         .quad   0
 
         .global C_FUNC(LxrWriteBarrierBlock_End)

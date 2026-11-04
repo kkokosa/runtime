@@ -6840,6 +6840,14 @@ uintptr_t LxrReferenceCounting::GetFieldMetadataBase() const
     return m_metadata.GetBiasedBase(LxrSideMetadataKind::FieldUnlogged);
 }
 
+void LxrReferenceCounting::GetReferenceCountPlane(
+    uintptr_t* base, uint8_t* logBytesPerValue, uint8_t* logBitsPerValue) const
+{
+    *base = m_rc_metadata.IsValid() ? m_rc_metadata.GetBaseAddress() : 0;
+    *logBytesPerValue = m_rc_metadata.GetLogBytesPerValue();
+    *logBitsPerValue = m_rc_metadata.GetLogBitsPerValue();
+}
+
 LxrRcResult LxrReferenceCounting::Reclaim(uintptr_t start)
 {
 #ifdef LXR_SIDE_METADATA_TEST_PLATFORM

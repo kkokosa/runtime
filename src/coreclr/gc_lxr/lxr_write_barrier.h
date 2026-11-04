@@ -36,6 +36,8 @@ extern "C"
     extern uint8_t LxrPatchable_HeapSize;
     extern uint8_t LxrPatchable_SlowPath;
     extern uint8_t LxrPatchable_XsaveMask;
+    extern uint8_t LxrPatchable_RcBase;
+    extern uint8_t LxrPatchable_RcShifts;
 }
 
 // The values that the slots cache. The runtime copies the current value of each global into its slot (right after it
@@ -44,6 +46,7 @@ extern "C"
 struct LxrWriteBarrierGlobals
 {
     // Biased base of the FieldUnlogged plane: the metadata byte of address A is base[A >> 6], its bit is (A >> 3) & 7.
+    // The barrier reads the plane as 8-byte words (word base[A >> 9], bit (A >> 3) & 63), so the base is 8-byte aligned.
     uintptr_t metadata_base;
     // The LXR heap, [heap_low, heap_low + heap_size). The checked helper stores without a check outside of it.
     uintptr_t heap_low;
@@ -52,6 +55,11 @@ struct LxrWriteBarrierGlobals
     uintptr_t slow_path;
     // The xsave components to save around the slow path; 0 means use fxsave.
     uintptr_t xsave_mask;
+    // The reference-count plane, for the prefetch of the old value's entry in the slow path (a hint only; zero base
+    // and shifts are harmless). The entry of the object that starts at S is in the word at
+    // rc_base + ((((S >> (rc_shifts & 0xFF)) << ((rc_shifts >> 8) & 0xFF)) >> 6) << 3).
+    uintptr_t rc_base;
+    uintptr_t rc_shifts;
 };
 
 extern "C" LxrWriteBarrierGlobals g_lxr_write_barrier_globals;
@@ -84,5 +92,8 @@ uintptr_t LxrWriteBarrierComputeXsaveMask();
 // Sets the values that the patchable slots cache.
 void LxrWriteBarrierSetGlobals(
     uintptr_t metadataBase, uintptr_t heapLow, uintptr_t heapSize, void* slowPath, uintptr_t xsaveMask);
+
+// Sets the reference-count plane that the slow path prefetches from (see LxrWriteBarrierGlobals).
+void LxrWriteBarrierSetReferenceCountPlane(uintptr_t base, uint8_t logBytesPerValue, uint8_t logBitsPerValue);
 
 #endif // LXR_WRITE_BARRIER_H

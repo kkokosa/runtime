@@ -46,16 +46,17 @@ LXR_XSAVE_HEADER_OFFSET equ 512
 ;
         LEAF_ENTRY LxrAssignRef, _TEXT
         ALTERNATE_ENTRY LxrAssignRefEntry
-        ; metadata byte = base[dst >> 6], bit = (dst >> 3) & 7 (granularity: one bit for every 8 bytes)
+        ; The plane is read as 8-byte words (its base is 8-byte aligned): word = base[dst >> 9] (an index of 8-byte
+        ; words), bit = (dst >> 3) & 63. The same bit as "byte base[dst >> 6], bit (dst >> 3) & 7" on a little-endian
+        ; machine, and bt with a register operand takes the bit number modulo 64, so there is no byte extract and no mask.
         mov     rax, rcx
-        shr     rax, 6
+        shr     rax, 9
         mov     r8, qword ptr [MetadataBaseSlot]
         ALTERNATE_ENTRY LxrAssignRefMetadataAVLocation
-        movzx   eax, byte ptr [rax + r8]
-        mov     r9d, ecx
-        shr     r9d, 3
-        and     r9d, 7
-        bt      eax, r9d
+        mov     rax, qword ptr [rax*8 + r8]
+        mov     r9, rcx
+        shr     r9, 3
+        bt      rax, r9
         jc      LxrBarrierSlow
         ALTERNATE_ENTRY LxrAssignRefAVLocation
         mov     [rcx], rdx
@@ -75,6 +76,23 @@ LXR_XSAVE_HEADER_OFFSET equ 512
         push    rdx
         sub     rsp, LXR_XSAVE_FRAME_SIZE
         and     rsp, -64
+
+        ; Prefetch the reference-count entry of the old value (see lxr_writebarrier.S). rcx is needed again for the
+        ; call, so it is kept in r10 (killed by the contract).
+        mov     rax, qword ptr [rcx]
+        test    rax, rax
+        jz      SkipPrefetch
+        mov     r10, rcx
+        sub     rax, 8
+        movzx   ecx, byte ptr [RcShiftsSlot]
+        shr     rax, cl
+        movzx   ecx, byte ptr [RcShiftsSlot + 1]
+        shl     rax, cl
+        shr     rax, 6
+        mov     r8, qword ptr [RcBaseSlot]
+        prefetcht0 byte ptr [r8 + rax*8]
+        mov     rcx, r10
+SkipPrefetch:
 
 ifndef LXR_WB_CONTROL_NO_VECTOR_SAVE
         ; the header of the xsave area must be zero before xrstor sees it
@@ -157,6 +175,11 @@ HeapSizeSlot    dq 0
 SlowPathSlot    dq 0
         PATCH_LABEL LxrPatchable_XsaveMask
 XsaveMaskSlot   dq 0
+        PATCH_LABEL LxrPatchable_RcBase
+RcBaseSlot      dq 0
+        ; byte 0: log2 of the data bytes of one reference-count entry, byte 1: log2 of its bits
+        PATCH_LABEL LxrPatchable_RcShifts
+RcShiftsSlot    dq 0
 
         public  LxrWriteBarrierBlock_End
 LxrWriteBarrierBlock_End label qword

@@ -186,6 +186,11 @@ public:
         return m_log_bytes_per_value;
     }
 
+    uintptr_t GetBaseAddress() const
+    {
+        return m_base;
+    }
+
     SideMetadataLocation Locate(uintptr_t dataAddress) const;
 
     uintptr_t Load(uintptr_t dataAddress, SideMetadataMemoryOrder order) const;

@@ -858,6 +858,32 @@ static void TestPatchAndRelocation()
     SetUnlogged(high, g_metadataStorage2);
     first.checkedAssignRef(high, v2);
     Check(outside && g_slowCalls == 1, "patch-heap-bounds", "the heap bounds of the checked helper follow their sources");
+
+    // The slow path prefetches the reference-count entry of the old value. It is a hint: whatever the old value is
+    // (null, a small number, an address outside any plane, the last addresses of the space), the slow path logs the old
+    // value and stores as before, for every entry size of the plane.
+    static uint8_t plane[4096];
+    uintptr_t heapAddress = reinterpret_cast<uintptr_t>(g_heap);
+    const uintptr_t olds[] = {0, 1, 0x4141, 8, heapAddress + 64, heapAddress + HeapBytes - 8, ~static_cast<uintptr_t>(0) - 7,
+                              ~static_cast<uintptr_t>(0)};
+    bool hintOk = true;
+    for (uint8_t bits = 1; bits <= 3; bits++)
+    {
+        SetGlobals(g_metadataStorage2, 0, HeapBytes);
+        LxrWriteBarrierSetReferenceCountPlane(reinterpret_cast<uintptr_t>(plane), 3, bits);
+        UpdatePatchableSlots(&first);
+        for (size_t i = 0; i < sizeof(olds) / sizeof(olds[0]); i++)
+        {
+            void** target = Slot(200 + i);
+            *target = reinterpret_cast<void*>(olds[i]);
+            SetUnlogged(target, g_metadataStorage2);
+            ResetLog();
+            first.assignRef(target, v2);
+            hintOk &= g_logCount == 1 && g_log[0].slot == target && g_log[0].old == reinterpret_cast<void*>(olds[i]) &&
+                *target == v2;
+        }
+    }
+    Check(hintOk, "rc-prefetch-hint", "the prefetch of the old value's count does not change the logging or the store");
 }
 
 int main()

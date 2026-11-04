@@ -510,6 +510,8 @@ public:
     LxrRcResult GetFailure() const;
     LxrRcPhase GetPhase() const;
     uintptr_t GetFieldMetadataBase() const;
+    // The reference-count plane, for the prefetch in the write barrier slow path.
+    void GetReferenceCountPlane(uintptr_t* base, uint8_t* logBytesPerValue, uint8_t* logBitsPerValue) const;
     uintptr_t GetReservationStart() const;
     size_t GetReservationBytes() const;
     // Estimate for the .NET memory APIs: blocks in use times the block size, plus the committed large-object
