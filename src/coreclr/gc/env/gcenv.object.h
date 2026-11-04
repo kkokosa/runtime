@@ -127,6 +127,27 @@ public:
 #endif
     }
 
+    // For a header that no other thread can read or write yet, such as the header of a copy that is not published: one
+    // plain load and one plain store, no atomic operation. The publication of the object (a later compare-exchange on the
+    // header of the source) makes the store visible to the readers of the copy.
+    uint32_t SetGCReservedBitsExclusive(uint32_t mask, uint32_t shift, uint32_t value)
+    {
+#ifdef HOST_64BIT
+        assert(mask != 0);
+        assert(shift < 32);
+        assert((value & ~(mask >> shift)) == 0);
+
+        uint32_t oldWord = VolatileLoadWithoutBarrier(&m_uGCReservedBits);
+        VolatileStoreWithoutBarrier(&m_uGCReservedBits, (oldWord & ~mask) | ((value << shift) & mask));
+        return (oldWord & mask) >> shift;
+#else
+        UNREFERENCED_PARAMETER(mask);
+        UNREFERENCED_PARAMETER(shift);
+        UNREFERENCED_PARAMETER(value);
+        return 0;
+#endif
+    }
+
     uint32_t WaitWhileGCReservedBits(uint32_t mask, uint32_t shift, uint32_t value)
     {
 #ifdef HOST_64BIT

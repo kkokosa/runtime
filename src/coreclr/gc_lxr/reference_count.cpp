@@ -807,10 +807,15 @@ SideMetadataResult ReferenceCountTable::ClearStraddleLinesUnchecked(
     uintptr_t first;
     uintptr_t end;
     GetContinuationRange(object, size, &first, &end);
+    // The continuation lines lie wholly inside the object (GetContinuationRange excludes the first line and the partly covered last
+    // line). The straddle plane has one byte for every line, and a count byte of the count plane covers at most 32 bytes of data
+    // (2 bits for 8 bytes), so both bytes belong to this object alone. Nothing else writes them while the object is cleared (the
+    // sweep, the release of the block and the allocators all come after the death), so two plain stores do the work of two
+    // compare-exchanges for every line, as MarkStraddleLinesUnchecked does for the same bytes.
     for (uintptr_t line = first; line < end; line += ImmixBlockGeometry::LineBytes)
     {
-        m_straddle.Store(line, 0, SideMetadataMemoryOrder::SequentiallyConsistent);
-        m_rc.Store(line, 0, SideMetadataMemoryOrder::SequentiallyConsistent);
+        m_straddle.StoreExclusive(line, 0);
+        m_rc.StoreExclusive(line, 0);
     }
     return SideMetadataResult::Success;
 }
