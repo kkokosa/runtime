@@ -1,0 +1,61 @@
+p21: PASS: Linux x64 side-metadata validation
+p22: PASS: Linux x64 Immix block validation
+p23: PASS: Linux x64 reference-count validation
+p24: PASS: Linux x64 Immix allocation validation
+p25: PASS: Linux x64 large object space validation
+p31: PASS: 641/641 P3.1 validation checks
+p32: PASS: 395/395 P3.2 pause checks
+p33: PASS: 357/357 P3.3 validation checks
+p34: PASS: 70/70 P3.4 validation checks
+p4: PASS: 105380/105380 integrated P4 checks
+--- P4 selectors
+[default] rc=0 PASS: 105380/105380 integrated P4 checks
+[--pause-trace] rc=0 PASS: 259424/259424 pause trace checks
+[--lazy-sweep] rc=0 PASS: 3098/3098 parallel lazy sweep checks
+[--d2-spans] rc=0 PASS: 2268/2268 D2 bump-allocation checks
+[--prezero] rc=0 PASS: 129/129 pre-zeroing checks
+[--fresh-block-race] rc=0 PASS: 10/10 fresh block race checks
+[--s7-pins] rc=0 PASS: 4099/4099 S7 pin checks
+[--s6-registry] rc=0 PASS: 241/241 S6 registry checks
+[--s5b-overshoot] rc=0 PASS: 422/422 S5b overshoot checks
+[--s4-sweep] rc=0 PASS: 16631/16631 S4 sweep checks
+[--s3-bookkeeping] rc=0 PASS: 1325/1325 S3 bookkeeping checks
+[--lazy-large-release] rc=0 PASS: 13/13 lazy large-object release checks
+[--inline-metadata] rc=0 PASS: 465/465 inline metadata accessor checks
+[--log-storage] rc=0 PASS: 2109/2109 log storage checks
+[--mature] rc=0 PASS: 692/692 mature movement checks
+[--mature-remset] rc=0 PASS: 58/58 mature remset checks
+[--mature-reader] rc=0 PASS: 17/17 mature reader checks
+[--mature-retained-owner] rc=0 PASS: 18/18 retained mature owner checks
+[--mature-released-candidate] rc=1 FAIL: 65/67 released candidate incarnation checks
+FAIL: the legitimate LOS incoming field follows the actually moved mature target
+FAIL: stale rejection and actual incoming-edge replay both occur
+FAIL: 65/67 released candidate incarnation checks
+[--mature-headroom] rc=0 PASS: 67/67 nursery headroom checks
+[--mature-completed-scan] rc=0 PASS: 12/12 completed mature descriptor checks
+[--mature-remset-whole] rc=0 PASS: 58/58 whole-block remset lifetime checks
+[--mature-remset-wrap] rc=0 PASS: 1078/1078 byte-wrap remset lifetime checks
+[--mature-remset-same-shape] rc=0 PASS: 1079/1079 same-shape remset checks
+[--mature-remset-boundaries] rc=0 PASS: 4315/4315 remset current-owner boundary checks
+[--nursery] rc=0 PASS: 165/165 moving nursery checks
+[--nursery-reader] rc=0 PASS: 17/17 moving reader checks
+[--root-batching] rc=0 PASS: 3095/3095 root batching checks
+[--trace-batching] rc=0 PASS: 206016/206016 trace batching checks
+[--aux-retirement] rc=0 PASS: 8209/8209 auxiliary retirement checks
+[--object-planes] rc=0 PASS: 16/16 object plane checks
+[--storage-diagnostics] rc=0 PASS: 29/29 storage accounting checks
+[--lifetime] rc=0 PASS: 15/15 lifetime probe checks
+[--p8-policy] rc=0 PASS: 75/75 policy checks
+[--p8-storage] rc=0 PASS: 1441/1441 fast-span and growth checks
+FAIL: injected zero-RC old target rejected before overwrite
+[--f1-trace] rc=0 PASS: 79477/79477 F1 trace packet checks
+[--f2-pause] rc=0 PASS: 2488/2488 F2 pause walk checks
+[--f8-lazy] rc=0 PASS: 114956/114956 F8 lazy decrement checks
+[--f4b-scheduler] rc=0 PASS: 4044/4044 F4b scheduler and trace loop checks
+[--f4-scheduler] rc=0 PASS: 3547/3547 F4 scheduler and recursion checks
+[--f10-rc] rc=0 PASS: 72/72 F10 count width checks
+[--item3] rc=0 PASS: 564/564 item 3 increment path checks
+[--f5-policy] rc=0 PASS: 16272/16272 F5 emergency accounting checks
+[--trace] rc=0 PASS: 8333/8333 trace engine checks
+[--release-stage] rc=0 PASS: 4955/4955 release stage checks
+[--object-start] rc=0 PASS: 4279/4279 object start checks

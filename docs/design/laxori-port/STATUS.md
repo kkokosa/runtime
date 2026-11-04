@@ -18,6 +18,51 @@ with `DOTNET_GCPath`.
 | P31 count-plane object starts (port of LXR a3a225d40a9) | Done, **default**. Bitmap build kept as `libclrlaxorigc-bitmap.so`. See "Update: P31" below. |
 | Two inherited LXR defects behind `PrivateTests all 2 13` failures (LXR 1d351781d03) | Ported and fixed. 13-thread failure rate 0/80 (was 12/20 in L1). See "Update: P32" below. |
 
+## Update: P32 locked operations per survivor (LXR 8b727c24466, item 1; results in `results/p32-locked-ops/`)
+
+Ported: header bits of an unpublished copy with a plain store (`SetGCReservedBitsExclusive`, added to `gc/env/gcenv.object.h`, identical to
+the LXR text so a later merge is clean); forwarding pointer stored with a plain store (the CAS that sets state 3 publishes it); `Death`
+writes `m_mature_candidates[block]` only when it is 0; `ClearStraddleLinesUnchecked` uses `StoreExclusive`. LXR item 4 (barrier fast path)
+was deliberately not ported: the Laxori barrier has the extra owner and escape test.
+
+Laxori-specific review (code reading; all stay correct, no code change beyond the port):
+1. Forwarding state, forwarding pointer and the reserved header word. The engine writes them only in `TryCopyNursery` / `TryCopyMature`
+   during a pause, to a copy in an engine block (never in a region). The private tier never writes a forwarding state or pointer. It uses
+   only the upper 30 bits of the same 32-bit header word (`GetPad` / `SetPad`) for the mark-stack link and the relocation distance, only on its own
+   thread, and it zeroes them before a collection ends. The plain store of the exclusive setter keeps those bits (it reads the whole word and
+   writes back the other bits), and no other thread writes the word of an unpublished copy. A thread-local collection cannot overlap a pause
+   (the pause waits for the thread to reach a safe point), and a pause dissolves all regions before it copies. Escaped objects in a
+   region are young objects of a span after the dissolve, and take the same path as other young objects.
+2. C4 (dead-object clear). Private objects have no counts and no straddle bytes, and never go through `Death`. Objects of a dissolved region
+   are counted when promoted and behave as in LXR (they never straddle a block; a long object gets its continuation lines at promotion).
+3. C3 (mature candidate flag). Only `Death` changed. A region block is a fresh clean block with no counted object, so no death happens in it
+   and the flag of the block is not touched by region logic. The clears of the flag stay in other phases, as in LXR.
+
+Validation (builds: count plane and bitmap, each with and without the change; the base is the P32-fix build `42fd4eeac57`):
+10 native programs pass for both builds (P4 105380 of 105380, `--object-start` 4279 of 4279); `--mature-released-candidate` and
+`--p8-storage` fail in some runs for both builds before and after (25 runs each: 16 and 0 before, 12 and 1 after for the count build; bitmap 8 and 2 before, 8 and 1 after), as
+known flaky selectors. `PrivateTests all 2` with verifier at 1/2/4/8/13 threads, L1 and L2, both builds: all pass. `all 2 13`: 0/20 in each of
+count L2, count L1, bitmap L2, bitmap L1. Hunt (verifier on, 13/3, 4/2, 1/1): count L2 54, bitmap L2 54, count L1 36, bitmap L1 36, all OK.
+Benchmark: 17 interleaved runs, six workloads, all checksums right.
+
+Paired median difference with change against without it (percent, 95 percent bootstrap interval of the median in brackets), count-plane build:
+
+| Workload | wall | CPU | pause |
+|---|---|---|---|
+| binarytrees | +0.9 [-3.8, +7.5] | -4.6 [-12.5, +38.7] | -4.1 [-12.2, +40.7] |
+| requests | -0.7 [-5.5, +3.1] | -2.9 [-12.2, +3.3] | -3.8 [-19.1, +7.6] |
+| listsuffix | -0.6 [-3.0, +7.4] | -4.8 [-9.0, +6.7] | -2.8 [-8.3, +7.7] |
+| mixedmedium | +0.6 [-9.5, +5.8] | +0.3 [-7.5, +6.7] | -0.5 [-8.7, +7.1] |
+| losarrays | +1.7 [-2.2, +4.1] | +0.5 [-1.2, +4.0] | -2.0 [-3.0, +0.8] |
+| mediumarrays | -1.9 [-2.8, +0.4] | -0.5 [-5.1, +2.3] | +3.5 [-3.7, +6.0] |
+
+Every interval contains 0. The bitmap build shows the same picture (`results/p32-locked-ops/bench-item1.txt`). So the change is safe in Laxori and
+gives **no measurable gain** here. The LXR gain (`binarytrees` CPU -15 percent, pause -22 percent) is not reproduced: in Laxori `binarytrees`
+is mostly collected by thread-local collections, so few objects reach the copy path that lost the locked operations (not measured directly;
+this is the likely reason). The point estimates for CPU are slightly negative on four workloads, which fits a small gain on `listsuffix`
+(most survivors), but the data cannot confirm it. Not verified: Windows and ARM64 (the plain stores rely on x64 ordering plus the full
+barrier of the CAS; the same reasoning as in LXR), GC stress, a direct count of locked operations in Laxori.
+
 ## Update: P32 interior roots past the end of an object, and early allocation failure (LXR 1d351781d03)
 
 The 13-thread `PrivateTests` failure ("engine failure 1") had two causes in the LXR engine, and gc_laxori had both (copied code):

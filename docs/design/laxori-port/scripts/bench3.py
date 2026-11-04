@@ -10,13 +10,15 @@ configs (the .so paths come from the environment, see SO below):
 Laxori runs use the default private tier (L2, 256 KiB regions, server GC mode like the LXR runs).
 Every run is checked against the known checksum. After the runs the script prints the median of every metric, and for every pair A:B
 the median of the paired difference (A - B) / B per repetition, the number of repetitions in which A is lower, and the range."""
-import json, os, statistics, subprocess, sys
+import json, os, random, statistics, subprocess, sys
 
 FRAME = os.environ.get("FRAME", "/root/prof/frame-c4")
 DRIVER = os.environ.get("DRIVER", "/root/laxori/drv2/bin/CompareDriver.dll")
 SO = {
     "laxori-walk": os.environ.get("LAXORI_SO_WALK", "/root/laxori/v/libclrlaxorigc-count.so"),
     "laxori-bitmap": os.environ.get("LAXORI_SO_BITMAP", "/root/laxori/v/libclrlaxorigc-bitmap.so"),
+    "laxori-walk-i1": os.environ.get("LAXORI_SO_WALK_I1", "/root/laxori/v/libclrlaxorigc-count-i1.so"),
+    "laxori-bitmap-i1": os.environ.get("LAXORI_SO_BITMAP_I1", "/root/laxori/v/libclrlaxorigc-bitmap-i1.so"),
     "lxr-walk": os.environ.get("LXR_SO_WALK", "/root/p31/so/libclrlxrgc-walk.so"),
     "lxr-bitmap": os.environ.get("LXR_SO_BITMAP", "/root/p31/so/libclrlxrgc-base.so"),
 }
@@ -106,8 +108,18 @@ def summarize(rows, configs, workloads, pairs):
                         d.append((ra[key] - rb[key]) * 100.0 / rb[key])
                 if d:
                     lower = sum(1 for x in d if x < 0)
-                    line += f" | {label} {statistics.median(d):+6.1f} [{min(d):+5.1f}..{max(d):+5.1f}] {lower}/{len(d)}"
+                    lo, hi = bootstrap(d)
+                    line += (f" | {label} {statistics.median(d):+6.1f} CI95 [{lo:+5.1f}, {hi:+5.1f}] "
+                             f"[{min(d):+5.1f}..{max(d):+5.1f}] {lower}/{len(d)}")
             print(line)
+
+
+def bootstrap(values, rounds=4000, seed=12345):
+    """95 percent bootstrap interval of the median of the paired differences."""
+    rng = random.Random(seed)
+    n = len(values)
+    meds = sorted(statistics.median(rng.choices(values, k=n)) for _ in range(rounds))
+    return meds[int(rounds * 0.025)], meds[int(rounds * 0.975)]
 
 
 main()

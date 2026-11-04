@@ -4556,7 +4556,7 @@ LaxoriRcResult LaxoriReferenceCounting::TryCopyMature(Object** reference)
         CostScope cost(this, 5);
         memcpy(reinterpret_cast<void*>(copyStart), reinterpret_cast<void*>(Start(source)), size);
     }
-    destination->GetHeader()->SetGCReservedBits(m_configuration.forwardingMask, m_configuration.forwardingShift, 0);
+    destination->GetHeader()->SetGCReservedBitsExclusive(m_configuration.forwardingMask, m_configuration.forwardingShift, 0);
     size_t destinationIndex = (copyStart - GetReservationStart()) / sizeof(uintptr_t);
 #ifdef LAXORI_SIDE_METADATA_TEST_PLATFORM
     OracleBirth(copyStart, size);
@@ -4602,7 +4602,9 @@ LaxoriRcResult LaxoriReferenceCounting::TryCopyMature(Object** reference)
 #endif // LAXORI_HAS_LIFETIME_PROBE
     CommitCopyRecord(worker, Start(source), size);
     Object** forwarding = reinterpret_cast<Object**>(reinterpret_cast<uint8_t*>(source) + sizeof(uintptr_t));
-    Interlocked::ExchangePointer(forwarding, destination);
+    // The pointer needs no atomic exchange of its own: the claim holder is the only writer of the slot, and the
+    // compare-exchange that sets the state to 3 is a full barrier after it. A reader sees the pointer after it has read the state 3.
+    VolatileStore(forwarding, destination);
     header->SetGCReservedBits(m_configuration.forwardingMask, m_configuration.forwardingShift, 3);
     CountWorker(worker, MatureCopiedObjects, 1);
     CountWorker(worker, MatureCopiedBytes, size);
@@ -4762,7 +4764,9 @@ LaxoriRcResult LaxoriReferenceCounting::TryCopyNursery(
         CostScope cost(this, 2);
         memcpy(reinterpret_cast<void*>(copyStart), reinterpret_cast<void*>(start), size);
     }
-    copy->GetHeader()->SetGCReservedBits(m_configuration.forwardingMask, m_configuration.forwardingShift, 0);
+    // The copy is not published yet and no other thread has its address (the forwarding state of the source is still 2), so
+    // its header needs no atomic operation.
+    copy->GetHeader()->SetGCReservedBitsExclusive(m_configuration.forwardingMask, m_configuration.forwardingShift, 0);
 #ifdef LAXORI_SIDE_METADATA_TEST_PLATFORM
     OracleBirth(copyStart, size);
 #endif // LAXORI_SIDE_METADATA_TEST_PLATFORM
@@ -4775,7 +4779,8 @@ LaxoriRcResult LaxoriReferenceCounting::TryCopyNursery(
 #endif // LAXORI_HAS_LIFETIME_PROBE
     CommitCopyRecord(worker, start, size);
     Object** forwarding = reinterpret_cast<Object**>(reinterpret_cast<uint8_t*>(source) + sizeof(uintptr_t));
-    Interlocked::ExchangePointer(forwarding, copy);
+    // See TryCopyMature: the compare-exchange that sets the state to 3 publishes the pointer.
+    VolatileStore(forwarding, copy);
     // Destination RC/VO/extent/flags and the full copied header precede publication.
     header->SetGCReservedBits(m_configuration.forwardingMask, m_configuration.forwardingShift, 3);
 #if defined(LAXORI_SIDE_METADATA_TEST_PLATFORM) && defined(LAXORI_F10_SHARED_COPY_COUNTERS_CONTROL)
@@ -5171,7 +5176,13 @@ SideMetadataResult LaxoriReferenceCounting::Death(uintptr_t start, void* context
             }
             size_t block = (start - reinterpret_cast<uintptr_t>(engine->m_arena)) /
                 ImmixBlockGeometry::BlockBytes;
-            engine->m_mature_candidates[block].store(1, std::memory_order_release);
+            // Most deaths find the flag set: the read keeps the cache line of the flags (one byte per block) shared between
+            // the workers, and only the first death of a block writes it.
+            std::atomic<uint8_t>& candidate = engine->m_mature_candidates[block];
+            if (candidate.load(std::memory_order_relaxed) == 0)
+            {
+                candidate.store(1, std::memory_order_release);
+            }
         }
         return result;
     }
