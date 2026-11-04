@@ -142,6 +142,8 @@ namespace
         Object* pinCandidate = nullptr;
         bool pinFirst = false;
         Object* interior = nullptr;
+        // A byref one byte past the end of an object. The capture does not add it as a root; the pause relocates it.
+        Object* pastEnd = nullptr;
         // S7. Pins that the capture adds besides `pinned`; the interior root as a pin; several threads that add
         // every object of pinThreadObjects twice (two different shards).
         std::vector<Object*> extraPins;
@@ -260,6 +262,14 @@ namespace
         for (Object*& object : roots->objects)
         {
             LxrRcResult result = engine->RelocateRoot(&object, false, object == roots->pinned);
+            if (result != LxrRcResult::Success)
+            {
+                return result;
+            }
+        }
+        if (roots->pastEnd != nullptr)
+        {
+            LxrRcResult result = engine->RelocateRoot(&roots->pastEnd, true, false);
             if (result != LxrRcResult::Success)
             {
                 return result;
@@ -5488,8 +5498,15 @@ namespace
             // the copy, because the source lost its length.
             size_t interiorOffset = array.table->GetBaseSize() + 5 * sizeof(void*);
             roots.interior = reinterpret_cast<Object*>(reinterpret_cast<uint8_t*>(sources[2]) + interiorOffset);
+            // A byref one past the end of an array (the end pointer of a loop) is no root, and no live object contains
+            // it, but it follows the array when the array moves.
+            roots.pastEnd = reinterpret_cast<Object*>(
+                reinterpret_cast<uint8_t*>(sources[4]) + sources[4]->GetSize() - sizeof(ObjHeader));
             Check(engine.Collect(CaptureMoving, &roots, Timeout) == LxrRcResult::Success &&
                 engine.Drain(Timeout) == LxrRcResult::Success, "nursery copy of arrays completes");
+            Check(roots.pastEnd == reinterpret_cast<Object*>(
+                    reinterpret_cast<uint8_t*>(roots.objects[4]) + roots.objects[4]->GetSize() - sizeof(ObjHeader)),
+                "a byref one past the end of a forwarded array source follows the copy");
             Check(roots.interior == reinterpret_cast<Object*>(
                     reinterpret_cast<uint8_t*>(roots.objects[2]) + interiorOffset),
                 "an interior root into a forwarded array source follows the copy");

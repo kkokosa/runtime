@@ -3617,17 +3617,34 @@ LxrRcResult LxrReferenceCounting::RelocateRoot(Object** slot, bool interior, boo
         return LxrRcResult::Success;
     }
     uintptr_t offset = 0;
+    bool pastEnd = false;
     if (interior)
     {
-        LxrRcResult result = FindContainingObject(reinterpret_cast<uintptr_t>(object), &object);
-        if (result != LxrRcResult::Success)
+        uintptr_t address = reinterpret_cast<uintptr_t>(object);
+        LxrRcResult result = FindContainingObject(address, &object);
+        if (result == LxrRcResult::InvalidArgument)
+        {
+            // No live object contains the address (see LxrGcHeap::AddRoot). A byref that points one past the end of an
+            // object moves with that object, so that it keeps its distance from the byrefs inside the object. The root
+            // did not keep the object, so it does not pin it either.
+            Object* previous = nullptr;
+            if (address % sizeof(uintptr_t) != 0 ||
+                FindContainingObject(address - sizeof(uintptr_t), &previous) != LxrRcResult::Success ||
+                Start(previous) + ObjectSize(ResolveForwarded(previous)) != address)
+            {
+                return LxrRcResult::Success;
+            }
+            object = previous;
+            pastEnd = true;
+        }
+        else if (result != LxrRcResult::Success)
         {
             return result;
         }
-        offset = reinterpret_cast<uintptr_t>(*slot) - reinterpret_cast<uintptr_t>(object);
+        offset = address - reinterpret_cast<uintptr_t>(object);
     }
     Object* destination = ResolveForwarded(object);
-    if (pinned && destination != object)
+    if (pinned && !pastEnd && destination != object)
     {
         return LxrRcResult::InvariantViolation;
     }
