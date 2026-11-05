@@ -105,14 +105,26 @@ public:
 #ifdef LXR_ENABLE_LAZY_COMPLETION_COUNTER
     LxrLargeObjectResult ReleaseAfterDecrements(
         uintptr_t object, uintptr_t owner, const LxrBlockReleaseGuard& guard);
-    LxrLargeObjectResult SweepNursery(size_t* releasedBytes);
 #endif
+    // Pause only. Releases the young large objects that are dead: no reference count and still in the nursery state. It
+    // visits the young spans only (the spans that were allocated since they were last found young), not all spans.
+    LxrLargeObjectResult SweepNursery(size_t* releasedBytes);
     uintptr_t GetReservationStart() const;
     size_t GetReservationBytes() const;
     size_t GetCommittedBytes() const;
     LxrLargeObjectResult GetMatureCommittedBytes(size_t* bytes) const;
-    // Page bytes of the large objects that are not nursery, and the part of those pages that no object byte uses.
+    // Page bytes of the large objects that are not nursery, and the part of those pages that no object byte uses. The answer
+    // comes from running totals: the promotion of a span adds to them, and the release of a mature span subtracts from them.
     LxrLargeObjectResult GetMatureStatistics(size_t* bytes, size_t* slackBytes) const;
+    // The same figures by a walk of all spans under the lock: the reference of the totals, and the answer when
+    // LXR_LOS_LEGACY_WALKS=1 is set. For tests.
+    LxrLargeObjectResult GetMatureStatisticsByWalk(size_t* bytes, size_t* slackBytes) const;
+    // Copies the objects of the spans in the young list (the entries that are still current) into `objects`, and returns in
+    // `entries` the number of entries of the list including the stale ones. For tests.
+    LxrLargeObjectResult GetYoungObjects(
+        uintptr_t* objects, size_t capacity, size_t* count, size_t* entries) const;
+    // The number of differences that the validation mode found. For tests.
+    size_t GetValidationFailures() const;
     // Checks the free-space tree, the page map and the active list against each other. For tests.
     LxrLargeObjectResult ValidateStructure(size_t* activeSpans, size_t* freePages) const;
 
@@ -162,6 +174,9 @@ private:
         SpanChunk* next;
         Span spans[64];
     };
+
+    struct SideState;
+    struct SweepExpectation;
 
     class LockScope final
     {
@@ -220,9 +235,18 @@ private:
         bool* retry);
     void AbandonAllocation(Span* span, const LxrLargeObjectAllocation& candidate);
     void PublishSpan(Span* span, const LxrLargeObjectAllocation& allocation);
-    LxrLargeObjectResult BeginSpanRelease(Span* span, uintptr_t object, uintptr_t owner);
+    // knownYoung: the caller found the nursery bit of the object set, so the span is not in the mature totals.
+    LxrLargeObjectResult BeginSpanRelease(Span* span, uintptr_t object, uintptr_t owner, bool knownYoung = false);
     LxrLargeObjectResult FinishSpanRelease(Span* span);
     void AbortSpanRelease(Span* span);
+    // The young list. These calls need the lock, except RequeueYoung, which takes it.
+    void AppendYoung(Span* span);
+    void RequeueYoung(Span* span);
+    LxrLargeObjectResult SweepYoungList(Span** detachedHead);
+    LxrLargeObjectResult SweepAllSpans(Span** detachedHead, bool rebuildYoungList);
+    void CaptureSweepExpectation(SweepExpectation* expectation) const;
+    void CheckSweepExpectation(const SweepExpectation& expectation, const Span* detachedHead) const;
+    void ReportValidationFailure(const char* what) const;
     LxrLargeObjectResult ReleaseObject(uintptr_t object, uintptr_t owner);
     LxrLargeObjectResult ResetAllocationMetadata(
         uintptr_t pageStart,
@@ -256,6 +280,12 @@ private:
     std::atomic<LxrLargeObjectPhase> m_phase;
     std::atomic<uint8_t> m_mark_state;
     mutable std::atomic_flag m_lock = ATOMIC_FLAG_INIT;
+
+    // Everything that was added after the first version of the space is here, behind one pointer that is the last member.
+    // The lock above is contended, and the layout of Span and of the members before this one decides how it is shared: a
+    // change of that layout alone made a LOS workload use 25 % more CPU (P44). Do not add a member to Span or in front of
+    // this pointer.
+    SideState* m_side;
 };
 
 static_assert(LxrLargeObjectSpace::MinimumObjectBytes == 32 * 1024);

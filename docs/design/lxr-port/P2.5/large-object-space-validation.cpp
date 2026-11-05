@@ -8,6 +8,7 @@
 #include <algorithm>
 #include <atomic>
 #include <cstdio>
+#include <cstdlib>
 #include <cstring>
 #include <thread>
 #include <vector>
@@ -593,6 +594,342 @@ namespace
             "concurrent releases merge into one span");
         space.Shutdown();
     }
+
+    // The young list (the spans allocated since the last pause that are still young) and the running totals of the mature
+    // large objects. mode 0: the default. mode 1: the validation mode (every sweep and every statistics call is compared with
+    // a full walk of the spans). mode 2: the old walks (the list and the totals are off).
+    void RunYoungAndTotalsChecks(SideMetadataManager& metadata, int mode)
+    {
+        constexpr uintptr_t Owner = 0x2500;
+        unsetenv("LXR_LOS_VALIDATE");
+        unsetenv("LXR_LOS_LEGACY_WALKS");
+        if (mode == 1)
+        {
+            setenv("LXR_LOS_VALIDATE", "1", 1);
+        }
+        else if (mode == 2)
+        {
+            setenv("LXR_LOS_LEGACY_WALKS", "1", 1);
+        }
+        const bool listKept = mode != 2;
+        LxrLargeObjectSpace space;
+        Check(space.Initialize(&metadata, StructureBytes) == LxrLargeObjectResult::Success, "young space");
+        unsetenv("LXR_LOS_VALIDATE");
+        unsetenv("LXR_LOS_LEGACY_WALKS");
+
+        struct Entry
+        {
+            LxrLargeObjectAllocation allocation;
+            bool mature;
+        };
+        std::vector<Entry> live;
+
+        auto objectOf = [](const Entry& entry) { return entry.allocation.object; };
+        auto youngObjects = [&](size_t* entries)
+        {
+            std::vector<uintptr_t> objects(StructurePages);
+            size_t count = 0;
+            Check(
+                space.GetYoungObjects(objects.data(), objects.size(), &count, entries) == LxrLargeObjectResult::Success,
+                "young list read");
+            objects.resize(count);
+            std::sort(objects.begin(), objects.end());
+            return objects;
+        };
+        // The list holds exactly the young allocations of the model. After a sweep it has no stale entry either.
+        auto expectYoung = [&](const char* name, bool afterSweep)
+        {
+            if (!listKept)
+            {
+                return;
+            }
+            std::vector<uintptr_t> expected;
+            for (const Entry& entry : live)
+            {
+                if (!entry.mature)
+                {
+                    expected.push_back(objectOf(entry));
+                }
+            }
+            std::sort(expected.begin(), expected.end());
+            size_t entries = 0;
+            std::vector<uintptr_t> actual = youngObjects(&entries);
+            Check(actual == expected, name);
+            if (afterSweep)
+            {
+                Check(entries == expected.size(), "the sweep leaves no stale entry in the young list");
+            }
+        };
+        auto checkTotals = [&](const char* name)
+        {
+            size_t modelBytes = 0;
+            size_t modelSlack = 0;
+            for (const Entry& entry : live)
+            {
+                if (entry.mature)
+                {
+                    modelBytes += entry.allocation.page_count * Page;
+                    modelSlack += entry.allocation.page_count * Page - entry.allocation.object_bytes;
+                }
+            }
+            size_t bytes = SIZE_MAX;
+            size_t slack = SIZE_MAX;
+            size_t walkBytes = SIZE_MAX;
+            size_t walkSlack = SIZE_MAX;
+            Check(space.GetMatureStatistics(&bytes, &slack) == LxrLargeObjectResult::Success, name);
+            Check(space.GetMatureStatisticsByWalk(&walkBytes, &walkSlack) == LxrLargeObjectResult::Success, name);
+            Check(bytes == walkBytes && slack == walkSlack, "the mature totals equal a full walk");
+            Check(bytes == modelBytes && slack == modelSlack, "the mature totals equal the model");
+            Check(space.GetValidationFailures() == 0, "the validation mode reports no difference");
+        };
+        auto setCount = [&](const LxrLargeObjectAllocation& allocation, uintptr_t value)
+        {
+            Check(
+                metadata.Store(
+                    LxrSideMetadataKind::ReferenceCount, allocation.object, value,
+                    SideMetadataMemoryOrder::SequentiallyConsistent) == SideMetadataResult::Success,
+                "young set count");
+        };
+        auto allocate = [&](size_t bytes)
+        {
+            LxrLargeObjectAllocation allocation;
+            Check(space.Allocate(bytes, 8, 0, Owner, &allocation) == LxrLargeObjectResult::Success, "young allocate");
+            live.push_back({allocation, false});
+            return allocation;
+        };
+        auto pages = [](const LxrLargeObjectAllocation& allocation) { return allocation.page_count * Page; };
+        auto erase = [&](uintptr_t object)
+        {
+            live.erase(
+                std::remove_if(live.begin(), live.end(), [&](const Entry& entry) { return objectOf(entry) == object; }),
+                live.end());
+        };
+        auto promote = [&](const LxrLargeObjectAllocation& allocation)
+        {
+            bool updated = false;
+            Check(
+                space.TryMarkAndPromote(allocation.object, Owner, &updated) == LxrLargeObjectResult::Success && updated,
+                "young promote");
+            for (Entry& entry : live)
+            {
+                if (objectOf(entry) == allocation.object)
+                {
+                    entry.mature = true;
+                }
+            }
+        };
+
+        // One pause by hand. a0 and a1 survive and are promoted, a2 has a count but no promotion, a3 to a5 are dead.
+        const size_t sizes[] = {40000, 100000, 32768, 65536, 32769, 200000};
+        LxrLargeObjectAllocation a[6];
+        for (size_t index = 0; index < 6; index++)
+        {
+            a[index] = allocate(sizes[index]);
+        }
+        expectYoung("the young list has the six new spans", false);
+        checkTotals("the totals before a promotion");
+        Check(space.BeginCollection(false, false) == LxrLargeObjectResult::Success, "young begin release");
+        setCount(a[0], 1);
+        setCount(a[1], 1);
+        setCount(a[2], 1);
+        promote(a[0]);
+        promote(a[1]);
+        size_t released = SIZE_MAX;
+        Check(space.SweepNursery(&released) == LxrLargeObjectResult::Success, "young sweep");
+        Check(released == pages(a[3]) + pages(a[4]) + pages(a[5]), "the sweep releases the dead young spans");
+        erase(a[3].object);
+        erase(a[4].object);
+        erase(a[5].object);
+        expectYoung("promoted and dead spans leave the young list, a span with a count stays", true);
+        auto allAllocations = [&]()
+        {
+            std::vector<LxrLargeObjectAllocation> all;
+            for (const Entry& entry : live)
+            {
+                all.push_back(entry.allocation);
+            }
+            return all;
+        };
+        CheckStructure(space, allAllocations(), "young structure after the first pause");
+        checkTotals("the totals after the first pause");
+        Check(space.EndCollection() == LxrLargeObjectResult::Success, "young end release");
+
+        // The next pause: a2 is promoted now, and two new spans are dead.
+        LxrLargeObjectAllocation b0 = allocate(50000);
+        LxrLargeObjectAllocation b1 = allocate(70000);
+        expectYoung("the list has the survivor and the new spans", false);
+        Check(space.BeginCollection(false, false) == LxrLargeObjectResult::Success, "young second begin release");
+        promote(a[2]);
+        Check(space.SweepNursery(&released) == LxrLargeObjectResult::Success, "young second sweep");
+        Check(released == pages(b0) + pages(b1), "the second sweep releases the two dead spans");
+        erase(b0.object);
+        erase(b1.object);
+        expectYoung("the list is empty after the second pause", true);
+        checkTotals("the totals after the second pause");
+        // A mature large object that dies leaves the totals.
+        Check(space.TryRelease(a[0].object, Owner) == LxrLargeObjectResult::Success, "young release of a mature span");
+        erase(a[0].object);
+        checkTotals("the totals after a release of a mature span");
+        Check(space.EndCollection() == LxrLargeObjectResult::Success, "young second end release");
+
+        // A failed decommit keeps the dead young spans in the list; the next sweep releases them.
+        LxrLargeObjectAllocation c0 = allocate(40000);
+        LxrLargeObjectAllocation c1 = allocate(40000);
+        LxrLargeObjectAllocation c2 = allocate(40000);
+        Check(space.BeginCollection(false, false) == LxrLargeObjectResult::Success, "young failure begin release");
+        LxrTestFailDecommitAfter(0);
+        Check(space.SweepNursery(&released) == LxrLargeObjectResult::DecommitFailed, "young sweep with a decommit failure");
+        LxrTestFailDecommitAfter(-1);
+        expectYoung("a failed release keeps the spans in the young list", true);
+        Check(space.SweepNursery(&released) == LxrLargeObjectResult::Success, "young sweep after the failure");
+        Check(released == pages(c0) + pages(c1) + pages(c2), "the second sweep releases the spans of the failure");
+        erase(c0.object);
+        erase(c1.object);
+        erase(c2.object);
+        expectYoung("the list is empty after the repeated sweep", true);
+        checkTotals("the totals after the decommit failure");
+        Check(space.EndCollection() == LxrLargeObjectResult::Success, "young failure end release");
+
+        // Allocations and releases between the pauses: the stale entries do not pile up.
+        for (int cycle = 0; cycle < 3000; cycle++)
+        {
+            LxrLargeObjectAllocation transient = allocate(32768);
+            Check(space.BeginCollection(false, false) == LxrLargeObjectResult::Success, "young cycle begin release");
+            Check(space.TryRelease(transient.object, Owner) == LxrLargeObjectResult::Success, "young cycle release");
+            Check(space.EndCollection() == LxrLargeObjectResult::Success, "young cycle end release");
+            erase(transient.object);
+        }
+        {
+            size_t entries = 0;
+            youngObjects(&entries);
+            Check(!listKept || entries <= 2048, "stale entries of the young list stay bounded");
+        }
+
+        // Random pauses against a model.
+        Random random{4747};
+        for (int round = 0; round < 400; round++)
+        {
+            size_t allocations = random.Next() % 7;
+            for (size_t index = 0; index < allocations; index++)
+            {
+                LxrLargeObjectAllocation allocation;
+                size_t bytes = 32768 + random.Next() % 150000;
+                if (space.Allocate(bytes, 8, 0, Owner, &allocation) == LxrLargeObjectResult::Success)
+                {
+                    live.push_back({allocation, false});
+                }
+            }
+            expectYoung("random: the list has the young spans", false);
+            Check(space.BeginCollection(false, false) == LxrLargeObjectResult::Success, "random young begin release");
+            size_t expectedReleased = 0;
+            std::vector<uintptr_t> dead;
+            std::vector<Entry> snapshot = live;
+            for (const Entry& entry : snapshot)
+            {
+                if (entry.mature)
+                {
+                    continue;
+                }
+                uint32_t roll = random.Next() % 10;
+                if (roll < 4)
+                {
+                    setCount(entry.allocation, 1);
+                    promote(entry.allocation);
+                }
+                else if (roll < 6)
+                {
+                    setCount(entry.allocation, 1);
+                }
+                else if (roll == 6)
+                {
+                    // A young span that a thread releases itself before the sweep: its entry is stale.
+                    Check(space.TryRelease(entry.allocation.object, Owner) == LxrLargeObjectResult::Success, "random young release");
+                    erase(entry.allocation.object);
+                }
+                else
+                {
+                    setCount(entry.allocation, 0);
+                    dead.push_back(entry.allocation.object);
+                    expectedReleased += entry.allocation.page_count * Page;
+                }
+            }
+            for (uintptr_t object : dead)
+            {
+                erase(object);
+            }
+            // A few mature spans die.
+            std::vector<uintptr_t> mature;
+            for (const Entry& entry : live)
+            {
+                if (entry.mature && random.Next() % 4 == 0)
+                {
+                    mature.push_back(objectOf(entry));
+                }
+            }
+            for (uintptr_t object : mature)
+            {
+                Check(space.TryRelease(object, Owner) == LxrLargeObjectResult::Success, "random young mature release");
+                erase(object);
+            }
+            Check(space.SweepNursery(&released) == LxrLargeObjectResult::Success, "random young sweep");
+            Check(released == expectedReleased, "random sweep releases exactly the dead young spans");
+            expectYoung("random: promoted, dead and released spans left the list", true);
+            checkTotals("random totals");
+            Check(space.EndCollection() == LxrLargeObjectResult::Success, "random young end release");
+            if (round % 20 == 0)
+            {
+                CheckStructure(space, allAllocations(), "random young structure");
+            }
+        }
+
+        // Threads allocate together: the list has every span, and the sweep releases all dead ones.
+        {
+            constexpr size_t Threads = 8;
+            std::vector<std::vector<LxrLargeObjectAllocation>> allocations(Threads);
+            std::vector<std::thread> workers;
+            for (size_t index = 0; index < Threads; index++)
+            {
+                workers.emplace_back([&, index]()
+                {
+                    Random threadRandom{900 + index};
+                    for (size_t count = 0; count < 6; count++)
+                    {
+                        LxrLargeObjectAllocation allocation;
+                        if (space.Allocate(32768 + threadRandom.Next() % 60000, 8, 0, Owner, &allocation) ==
+                            LxrLargeObjectResult::Success)
+                        {
+                            allocations[index].push_back(allocation);
+                        }
+                    }
+                });
+            }
+            for (std::thread& worker : workers)
+            {
+                worker.join();
+            }
+            for (const auto& list : allocations)
+            {
+                for (const LxrLargeObjectAllocation& allocation : list)
+                {
+                    live.push_back({allocation, false});
+                }
+            }
+            expectYoung("the list has the spans of all threads", false);
+            Check(space.BeginCollection(false, false) == LxrLargeObjectResult::Success, "threads young begin release");
+            Check(space.SweepNursery(&released) == LxrLargeObjectResult::Success, "threads young sweep");
+            for (const auto& list : allocations)
+            {
+                for (const LxrLargeObjectAllocation& allocation : list)
+                {
+                    erase(allocation.object);
+                }
+            }
+            expectYoung("the list is empty after the sweep of the threads", true);
+            checkTotals("the totals after the threads");
+            Check(space.EndCollection() == LxrLargeObjectResult::Success, "threads young end release");
+        }
+        space.Shutdown();
+    }
 }
 
 int main()
@@ -892,6 +1229,9 @@ int main()
         RunFailureChecks(metadata);
         RunGrowthChecks(metadata);
         RunConcurrentChecks(metadata);
+        RunYoungAndTotalsChecks(metadata, 0);
+        RunYoungAndTotalsChecks(metadata, 1);
+        RunYoungAndTotalsChecks(metadata, 2);
         metadata.Shutdown();
     }
 

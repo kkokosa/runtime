@@ -1,0 +1,2 @@
+lib=/root/los-safe/libs/new/libclrlxrgc.so runs=20 fails=0
+LXR fatal: 0  OOM: 0

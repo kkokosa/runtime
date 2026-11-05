@@ -1,0 +1,16 @@
+{"variant": "frame-new", "config": "13:3", "i": 0, "program": "binarytrees", "status": "ok", "seconds": 4.4, "detail": ""}
+{"variant": "frame-new", "config": "13:3", "i": 1, "program": "requests", "status": "ok", "seconds": 3.6, "detail": ""}
+{"variant": "frame-new", "config": "13:3", "i": 2, "program": "listsuffix", "status": "ok", "seconds": 4.7, "detail": ""}
+{"variant": "frame-new", "config": "13:3", "i": 3, "program": "mediumarrays", "status": "ok", "seconds": 4.3, "detail": ""}
+{"variant": "frame-new", "config": "13:3", "i": 4, "program": "mixedmedium", "status": "ok", "seconds": 4.8, "detail": ""}
+{"variant": "frame-new", "config": "13:3", "i": 5, "program": "losarrays", "status": "ok", "seconds": 4.6, "detail": ""}
+{"variant": "frame-new", "config": "13:3", "i": 6, "program": "losmany", "status": "ok", "seconds": 4.4, "detail": ""}
+{"variant": "frame-new", "config": "13:3", "i": 7, "program": "stress", "status": "ok", "seconds": 5.6, "detail": ""}
+{"variant": "frame-new", "config": "1:1", "i": 0, "program": "binarytrees", "status": "ok", "seconds": 5.0, "detail": ""}
+{"variant": "frame-new", "config": "1:1", "i": 1, "program": "requests", "status": "ok", "seconds": 3.6, "detail": ""}
+{"variant": "frame-new", "config": "1:1", "i": 2, "program": "listsuffix", "status": "ok", "seconds": 5.7, "detail": ""}
+{"variant": "frame-new", "config": "1:1", "i": 3, "program": "mediumarrays", "status": "ok", "seconds": 4.5, "detail": ""}
+{"variant": "frame-new", "config": "1:1", "i": 4, "program": "mixedmedium", "status": "ok", "seconds": 4.7, "detail": ""}
+{"variant": "frame-new", "config": "1:1", "i": 5, "program": "losarrays", "status": "ok", "seconds": 4.8, "detail": ""}
+{"variant": "frame-new", "config": "1:1", "i": 6, "program": "losmany", "status": "ok", "seconds": 4.6, "detail": ""}
+{"variant": "frame-new", "config": "1:1", "i": 7, "program": "stress", "status": "ok", "seconds": 4.4, "detail": ""}

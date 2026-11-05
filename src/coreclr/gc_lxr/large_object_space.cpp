@@ -8,7 +8,11 @@
 #include "lxr_completion_counter.h"
 #endif
 
+#include <algorithm>
+#include <cstdio>
+#include <cstdlib>
 #include <new>
+#include <vector>
 #ifndef LXR_SIDE_METADATA_TEST_PLATFORM
 #include <minipal/ospagesize.h>
 #endif
@@ -52,7 +56,70 @@ namespace
         return true;
 #endif
     }
+
+    bool ReadFlag(const char* name)
+    {
+        const char* value = std::getenv(name);
+        return value != nullptr && value[0] != '\0' && value[0] != '0';
+    }
 }
+
+// The state that was added after the first version of the space (see m_side in the header). The lock guards the fields.
+struct LxrLargeObjectSpace::SideState
+{
+    struct Young
+    {
+        Span* span;
+        uint32_t version;
+    };
+
+    // The totals of the mature spans (Active, and the nursery bit of the object is clear): their page bytes, and the part of
+    // those that no object byte uses. A promotion adds to them, and the start of the release of a mature span subtracts from
+    // them (the walk does not count a span in the state Releasing either). Atomics: the promotions run on several threads
+    // and take no lock. On a line of their own, as these fields are written by workers while the lock holder writes the rest.
+    alignas(64) std::atomic<size_t> matureBytes{0};
+    std::atomic<size_t> matureSlack{0};
+
+    // The young list: the spans that were allocated and are still young (the nursery bit of the object is set). SweepNursery
+    // visits these spans and no other. An entry is stale when its span has changed since (the version differs, because the
+    // span was released and used again) or is out of use; a stale entry is dropped at the next sweep or when the list is full.
+    // A span has one entry at most, except for a span that is released between two pauses: its stale entry stays beside the
+    // entry of its next use.
+    alignas(64) Young* young = nullptr;
+    size_t youngCount = 0;
+    size_t youngCapacity = 0;
+    // False after an entry could not be stored (out of memory). The next sweep walks all spans and builds the list again.
+    bool youngValid = true;
+    // Read once by Initialize from the environment. LXR_LOS_LEGACY_WALKS=1 turns the young list and the totals off (the sweep
+    // and the statistics walk all spans, as before). LXR_LOS_VALIDATE=1 compares every sweep and every statistics call with a
+    // walk of all spans and reports a difference.
+    bool legacyWalks = false;
+    bool validate = false;
+    std::atomic<size_t> validationFailures{0};
+
+    ~SideState()
+    {
+        free(young);
+    }
+
+    static bool IsStale(const Young& entry)
+    {
+        if (entry.span->version.load(std::memory_order_acquire) != entry.version)
+        {
+            return true;
+        }
+        SpanState state = entry.span->state.load(std::memory_order_acquire);
+        return state == SpanState::Pooled || state == SpanState::Quarantined;
+    }
+};
+
+// What a sweep has to do, found by a walk of all spans: the spans to release, and the spans that stay young.
+struct LxrLargeObjectSpace::SweepExpectation
+{
+    std::vector<const Span*> release;
+    std::vector<const Span*> young;
+    bool failed = false;
+};
 
 LxrLargeObjectSpace::LxrLargeObjectSpace()
     : m_metadata(nullptr)
@@ -68,12 +135,14 @@ LxrLargeObjectSpace::LxrLargeObjectSpace()
     , m_tree_leaves(0)
     , m_phase(LxrLargeObjectPhase::Shutdown)
     , m_mark_state(0)
+    , m_side(nullptr)
 {
 }
 
 LxrLargeObjectSpace::~LxrLargeObjectSpace()
 {
     Shutdown();
+    delete m_side;
 }
 
 size_t LxrLargeObjectSpace::GetCommittedBytes() const
@@ -516,6 +585,21 @@ LxrLargeObjectResult LxrLargeObjectSpace::Initialize(
     {
         return LxrLargeObjectResult::InvalidPhase;
     }
+    if (m_side == nullptr)
+    {
+        m_side = new (std::nothrow) SideState();
+        if (m_side == nullptr)
+        {
+            return LxrLargeObjectResult::OutOfMemory;
+        }
+    }
+    m_side->youngCount = 0;
+    m_side->youngValid = true;
+    m_side->matureBytes.store(0, std::memory_order_relaxed);
+    m_side->matureSlack.store(0, std::memory_order_relaxed);
+    m_side->legacyWalks = ReadFlag("LXR_LOS_LEGACY_WALKS");
+    m_side->validate = ReadFlag("LXR_LOS_VALIDATE");
+    m_side->validationFailures.store(0, std::memory_order_relaxed);
 
     const LxrSideMetadataKind required[] =
     {
@@ -686,6 +770,32 @@ LxrLargeObjectResult LxrLargeObjectSpace::GetMatureStatistics(size_t* bytes, siz
     {
         return LxrLargeObjectResult::InvalidArgument;
     }
+    SideState* side = m_side;
+    if (side == nullptr || side->legacyWalks)
+    {
+        return GetMatureStatisticsByWalk(bytes, slackBytes);
+    }
+    *bytes = side->matureBytes.load(std::memory_order_relaxed);
+    *slackBytes = side->matureSlack.load(std::memory_order_relaxed);
+    if (side->validate)
+    {
+        size_t walkBytes = 0;
+        size_t walkSlack = 0;
+        LxrLargeObjectResult walk = GetMatureStatisticsByWalk(&walkBytes, &walkSlack);
+        if (walk == LxrLargeObjectResult::Success && (walkBytes != *bytes || walkSlack != *slackBytes))
+        {
+            ReportValidationFailure("the mature totals differ from a walk of all spans");
+        }
+    }
+    return LxrLargeObjectResult::Success;
+}
+
+LxrLargeObjectResult LxrLargeObjectSpace::GetMatureStatisticsByWalk(size_t* bytes, size_t* slackBytes) const
+{
+    if (bytes == nullptr || slackBytes == nullptr)
+    {
+        return LxrLargeObjectResult::InvalidArgument;
+    }
     LockScope lock(this);
     *bytes = 0;
     *slackBytes = 0;
@@ -737,6 +847,13 @@ void LxrLargeObjectSpace::Shutdown()
     m_owns_reservation = false;
     m_active_spans = nullptr;
     m_quarantined_spans = nullptr;
+    if (m_side != nullptr)
+    {
+        m_side->youngCount = 0;
+        m_side->youngValid = true;
+        m_side->matureBytes.store(0, std::memory_order_relaxed);
+        m_side->matureSlack.store(0, std::memory_order_relaxed);
+    }
     m_span_bytes.store(0, std::memory_order_release);
     m_mark_state.store(0, std::memory_order_release);
     m_phase.store(LxrLargeObjectPhase::Shutdown, std::memory_order_release);
@@ -931,6 +1048,7 @@ LxrLargeObjectResult LxrLargeObjectSpace::TryCarve(
     CarveFree(firstPage, candidate->page_count);
     WriteSpan(span, SpanState::Allocating, *candidate);
     LinkActive(span);
+    AppendYoung(span);
     m_inflight_allocations.fetch_add(1, std::memory_order_acq_rel);
     *carvedSpan = span;
     *capturedPhase = phase;
@@ -1104,6 +1222,15 @@ LxrLargeObjectResult LxrLargeObjectSpace::TryMarkAndPromote(
         &observed,
         &exchanged);
     *updated = exchanged;
+    if (exchanged && (oldState & NurseryBit) != 0 && m_side != nullptr && !m_side->legacyWalks)
+    {
+        // The span became mature (the new state has no nursery bit).
+#ifndef LXR_LOS_CONTROL_TOTALS_NO_PROMOTE
+        size_t spanBytes = span.page_count * PageBytes;
+        m_side->matureBytes.fetch_add(spanBytes, std::memory_order_relaxed);
+        m_side->matureSlack.fetch_add(spanBytes - span.object_bytes, std::memory_order_relaxed);
+#endif
+    }
     return FromMetadataResult(metadataResult);
 }
 
@@ -1163,6 +1290,20 @@ LxrLargeObjectResult LxrLargeObjectSpace::FinishSpanRelease(Span* span)
 
 void LxrLargeObjectSpace::AbortSpanRelease(Span* span)
 {
+    // A mature span that was taken out of the totals when the release began goes back into them.
+    if (m_side != nullptr && !m_side->legacyWalks)
+    {
+        uintptr_t state = NurseryBit;
+        if (m_metadata->Load(LxrSideMetadataKind::LargeObjectMarkNursery, span->object.load(std::memory_order_relaxed),
+                SideMetadataMemoryOrder::Relaxed, &state) == SideMetadataResult::Success &&
+            (state & NurseryBit) == 0)
+        {
+            size_t pageBytes = span->page_count.load(std::memory_order_relaxed) * PageBytes;
+            m_side->matureBytes.fetch_add(pageBytes, std::memory_order_relaxed);
+            m_side->matureSlack.fetch_add(
+                pageBytes - span->object_bytes.load(std::memory_order_relaxed), std::memory_order_relaxed);
+        }
+    }
     {
         LockScope lock(this);
         if (!span->linked)
@@ -1176,7 +1317,8 @@ void LxrLargeObjectSpace::AbortSpanRelease(Span* span)
 
 // Takes the span for a release: the state changes from Active to Releasing, which only one thread can do. The span may have
 // been reused for another object after the lookup, so the identity is checked again after the change.
-LxrLargeObjectResult LxrLargeObjectSpace::BeginSpanRelease(Span* span, uintptr_t object, uintptr_t owner)
+LxrLargeObjectResult LxrLargeObjectSpace::BeginSpanRelease(
+    Span* span, uintptr_t object, uintptr_t owner, bool knownYoung)
 {
     m_pending_releases.fetch_add(1, std::memory_order_acq_rel);
     SpanState expected = SpanState::Active;
@@ -1193,6 +1335,25 @@ LxrLargeObjectResult LxrLargeObjectSpace::BeginSpanRelease(Span* span, uintptr_t
     else if (span->owner.load(std::memory_order_relaxed) != owner)
     {
         result = LxrLargeObjectResult::NotOwner;
+    }
+    else if (!knownYoung && m_side != nullptr && !m_side->legacyWalks)
+    {
+        // A span in the state Releasing is not in the totals (the walk skips it), so a mature span leaves them now.
+        uintptr_t state = 0;
+        if (m_metadata->Load(LxrSideMetadataKind::LargeObjectMarkNursery, object, SideMetadataMemoryOrder::Relaxed,
+                &state) != SideMetadataResult::Success)
+        {
+            result = LxrLargeObjectResult::MetadataFailure;
+        }
+        else if ((state & NurseryBit) == 0)
+        {
+#ifndef LXR_LOS_CONTROL_TOTALS_NO_RELEASE
+            size_t pageBytes = span->page_count.load(std::memory_order_relaxed) * PageBytes;
+            m_side->matureBytes.fetch_sub(pageBytes, std::memory_order_relaxed);
+            m_side->matureSlack.fetch_sub(
+                pageBytes - span->object_bytes.load(std::memory_order_relaxed), std::memory_order_relaxed);
+#endif
+        }
     }
     if (result != LxrLargeObjectResult::Success)
     {
@@ -1261,6 +1422,324 @@ LxrLargeObjectResult LxrLargeObjectSpace::ReleaseAfterDecrements(
     }
     return ReleaseObject(object, owner);
 }
+#endif
+
+void LxrLargeObjectSpace::AppendYoung(Span* span)
+{
+    SideState* side = m_side;
+    if (side == nullptr || side->legacyWalks || !side->youngValid)
+    {
+        return;
+    }
+#ifdef LXR_LOS_CONTROL_YOUNG_NO_RECORD
+    (void)span;
+    return;
+#else
+    if (side->youngCount == side->youngCapacity)
+    {
+        // Entries of spans that were released since are dropped first, so the list stays as long as the spans that are
+        // really young and does not grow with the releases that happen between two pauses.
+        size_t kept = 0;
+        for (size_t index = 0; index < side->youngCount; index++)
+        {
+            if (!SideState::IsStale(side->young[index]))
+            {
+                side->young[kept++] = side->young[index];
+            }
+        }
+        side->youngCount = kept;
+        if (kept * 2 >= side->youngCapacity)
+        {
+            size_t capacity = side->youngCapacity == 0 ? 1024 : side->youngCapacity * 2;
+            SideState::Young* grown = static_cast<SideState::Young*>(
+                realloc(side->young, capacity * sizeof(SideState::Young)));
+            if (grown == nullptr)
+            {
+                side->youngValid = false;
+                return;
+            }
+            side->young = grown;
+            side->youngCapacity = capacity;
+        }
+    }
+    side->young[side->youngCount++] = { span, span->version.load(std::memory_order_relaxed) };
+#endif
+}
+
+// A span that a sweep took for a release and that stayed (the release failed) is young again.
+void LxrLargeObjectSpace::RequeueYoung(Span* span)
+{
+    LockScope lock(this);
+    if (span->state.load(std::memory_order_acquire) == SpanState::Active)
+    {
+        AppendYoung(span);
+    }
+}
+
+void LxrLargeObjectSpace::ReportValidationFailure(const char* what) const
+{
+    m_side->validationFailures.fetch_add(1, std::memory_order_relaxed);
+    std::fprintf(stderr, "LXR LOS validation: %s\n", what);
+}
+
+LxrLargeObjectResult LxrLargeObjectSpace::GetYoungObjects(
+    uintptr_t* objects, size_t capacity, size_t* count, size_t* entries) const
+{
+    if (objects == nullptr || count == nullptr || entries == nullptr)
+    {
+        return LxrLargeObjectResult::InvalidArgument;
+    }
+    *count = 0;
+    *entries = 0;
+    LockScope lock(this);
+    if (m_side == nullptr || m_side->legacyWalks)
+    {
+        return LxrLargeObjectResult::Success;
+    }
+    *entries = m_side->youngCount;
+    for (size_t index = 0; index < m_side->youngCount; index++)
+    {
+        const SideState::Young& entry = m_side->young[index];
+        SpanState state = entry.span->state.load(std::memory_order_acquire);
+        if (entry.span->version.load(std::memory_order_acquire) != entry.version ||
+            (state != SpanState::Active && state != SpanState::Allocating))
+        {
+            continue;
+        }
+        if (*count == capacity)
+        {
+            return LxrLargeObjectResult::InvalidArgument;
+        }
+        objects[(*count)++] = entry.span->object.load(std::memory_order_relaxed);
+    }
+    return LxrLargeObjectResult::Success;
+}
+
+size_t LxrLargeObjectSpace::GetValidationFailures() const
+{
+    return m_side == nullptr ? 0 : m_side->validationFailures.load(std::memory_order_relaxed);
+}
+
+// The sweep that visits the young spans only. A span is young while the nursery bit of its object is set, and the bit is
+// set when the span is allocated and cleared when the object is promoted (TryMarkAndPromote). So every span that can be dead
+// and young is in the list. For each entry:
+//  - stale (the span was released and maybe used again, or is out of use): dropped;
+//  - promoted (no nursery bit): dropped, it is old now;
+//  - young and dead (no reference count): taken out of the active list for the release, and out of the young list;
+//  - young and alive but not promoted yet, or still being allocated, or being released by another thread: stays.
+LxrLargeObjectResult LxrLargeObjectSpace::SweepYoungList(Span** detachedHead)
+{
+    SideState* side = m_side;
+    Span* tail = nullptr;
+    LxrLargeObjectResult walk = LxrLargeObjectResult::Success;
+    size_t kept = 0;
+    size_t index = 0;
+    for (; index < side->youngCount; index++)
+    {
+        SideState::Young entry = side->young[index];
+        Span* span = entry.span;
+        if (span->version.load(std::memory_order_acquire) != entry.version)
+        {
+            continue;
+        }
+        SpanState spanState = span->state.load(std::memory_order_acquire);
+        if (spanState == SpanState::Allocating || spanState == SpanState::Releasing)
+        {
+            side->young[kept++] = entry;
+            continue;
+        }
+        if (spanState != SpanState::Active)
+        {
+            continue;
+        }
+        uintptr_t object = span->object.load(std::memory_order_relaxed);
+        uintptr_t state = 0;
+        uintptr_t count = 0;
+        SideMetadataResult result = m_metadata->Load(
+            LxrSideMetadataKind::LargeObjectMarkNursery, object,
+            SideMetadataMemoryOrder::SequentiallyConsistent, &state);
+        if (result == SideMetadataResult::Success)
+        {
+            result = m_metadata->Load(
+                LxrSideMetadataKind::ReferenceCount, object,
+                SideMetadataMemoryOrder::SequentiallyConsistent, &count);
+        }
+        if (result != SideMetadataResult::Success)
+        {
+            walk = FromMetadataResult(result);
+            break;
+        }
+#ifndef LXR_LOS_CONTROL_YOUNG_KEEP_PROMOTED
+        if ((state & NurseryBit) == 0)
+        {
+            continue;
+        }
+#endif
+        if (count == 0 &&
+            BeginSpanRelease(span, object, span->owner.load(std::memory_order_relaxed), true) ==
+                LxrLargeObjectResult::Success)
+        {
+            UnlinkActive(span);
+            span->next = nullptr;
+            if (tail == nullptr)
+            {
+                *detachedHead = span;
+            }
+            else
+            {
+                tail->next = span;
+            }
+            tail = span;
+            continue;
+        }
+        side->young[kept++] = entry;
+    }
+    // After an error the entries that were not visited stay, the entry of the error included.
+    for (; index < side->youngCount; index++)
+    {
+        side->young[kept++] = side->young[index];
+    }
+    side->youngCount = kept;
+    return walk;
+}
+
+// The sweep that visits all spans (the first version of the sweep). With rebuildYoungList it also stores the spans that stay
+// young into an empty young list; it is the way back after the list lost an entry.
+LxrLargeObjectResult LxrLargeObjectSpace::SweepAllSpans(Span** detachedHead, bool rebuildYoungList)
+{
+    SideState* side = m_side;
+    if (rebuildYoungList)
+    {
+        side->youngCount = 0;
+        side->youngValid = true;
+    }
+    LxrLargeObjectResult walk = LxrLargeObjectResult::Success;
+    Span* detached = *detachedHead;
+    Span* span = m_active_spans;
+    while (span != nullptr)
+    {
+        Span* next = span->next;
+        SpanState spanState = span->state.load(std::memory_order_acquire);
+        if (spanState == SpanState::Active)
+        {
+            uintptr_t object = span->object.load(std::memory_order_relaxed);
+            uintptr_t state = 0;
+            uintptr_t count = 0;
+            SideMetadataResult result = m_metadata->Load(
+                LxrSideMetadataKind::LargeObjectMarkNursery, object,
+                SideMetadataMemoryOrder::SequentiallyConsistent, &state);
+            if (result == SideMetadataResult::Success)
+            {
+                result = m_metadata->Load(
+                    LxrSideMetadataKind::ReferenceCount, object,
+                    SideMetadataMemoryOrder::SequentiallyConsistent, &count);
+            }
+            if (result != SideMetadataResult::Success)
+            {
+                walk = FromMetadataResult(result);
+                break;
+            }
+            if ((state & NurseryBit) != 0 && count == 0 &&
+                BeginSpanRelease(span, object, span->owner.load(std::memory_order_relaxed), true) ==
+                    LxrLargeObjectResult::Success)
+            {
+                UnlinkActive(span);
+                span->next = detached;
+                detached = span;
+            }
+            else if (rebuildYoungList && (state & NurseryBit) != 0)
+            {
+                AppendYoung(span);
+            }
+        }
+        else if (rebuildYoungList && spanState == SpanState::Allocating)
+        {
+            AppendYoung(span);
+        }
+        span = next;
+    }
+    *detachedHead = detached;
+    if (rebuildYoungList && walk != LxrLargeObjectResult::Success)
+    {
+        // The list is incomplete: it is built again at the next sweep.
+        side->youngValid = false;
+    }
+    return walk;
+}
+
+// For the validation mode. Before the sweep: what the old walk would do.
+void LxrLargeObjectSpace::CaptureSweepExpectation(SweepExpectation* expectation) const
+{
+    for (const Span* span = m_active_spans; span != nullptr; span = span->next)
+    {
+        SpanState spanState = span->state.load(std::memory_order_acquire);
+        if (spanState == SpanState::Allocating)
+        {
+            expectation->young.push_back(span);
+            continue;
+        }
+        if (spanState != SpanState::Active)
+        {
+            continue;
+        }
+        uintptr_t object = span->object.load(std::memory_order_relaxed);
+        uintptr_t state = 0;
+        uintptr_t count = 0;
+        if (m_metadata->Load(LxrSideMetadataKind::LargeObjectMarkNursery, object,
+                SideMetadataMemoryOrder::SequentiallyConsistent, &state) != SideMetadataResult::Success ||
+            m_metadata->Load(LxrSideMetadataKind::ReferenceCount, object,
+                SideMetadataMemoryOrder::SequentiallyConsistent, &count) != SideMetadataResult::Success)
+        {
+            expectation->failed = true;
+            return;
+        }
+        if ((state & NurseryBit) != 0)
+        {
+            (count == 0 ? expectation->release : expectation->young).push_back(span);
+        }
+    }
+}
+
+// For the validation mode. After the sweep: the spans taken for the release are the spans that the old walk would take, and the
+// young list holds the spans that stay young, and no other span.
+void LxrLargeObjectSpace::CheckSweepExpectation(const SweepExpectation& expectation, const Span* detachedHead) const
+{
+    if (expectation.failed)
+    {
+        return;
+    }
+    std::vector<const Span*> released;
+    for (const Span* span = detachedHead; span != nullptr; span = span->next)
+    {
+        released.push_back(span);
+    }
+    std::vector<const Span*> expectedRelease = expectation.release;
+    std::sort(released.begin(), released.end());
+    std::sort(expectedRelease.begin(), expectedRelease.end());
+    if (released != expectedRelease)
+    {
+        ReportValidationFailure("the young sweep releases other spans than a walk of all spans");
+    }
+    std::vector<const Span*> listed;
+    const SideState* side = m_side;
+    for (size_t index = 0; index < side->youngCount; index++)
+    {
+        const SideState::Young& entry = side->young[index];
+        SpanState state = entry.span->state.load(std::memory_order_acquire);
+        if (entry.span->version.load(std::memory_order_acquire) == entry.version &&
+            (state == SpanState::Active || state == SpanState::Allocating))
+        {
+            listed.push_back(entry.span);
+        }
+    }
+    std::vector<const Span*> expectedYoung = expectation.young;
+    std::sort(listed.begin(), listed.end());
+    std::sort(expectedYoung.begin(), expectedYoung.end());
+    if (listed != expectedYoung)
+    {
+        ReportValidationFailure("the young list differs from the young spans of a walk of all spans");
+    }
+}
 
 LxrLargeObjectResult LxrLargeObjectSpace::SweepNursery(size_t* releasedBytes)
 {
@@ -1278,39 +1757,23 @@ LxrLargeObjectResult LxrLargeObjectSpace::SweepNursery(size_t* releasedBytes)
         {
             return LxrLargeObjectResult::InvalidPhase;
         }
-        Span* span = m_active_spans;
-        while (span != nullptr)
+        SideState* side = m_side;
+        if (side == nullptr || side->legacyWalks)
         {
-            Span* next = span->next;
-            if (span->state.load(std::memory_order_acquire) == SpanState::Active)
+            walk = SweepAllSpans(&detached, false);
+        }
+        else
+        {
+            SweepExpectation expectation;
+            if (side->validate)
             {
-                uintptr_t object = span->object.load(std::memory_order_relaxed);
-                uintptr_t state = 0;
-                uintptr_t count = 0;
-                SideMetadataResult result = m_metadata->Load(
-                    LxrSideMetadataKind::LargeObjectMarkNursery, object,
-                    SideMetadataMemoryOrder::SequentiallyConsistent, &state);
-                if (result == SideMetadataResult::Success)
-                {
-                    result = m_metadata->Load(
-                        LxrSideMetadataKind::ReferenceCount, object,
-                        SideMetadataMemoryOrder::SequentiallyConsistent, &count);
-                }
-                if (result != SideMetadataResult::Success)
-                {
-                    walk = FromMetadataResult(result);
-                    break;
-                }
-                if ((state & NurseryBit) != 0 && count == 0 &&
-                    BeginSpanRelease(span, object, span->owner.load(std::memory_order_relaxed)) ==
-                        LxrLargeObjectResult::Success)
-                {
-                    UnlinkActive(span);
-                    span->next = detached;
-                    detached = span;
-                }
+                CaptureSweepExpectation(&expectation);
             }
-            span = next;
+            walk = side->youngValid ? SweepYoungList(&detached) : SweepAllSpans(&detached, true);
+            if (side->validate)
+            {
+                CheckSweepExpectation(expectation, detached);
+            }
         }
     }
 
@@ -1323,6 +1786,7 @@ LxrLargeObjectResult LxrLargeObjectSpace::SweepNursery(size_t* releasedBytes)
         if (result != LxrLargeObjectResult::Success)
         {
             AbortSpanRelease(span);
+            RequeueYoung(span);
             continue;
         }
         size_t bytes = span->page_count.load(std::memory_order_relaxed) * PageBytes;
@@ -1331,10 +1795,13 @@ LxrLargeObjectResult LxrLargeObjectSpace::SweepNursery(size_t* releasedBytes)
         {
             *releasedBytes += bytes;
         }
+        else if (span->state.load(std::memory_order_acquire) == SpanState::Active)
+        {
+            RequeueYoung(span);
+        }
     }
     return result;
 }
-#endif
 
 uintptr_t LxrLargeObjectSpace::GetReservationStart() const
 {

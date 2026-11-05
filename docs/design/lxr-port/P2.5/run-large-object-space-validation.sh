@@ -12,12 +12,15 @@ lxr_root="$repository_root/src/coreclr/gc_lxr"
 native_root="$repository_root/src/native"
 
 mkdir -p "$output_root"
+extra_flags=()
+if [[ -n "${LXR_LOS_EXTRA_FLAGS:-}" ]]; then read -r -a extra_flags <<< "$LXR_LOS_EXTRA_FLAGS"; fi
 command=(
   g++ -std=c++17 -O2 -Wall -Wextra -Werror
   -Wno-invalid-offsetof -Wno-strict-aliasing -Wno-unused-parameter -pthread
   -DBUILD_AS_STANDALONE -DLXR_SIDE_METADATA_TEST_PLATFORM $([[ -n "${LXR_OBJECT_START_BITMAP:-}" ]] || echo -DLXR_OBJECT_START_WALK)
   -DTARGET_UNIX -DHOST_UNIX -DTARGET_LINUX -DHOST_LINUX
   -DTARGET_AMD64 -DHOST_AMD64 -DTARGET_64BIT -DHOST_64BIT
+  "${extra_flags[@]}"
   -I"$lxr_root"
   -I"$gc_root" -I"$gc_root/env" -I"$native_root" -I"$native_root/inc"
   "$script_root/large-object-space-validation.cpp"

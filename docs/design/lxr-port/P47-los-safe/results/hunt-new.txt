@@ -1,0 +1,1 @@
+hunt frame-new runs per config 24 configs ['13:3', '4:2', '1:1'] failures 0

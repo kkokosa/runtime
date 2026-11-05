@@ -1,0 +1,14 @@
+Mutation controls (run-p25-controls.sh), P2.5 harness, default variant:
+CONTROL LXR_LOS_CONTROL_YOUNG_NO_RECORD detected: 4000 failing lines, 194544/198549 large object space checks passed
+CONTROL LXR_LOS_CONTROL_YOUNG_KEEP_PROMOTED detected: 8450 failing lines, 200586/209037 large object space checks passed
+CONTROL LXR_LOS_CONTROL_TOTALS_NO_PROMOTE detected: 6072 failing lines, 202962/209037 large object space checks passed
+CONTROL LXR_LOS_CONTROL_TOTALS_NO_RELEASE detected: 6043 failing lines, 202992/209037 large object space checks passed
+
+P4 selector --mature-released-candidate (known flaky, 20 runs each of the same binary, default variant, Release):
+  baseline 9664cfe78cb : 11 x "FAIL: 65/67 released candidate incarnation checks", 9 x "PASS: 67/67"
+  this change          :  7 x "FAIL: 65/67 released candidate incarnation checks", 13 x "PASS: 67/67"
+The failing lines are the same on both: "the legitimate LOS incoming field follows the actually moved mature target",
+"stale rejection and actual incoming-edge replay both occur".
+The line "FAIL: injected zero-RC old target rejected before overwrite" after the --p8-storage line comes from the selector
+--zero-rc-control, which injects a violation on purpose (its header line is filtered by run-p4-selectors.sh, the FAIL line is not).
+--p8-storage itself passes: 1441/1441 (default variant), 1449/1449 (bitmap variant).
