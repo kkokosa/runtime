@@ -26,6 +26,8 @@ case "$control" in
     SweepQuery) flags+=(-DLXR_RC_SWEEP_QUERY_CONTROL -Wno-unused-function) ;;
     TraceSatb) flags+=(-DLXR_TRACE_SKIP_SATB_CONTROL) ;;
     TraceDeletion) flags+=(-DLXR_TRACE_SKIP_DELETION_CONTROL) ;;
+    MarkingWindowWide) flags+=(-DLXR_MARKING_WINDOW_WIDE_CONTROL) ;;
+    MarkingWindowNone) flags+=(-DLXR_MARKING_WINDOW_NONE_CONTROL) ;;
     PredictorUpdate) flags+=(-DLXR_POLICY_WRONG_UPDATE_CONTROL) ;;
     TriggerOrder) flags+=(-DLXR_POLICY_WRONG_ORDER_CONTROL) ;;
     Lifetime) flags+=(-DLXR_PROBE_SKIP_RECLAIM_CONTROL) ;;
@@ -104,6 +106,7 @@ case "$control" in
     PauseTrace*) selectors=(--pause-trace) ;;
     PreZero*) selectors=(--prezero) ;;
     Walk*) selectors=(--object-start) ;;
+    MarkingWindow*) selectors=(--marking-window) ;;
 esac
 "$output/lxr-rc-validation" "${selectors[@]}" > "$output/run.log" 2>&1 || status=$?
 if [[ "$control" != None ]]; then

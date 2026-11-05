@@ -382,6 +382,7 @@ HRESULT LxrGcHeap::Initialize()
         !ReadSetting("LXRNurseryCapMB", &nurseryCapMB, 10, SIZE_MAX >> 20) ||
         !ReadBooleanSetting("LXRPolicyTrace", &m_policy_trace) ||
         !ReadBooleanSetting("LXRLookupStats", &m_lookup_stats) ||
+        !ReadBooleanSetting("LXRWindowStats", &m_window_stats) ||
         !ReadBooleanSetting("LXRPrezero", &configuration.prezero) ||
         !ReadBooleanSetting("LXRPrezeroThread", &configuration.prezeroThread) ||
         !ReadSetting("LXRPrezeroMarginBlocks", &configuration.prezeroMarginBlocks, 10, 4096) ||
@@ -1431,6 +1432,28 @@ void LxrGcHeap::Resume(bool finished, void* context)
             static_cast<unsigned long long>(minipal_hires_tick_frequency()));
     }
     LxrPauseTimers& timers = heap->m_engine.GetPauseTimers();
+#ifdef LXR_HAS_PHASE_TIMERS
+    if (heap->m_window_stats &&
+        (heap->m_current_pause_kind == LxrPauseKind::FinalMark || heap->m_current_pause_kind == LxrPauseKind::Full))
+    {
+        LxrTraceMetrics trace = heap->m_engine.GetTraceMetrics();
+        LxrRcMetrics rc = heap->m_engine.GetMetrics();
+        fprintf(stderr,
+            "LXRWINDOW pause=%u kind=%u initial=%llu final=%llu full=%llu tracePauses=%llu deaths=%llu "
+            "first_deaths=%llu first_marked=%llu first_children=%llu later_deaths=%llu later_marked=%llu "
+            "later_children=%llu deletion_marks=%llu satb=%llu\n",
+            heap->m_collections.load(), static_cast<unsigned>(heap->m_current_pause_kind),
+            static_cast<unsigned long long>(trace.initialMarks), static_cast<unsigned long long>(trace.finalMarks),
+            static_cast<unsigned long long>(trace.fullMarks), static_cast<unsigned long long>(trace.tracePauses),
+            static_cast<unsigned long long>(rc.deaths), static_cast<unsigned long long>(trace.firstEpochDeaths),
+            static_cast<unsigned long long>(trace.firstEpochMarked),
+            static_cast<unsigned long long>(trace.firstEpochChildren),
+            static_cast<unsigned long long>(trace.laterEpochDeaths),
+            static_cast<unsigned long long>(trace.laterEpochMarked),
+            static_cast<unsigned long long>(trace.laterEpochChildren),
+            static_cast<unsigned long long>(trace.deletionMarks), static_cast<unsigned long long>(trace.satbEntries));
+    }
+#endif // LXR_HAS_PHASE_TIMERS
     {
         LxrPhaseScope resume(timers, LxrPauseTimers::ResumeRuntime);
         // A tracing pause leaves a lazy sweep of dead cycles. It reads the type data of dead objects, which the runtime

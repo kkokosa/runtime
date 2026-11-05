@@ -462,8 +462,11 @@ struct LxrReferenceCounting::ReferenceBatch
         {
             stage = engine->m_pause_kind == LxrPauseKind::Full || !engine->m_configuration.lazyDecrements
                 ? LxrRCProcessDecs : LxrWorkBucketStage::Unconstrained;
-            if (engine->m_marking.load(std::memory_order_acquire))
+            if (engine->MarkDeadObjects())
             {
+#ifdef LXR_HAS_PHASE_TIMERS
+                engine->CountWindow(2, count);
+#endif // LXR_HAS_PHASE_TIMERS
                 result = engine->QueueTrace(references, count);
             }
         }
@@ -684,7 +687,7 @@ LxrReferenceCounting::LxrReferenceCounting()
       m_scheduler(), m_coordinator(), m_arena(nullptr),
       m_trace_locks(nullptr), m_scan_buckets(nullptr),
       m_scan_work(nullptr), m_trace_phase(LxrTracePhase::Inactive), m_marking(false),
-      m_hold_trace(false), m_scan_checkpoint(0), m_scan_checkpoint_active(false),
+      m_hold_trace(false), m_first_window(false), m_scan_checkpoint(0), m_scan_checkpoint_active(false),
       m_trace_pending(0), m_trace_metrics{},
       m_pause_kind(LxrPauseKind::RefCount), m_cycle_sweep(false),
       m_mutators(nullptr), m_mutator_chunks(nullptr),
@@ -3142,6 +3145,14 @@ LxrRcResult LxrReferenceCounting::RunPause(
     m_capture = capture;
     m_capture_context = context;
     m_pause_kind = kind;
+    // The drain above ended every lazy decrement of the previous epoch, so the first epoch after InitialMark is over (P46).
+    m_first_window.store(false, std::memory_order_release);
+#ifdef LXR_HAS_PHASE_TIMERS
+    if (m_marking.load(std::memory_order_acquire))
+    {
+        m_window_metrics[6].fetch_add(1, std::memory_order_relaxed);
+    }
+#endif // LXR_HAS_PHASE_TIMERS
     if (m_coordinator.PreparePause(kind, !m_configuration.lazyDecrements,
             m_configuration.evacuateNursery || m_configuration.evacuateMature) !=
                 LxrPauseCoordinatorResult::Success ||
@@ -4923,8 +4934,9 @@ LxrRcResult LxrReferenceCounting::ScanDecrements(Object* object, ReferenceBatch*
     LxrRcResult result = LxrRcResult::Success;
     CountWorker(worker, ObjectScans, 1);
     // P28 (F10). As in the Java LXR (rc.rs: process_dead_object) a child whose count is zero or at the maximum gets no decrement,
-    // so it is not queued. During a trace every child of a dead object belongs to the snapshot and is queued.
-    const bool queueAll = m_marking.load(std::memory_order_acquire);
+    // so it is not queued. While dead objects mark (MarkDeadObjects) every child of a dead object belongs to the snapshot and
+    // is queued.
+    const bool queueAll = MarkDeadObjects();
     const uintptr_t maximumCount = m_counts.GetMaximumCount();
     GCReferenceRanges::Enumerate(object, [&](Object** first, size_t length)
     {
@@ -4981,10 +4993,15 @@ SideMetadataResult LxrReferenceCounting::Death(uintptr_t start, void* context)
     DeathContext* death = static_cast<DeathContext*>(context);
     LxrReferenceCounting* engine = death->engine;
     Object* object = Reference(start);
-    if (engine->m_marking.load(std::memory_order_acquire) &&
-        engine->FinishDyingTraceObject(object) != LxrRcResult::Success)
+    if (engine->m_marking.load(std::memory_order_acquire))
     {
-        return SideMetadataResult::InconsistentState;
+#ifdef LXR_HAS_PHASE_TIMERS
+        engine->CountWindow(0, 1);
+#endif // LXR_HAS_PHASE_TIMERS
+        if (engine->MarkDeadObjects() && engine->FinishDyingTraceObject(object) != LxrRcResult::Success)
+        {
+            return SideMetadataResult::InconsistentState;
+        }
     }
     if (engine->ScanDecrements(object, death->children, death->worker) != LxrRcResult::Success)
     {
@@ -5078,9 +5095,12 @@ LxrRcResult LxrReferenceCounting::ProcessDecrements(Work* work, LxrWorkPacket* p
     while (children.count != 0)
     {
         size_t count = children.count;
-        if (m_marking.load(std::memory_order_acquire))
+        if (MarkDeadObjects())
         {
             // The children of a dead object are part of the snapshot (SATB), as in ReferenceBatch::Flush.
+#ifdef LXR_HAS_PHASE_TIMERS
+            CountWindow(2, count);
+#endif // LXR_HAS_PHASE_TIMERS
             LxrRcResult queued = QueueTrace(children.references, count);
             if (queued != LxrRcResult::Success)
             {
@@ -6102,6 +6122,8 @@ LxrRcResult LxrReferenceCounting::ReleaseEpoch()
     if (m_pause_kind == LxrPauseKind::InitialMark)
     {
         m_trace_phase.store(LxrTracePhase::Concurrent, std::memory_order_release);
+        // The lazy decrements that start after this pause belong to the epoch before the snapshot (P46).
+        m_first_window.store(true, std::memory_order_release);
         m_marking.store(true, std::memory_order_release);
         m_trace_metrics[InitialMarks].fetch_add(1, std::memory_order_relaxed);
     }
@@ -8918,6 +8940,9 @@ LxrRcResult LxrReferenceCounting::FinishDyingTraceObject(Object* object)
     {
         m_mark_metadata.Store(start, 1, SideMetadataMemoryOrder::SequentiallyConsistent);
         m_trace_metrics[DeletionMarks].fetch_add(1, std::memory_order_relaxed);
+#ifdef LXR_HAS_PHASE_TIMERS
+        CountWindow(1, 1);
+#endif // LXR_HAS_PHASE_TIMERS
     }
     TraceScan* scan = FindTraceScan(index);
     if (result == LxrRcResult::Success && scan != nullptr && !scan->complete)
@@ -9393,7 +9418,19 @@ LxrTraceMetrics LxrReferenceCounting::GetTraceMetrics() const
         m_trace_metrics[SplitPackets].load(), m_trace_metrics[CycleObjects].load(),
         m_trace_metrics[CycleBytes].load(), m_trace_metrics[Interruptions].load(),
         m_trace_metrics[ConcurrentSlices].load(), m_trace_metrics[CheckpointInterruptions].load(),
+        WindowMetric(0), WindowMetric(1), WindowMetric(2), WindowMetric(3), WindowMetric(4), WindowMetric(5),
+        WindowMetric(6),
     };
+}
+
+uint64_t LxrReferenceCounting::WindowMetric(size_t index) const
+{
+#ifdef LXR_HAS_PHASE_TIMERS
+    return m_window_metrics[index].load(std::memory_order_relaxed);
+#else
+    (void)index;
+    return 0;
+#endif // LXR_HAS_PHASE_TIMERS
 }
 
 LxrPauseWalkMetrics LxrReferenceCounting::GetPauseWalkMetrics() const
