@@ -1,0 +1,12 @@
+lib=libclrlxrgc-p50.so args=[all 2 13] runs=20 fails=0
+engine fatal (LXR fatal):        0
+OutOfMemoryException from Alloc: 0
+lib=libclrlxrgc-p50.so args=[all 2 13] runs=20 fails=0
+engine fatal (LXR fatal):        0
+OutOfMemoryException from Alloc: 0
+lib=libclrlxrgc-p50.so args=[all 2 13] runs=20 fails=0
+engine fatal (LXR fatal):        0
+OutOfMemoryException from Alloc: 0
+lib=libclrlxrgc-p50.so args=[all 2 13] runs=20 fails=0
+engine fatal (LXR fatal):        0
+OutOfMemoryException from Alloc: 0

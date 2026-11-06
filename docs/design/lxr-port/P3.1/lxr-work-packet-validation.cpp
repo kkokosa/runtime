@@ -477,6 +477,86 @@ namespace
         invalidScheduler.Shutdown();
         return success;
     }
+    // P50 (item 8a). The selection of the evacuation set submits packets to the Unconstrained stage before the stop-the-world
+    // cycle starts and waits for the stage to be idle (WaitForBucketIdle). The wait must not return while a packet runs, and
+    // BeginStwCycle must refuse to start while a packet is outstanding; after the wait every packet has run exactly once.
+    struct ForkJoinState
+    {
+        std::atomic<uint32_t> runs{0};
+        std::atomic<bool> hold{false};
+        std::atomic<bool> held{false};
+    };
+
+    void ForkJoinPacket(LxrWorkPacket*, size_t, void* context)
+    {
+        ForkJoinState* state = static_cast<ForkJoinState*>(context);
+        state->runs.fetch_add(1, std::memory_order_acq_rel);
+        if (state->hold.load(std::memory_order_acquire))
+        {
+            state->held.store(true, std::memory_order_release);
+            while (state->hold.load(std::memory_order_acquire))
+            {
+                std::this_thread::yield();
+            }
+        }
+    }
+
+    bool ValidateForkJoinBeforeCycle()
+    {
+        bool success = true;
+        LxrWorkScheduler scheduler;
+        success &= Check(scheduler.Initialize(4) == LxrWorkSchedulerResult::Success, "fork-join scheduler initializes");
+        ForkJoinState state;
+        constexpr size_t Count = 64;
+        std::vector<std::unique_ptr<LxrWorkPacket>> packets;
+        for (size_t index = 0; index < Count; index++)
+        {
+            packets.push_back(std::make_unique<LxrWorkPacket>(
+                1000 + index, LxrWorkBucketStage::Unconstrained, nullptr, 0, ForkJoinPacket, &state));
+        }
+        bool submitted = true;
+        for (auto& packet : packets)
+        {
+            submitted &= scheduler.Submit(packet.get()) == LxrWorkSchedulerResult::Success;
+        }
+        success &= Check(submitted, "packets of the Unconstrained stage are accepted before a cycle");
+        success &= Check(scheduler.WaitForBucketIdle(LxrWorkBucketStage::Unconstrained, TimeoutMilliseconds) ==
+            LxrWorkSchedulerResult::Success, "the wait for the Unconstrained stage ends");
+        bool completed = true;
+        for (auto& packet : packets)
+        {
+            completed &= packet->GetState() == LxrWorkPacketState::Completed;
+        }
+        success &= Check(state.runs.load() == Count && completed,
+            "every packet of the fork has run once and is completed when the wait returns");
+        success &= Check(scheduler.ConfigureStwStages(UINT16_C(1) << static_cast<uint8_t>(LxrWorkBucketStage::Final)) ==
+                LxrWorkSchedulerResult::Success &&
+            scheduler.BeginStwCycle(true) == LxrWorkSchedulerResult::Success,
+            "the cycle starts after the join");
+        success &= Check(scheduler.RunStwCycle(TimeoutMilliseconds) == LxrWorkSchedulerResult::Success,
+            "the cycle after the join completes");
+        scheduler.ResetCompletedCycle();
+
+        // A packet that is held keeps the join waiting and keeps the cycle from starting.
+        state.runs = 0;
+        state.hold = true;
+        state.held = false;
+        LxrWorkPacket blocked(2000, LxrWorkBucketStage::Unconstrained, nullptr, 0, ForkJoinPacket, &state);
+        success &= Check(scheduler.Submit(&blocked) == LxrWorkSchedulerResult::Success, "a held packet is accepted");
+        success &= Check(WaitUntil(state.held), "the held packet starts on a worker");
+        success &= Check(scheduler.WaitForBucketIdle(LxrWorkBucketStage::Unconstrained, 50) ==
+            LxrWorkSchedulerResult::Timeout, "the join does not return while a packet runs");
+        success &= Check(scheduler.ConfigureStwStages(UINT16_C(1) << static_cast<uint8_t>(LxrWorkBucketStage::Final)) ==
+                LxrWorkSchedulerResult::Success &&
+            scheduler.BeginStwCycle(true) == LxrWorkSchedulerResult::Busy,
+            "the cycle does not start while a packet of the fork runs");
+        state.hold = false;
+        success &= Check(scheduler.WaitForBucketIdle(LxrWorkBucketStage::Unconstrained, TimeoutMilliseconds) ==
+            LxrWorkSchedulerResult::Success && blocked.GetState() == LxrWorkPacketState::Completed,
+            "the join returns when the held packet ends");
+        scheduler.Shutdown();
+        return success;
+    }
 }
 
 int main()
@@ -488,6 +568,7 @@ int main()
     success &= ValidateOrderedBuckets();
     success &= ValidatePrematureOpening();
     success &= ValidateShutdownAndInvalidInputs();
+    success &= ValidateForkJoinBeforeCycle();
 
     if (!success || s_passed != s_checks)
     {

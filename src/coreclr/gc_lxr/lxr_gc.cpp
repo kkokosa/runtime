@@ -331,6 +331,7 @@ HRESULT LxrGcHeap::Initialize()
     bool overshoot = true;
     bool phaseTimers = true;
     size_t nurseryCapMB = 0;
+    size_t selectParallelBlocks = configuration.selectParallelBlocks;
     bool immixReserveSpecified = false;
     bool largeReserveSpecified = false;
     // A block that was never used is zero already (committed memory is zero), so an allocator does not clear it. The
@@ -374,6 +375,8 @@ HRESULT LxrGcHeap::Initialize()
         !ReadBooleanSetting("LXREvacuateMature", &configuration.evacuateMature) ||
         !ReadSetting("LXRDefragHeadroomPercent", &configuration.defragHeadroomPercent, 10, 50) ||
         !ReadSetting("LXRChunkDefragPercent", &configuration.chunkDefragPercent, 10, 100) ||
+        !ReadBooleanSetting("LXRSelectValidate", &configuration.selectValidate) ||
+        !ReadSetting("LXRSelectParallelBlocks", &selectParallelBlocks, 10, UINT32_MAX) ||
         !ReadSetting("LXRMaxYoungEvacSize", &configuration.maximumYoungCopyBytes) ||
         !ReadBooleanSetting("LXRSurvivalPredictorWeighted", &m_policy_configuration.weighted) ||
         !ReadBooleanSetting("LXRSurvivalPredictorHarmonicMean", &m_policy_configuration.harmonic) ||
@@ -410,6 +413,7 @@ HRESULT LxrGcHeap::Initialize()
         configuration.concurrentTraceWorkers = configuration.workers;
     }
     m_engine.GetPauseTimers().Configure(phaseTimers);
+    configuration.selectParallelBlocks = static_cast<uint32_t>(selectParallelBlocks);
     for (const char* unsupported : {
             "LXRMaxPauseMillis", "LXRTransparentHugepage",
             "GCHeapHardLimit", "GCHeapHardLimitPercent",

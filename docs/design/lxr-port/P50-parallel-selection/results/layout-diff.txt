@@ -1,0 +1,15 @@
+# Offsets and sizes of the members of LxrReferenceCounting, LxrRcConfiguration and LxrPauseTimers (clang -fdump-record-layouts, product build, Release).
+# diff base (3a6fe592c8e) -> P50. Lines with > are new; no existing member moved.
+42a43,44
+>        161 |   _Bool selectValidate
+>        164 |   uint32_t selectParallelBlocks
+184a187
+>      11600 |   struct std::atomic<struct LxrReferenceCounting::SelectionRun *> m_select_run
+
+# sizeof lines
+base:            | [sizeof=4480, dsize=4480, align=8,
+base:            | [sizeof=208, dsize=208, align=8,
+base:            | [sizeof=11648, dsize=11600, align=64,
+p50:             | [sizeof=4480, dsize=4480, align=8,
+p50:             | [sizeof=208, dsize=208, align=8,
+p50:             | [sizeof=11648, dsize=11608, align=64,
