@@ -333,6 +333,7 @@ HRESULT LaxoriGcHeap::Initialize()
     bool overshoot = true;
     bool phaseTimers = true;
     size_t nurseryCapMB = 0;
+    size_t selectParallelBlocks = configuration.selectParallelBlocks;
     bool immixReserveSpecified = false;
     bool largeReserveSpecified = false;
     // A block that was never used is zero already (committed memory is zero), so an allocator does not clear it. The
@@ -380,6 +381,8 @@ HRESULT LaxoriGcHeap::Initialize()
         !ReadBooleanSetting("LAXORIEvacuateMature", &configuration.evacuateMature) ||
         !ReadSetting("LAXORIDefragHeadroomPercent", &configuration.defragHeadroomPercent, 10, 50) ||
         !ReadSetting("LAXORIChunkDefragPercent", &configuration.chunkDefragPercent, 10, 100) ||
+        !ReadBooleanSetting("LAXORISelectValidate", &configuration.selectValidate) ||
+        !ReadSetting("LAXORISelectParallelBlocks", &selectParallelBlocks, 10, UINT32_MAX) ||
         !ReadSetting("LAXORIMaxYoungEvacSize", &configuration.maximumYoungCopyBytes) ||
         !ReadBooleanSetting("LAXORISurvivalPredictorWeighted", &m_policy_configuration.weighted) ||
         !ReadBooleanSetting("LAXORISurvivalPredictorHarmonicMean", &m_policy_configuration.harmonic) ||
@@ -424,6 +427,7 @@ HRESULT LaxoriGcHeap::Initialize()
         configuration.concurrentTraceWorkers = configuration.workers;
     }
     m_engine.GetPauseTimers().Configure(phaseTimers);
+    configuration.selectParallelBlocks = static_cast<uint32_t>(selectParallelBlocks);
     for (const char* unsupported : {
             "LAXORIMaxPauseMillis", "LAXORITransparentHugepage",
             "GCHeapHardLimit", "GCHeapHardLimitPercent",

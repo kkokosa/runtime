@@ -98,6 +98,13 @@ struct LaxoriRcConfiguration
     uint32_t forwardingMask = 3;
     uint32_t forwardingShift = 0;
     bool evacuateMature = false;
+    // P50 (item 8a). Both fields sit in the padding after evacuateMature, so no member of the configuration moves.
+    // Compare the parallel selection of the evacuation set with the serial one in every InitialMark and Full pause and fail
+    // on a difference (a debugging aid, LAXORISelectValidate).
+    bool selectValidate = false;
+    // The selection runs on all workers when the allocator has at least this many blocks in use (32 KiB each), else on the
+    // pause thread alone. 0 selects the parallel path always (LAXORISelectParallelBlocks).
+    uint32_t selectParallelBlocks = 4096;
     size_t defragHeadroomPercent = 5;
     size_t chunkDefragPercent = 32;
     // P17 S5b. A pause may admit blocks beyond the admitted Immix capacity for its copy and give them back at its end.
@@ -267,6 +274,13 @@ public:
         // The parts of the PrepareTrace packet: the work that precedes the trace, the trace of the roots, the replay of the
         // remembered slots (FinalMark) and the work that follows.
         TraceSetup, TraceRoots, TraceReplay, TraceFixup,
+#ifdef LAXORI_HAS_PHASE_TIMERS
+        // P50 (item 8a). Only in builds with phase timers, so that the product object does not change in size.
+        // SelectMature: the whole selection of the evacuation set (inside PrepareWork). SelectScan: the part that visits the
+        // blocks (the wait for the workers included). SelectGather: the merge of the chunk results. SelectTail: the sort and
+        // the copy budget. SelectBusy: the time that all threads spent in chunks (the sum over the threads).
+        SelectMature, SelectScan, SelectGather, SelectTail, SelectBusy,
+#endif // LAXORI_HAS_PHASE_TIMERS
         ScalarCount,
     };
 
@@ -796,7 +810,26 @@ public:
     // Every lazy packet (decrements, previous roots, mature sweep) sleeps this long before it runs, so a test can keep lazy work
     // pending while the mutators run.
     void SetLazyDelayForTest(uint32_t microseconds) { m_lazy_delay_us.store(microseconds, std::memory_order_release); }
+    // P50 (item 8a) tests. Fills the block states, the count planes, the pause pin flags (the pinned-block flags) and the
+    // evacuation flags of the whole admitted Immix capacity with random values, then runs the serial and the parallel selection
+    // of an evacuation set on that state (SelectMatureValidated). The shares are percent of the blocks (a chunk is partial
+    // with partialChunkPercent: its blocks are free with the probability of occupiedPercent / 4). headroomBytes replaces the copy
+    // headroom of the pause. mismatches gets the number of differences between the two selections (0 when they agree); selected
+    // and eligible get the numbers of the metric counters. The engine is not usable for other work afterwards.
+    LaxoriRcResult SelectionEquivalenceForTest(
+        uint64_t seed, LaxoriPauseKind kind, uint32_t occupiedPercent, uint32_t partialChunkPercent, uint32_t pinnedPercent,
+        uint32_t sourcePercent, uint32_t deadLinePercent, size_t headroomBytes, uint64_t* mismatches, uint64_t* selected,
+        uint64_t* eligible);
 #endif // LAXORI_SIDE_METADATA_TEST_PLATFORM
+#ifdef LAXORI_HAS_PHASE_TIMERS
+    // P50. 0: serial selections, 1: parallel selections, 2: chunks that parallel selections processed, 3: threads that took at
+    // least one chunk (summed over the selections), 4: differences found by the validation, 5: chunks that a parallel
+    // selection did not process (must be 0).
+    uint64_t GetSelectMetric(size_t index) const
+    {
+        return index < 6 ? m_select_metrics[index].load(std::memory_order_relaxed) : UINT64_MAX;
+    }
+#endif // LAXORI_HAS_PHASE_TIMERS
 
 private:
     struct LogChunk;
@@ -929,6 +962,20 @@ private:
     LaxoriRcResult AllocateCopy(size_t size, size_t worker, uintptr_t* start);
     LaxoriRcResult TryCopyMature(Object** object);
     LaxoriRcResult SelectMatureCandidates();
+    // P50 (item 8a). SelectMatureCandidates picks one of two implementations that give the same evacuation set. The serial one
+    // is the loop of the first version (one pass over the blocks, then one pass over the candidates). The parallel one
+    // cuts the blocks into 4 MiB chunks, and all workers and the pause thread take chunks from a cursor; each chunk is a
+    // local copy of the serial loop. Both end in ApplyMatureSelection (sort, copy budget, store).
+    struct MatureCandidate;
+    struct SelectionRun;
+    LaxoriRcResult SelectMatureSerial();
+    LaxoriRcResult SelectMatureParallel(bool finish = true);
+    LaxoriRcResult FinishSelection(LaxoriRcResult result);
+    LaxoriRcResult SelectMatureValidated();
+    LaxoriRcResult ApplyMatureSelection(MatureCandidate* candidates, size_t count, size_t freeBytes);
+    size_t CountDeadLines(uintptr_t block);
+    void SelectChunk(SelectionRun* run, size_t chunk);
+    void RunSelectionLoop(SelectionRun* run);
     // P17 S7: marks the mature blocks that hold a pinned root as retained. It reads the pin list, so its cost follows
     // the number of pinned roots and not the number of objects.
     LaxoriRcResult RetainPinnedMatureBlocks();
@@ -1312,6 +1359,18 @@ private:
     std::atomic<bool> m_trace_loop_off{false};
     std::atomic<bool> m_gate_blocked{false};
     std::atomic<int64_t> m_gate_remaining{0};
+#endif // LAXORI_SIDE_METADATA_TEST_PLATFORM
+    // P50 (item 8a). The run of the parallel selection that the packets of the pause take chunks from (null outside a selection).
+    // The members of P50 are the last ones of the class, so that no other field moves.
+    std::atomic<SelectionRun*> m_select_run{nullptr};
+#ifdef LAXORI_HAS_PHASE_TIMERS
+    std::atomic<uint64_t> m_select_metrics[6]{};
+#endif // LAXORI_HAS_PHASE_TIMERS
+#ifdef LAXORI_SIDE_METADATA_TEST_PLATFORM
+    // The copy headroom that the selection uses instead of the computed one (SIZE_MAX: none).
+    size_t m_select_headroom_override = SIZE_MAX;
+    // The equivalence test counts the differences of the two selections and does not fail the engine.
+    bool m_select_report_only = false;
 #endif // LAXORI_SIDE_METADATA_TEST_PLATFORM
 };
 

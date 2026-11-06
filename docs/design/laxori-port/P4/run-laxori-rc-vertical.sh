@@ -28,6 +28,11 @@ case "$control" in
     TraceDeletion) flags+=(-DLAXORI_TRACE_SKIP_DELETION_CONTROL) ;;
     MarkingWindowWide) flags+=(-DLAXORI_MARKING_WINDOW_WIDE_CONTROL) ;;
     MarkingWindowNone) flags+=(-DLAXORI_MARKING_WINDOW_NONE_CONTROL) ;;
+    SelectLoseChunk) flags+=(-DLAXORI_SELECT_LOSE_CHUNK_CONTROL) ;;
+    SelectSkipChunk) flags+=(-DLAXORI_SELECT_SKIP_CHUNK_CONTROL) ;;
+    SelectGatherReversed) flags+=(-DLAXORI_SELECT_GATHER_REVERSED_CONTROL) ;;
+    SelectDeadLines) flags+=(-DLAXORI_SELECT_DEAD_LINES_CONTROL) ;;
+    SelectOccupied) flags+=(-DLAXORI_SELECT_OCCUPIED_CONTROL) ;;
     PredictorUpdate) flags+=(-DLAXORI_POLICY_WRONG_UPDATE_CONTROL) ;;
     TriggerOrder) flags+=(-DLAXORI_POLICY_WRONG_ORDER_CONTROL) ;;
     Lifetime) flags+=(-DLAXORI_PROBE_SKIP_RECLAIM_CONTROL) ;;
@@ -107,6 +112,7 @@ case "$control" in
     PreZero*) selectors=(--prezero) ;;
     Walk*) selectors=(--object-start) ;;
     MarkingWindow*) selectors=(--marking-window) ;;
+    Select*) selectors=(--select-parallel) ;;
 esac
 "$output/laxori-rc-validation" "${selectors[@]}" > "$output/run.log" 2>&1 || status=$?
 if [[ "$control" != None ]]; then

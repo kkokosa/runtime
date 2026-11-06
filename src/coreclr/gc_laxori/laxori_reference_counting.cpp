@@ -78,6 +78,7 @@ enum class LaxoriReferenceCounting::WorkKind : uint8_t
     EpochClosure,
     MarkClear,
     ReplayRemembered,
+    SelectMature,
 };
 
 struct LaxoriReferenceCounting::LogChunk
@@ -738,6 +739,17 @@ LaxoriRcResult LaxoriReferenceCounting::Initialize(
         default: return LaxoriRcResult::InvalidArgument;
     }
     m_configuration = configuration;
+#ifdef LAXORI_SIDE_METADATA_TEST_PLATFORM
+    // P50. A run of any test can use the parallel selection (and the comparison with the serial one) in every pause.
+    if (const char* blocks = getenv("LAXORI_TEST_SELECT_PARALLEL_BLOCKS"))
+    {
+        m_configuration.selectParallelBlocks = static_cast<uint32_t>(strtoul(blocks, nullptr, 10));
+    }
+    if (const char* validate = getenv("LAXORI_TEST_SELECT_VALIDATE"))
+    {
+        m_configuration.selectValidate = *validate == '1';
+    }
+#endif // LAXORI_SIDE_METADATA_TEST_PLATFORM
     m_initial_immix = configuration.immixBytes;
     m_initial_large = configuration.largeObjectBytes;
     m_configuration.immixBytes = configuration.immixReservationBytes == 0
@@ -3181,6 +3193,8 @@ void LaxoriReferenceCounting::Suspend(void* context)
         return;
     }
     engine->PrepareWork();
+    // The packets of a parallel selection that woke late are done by now (P50).
+    engine->FinishSelection(LaxoriRcResult::Success);
 }
 
 void LaxoriReferenceCounting::Resume(bool finishedGc, void* context)
@@ -3906,18 +3920,44 @@ bool LaxoriReferenceCounting::IsMatureCandidate(uintptr_t address)
     return m_defrag_metadata.Load(address, SideMetadataMemoryOrder::SequentiallyConsistent) == UINT8_MAX;
 }
 
+struct LaxoriReferenceCounting::MatureCandidate
+{
+    uintptr_t block;
+    size_t deadLines;
+    size_t chunkScore;
+};
+
 LaxoriRcResult LaxoriReferenceCounting::SelectMatureCandidates()
 {
     if (!m_configuration.evacuateMature)
     {
         return LaxoriRcResult::Success;
     }
-    struct Candidate
+#ifdef LAXORI_HAS_PHASE_TIMERS
+    LaxoriPhaseScope selectTimer(m_pause_timers, LaxoriPauseTimers::SelectMature);
+#endif // LAXORI_HAS_PHASE_TIMERS
+    if (m_configuration.selectValidate)
     {
-        uintptr_t block;
-        size_t deadLines;
-        size_t chunkScore;
-    };
+        return SelectMatureValidated();
+    }
+    // The blocks of the allocator in use stand for the occupied blocks (the loop costs 236 ns for each occupied block and 64 ns
+    // for each other one, P49): a small heap is faster on the pause thread than the hand-over to the workers.
+    if (m_allocation.GetBlocksInUse() >= m_configuration.selectParallelBlocks &&
+        GetImmixCapacityBytes() / ImmixBlockGeometry::BlockBytes > 1)
+    {
+        return SelectMatureParallel(false);
+    }
+    return SelectMatureSerial();
+}
+
+// The serial selection. It is the loop of the first version (P6) and the reference of the parallel selection: the validation
+// switch runs both and compares the sets.
+LaxoriRcResult LaxoriReferenceCounting::SelectMatureSerial()
+{
+#ifdef LAXORI_HAS_PHASE_TIMERS
+    m_select_metrics[0].fetch_add(1, std::memory_order_relaxed);
+#endif // LAXORI_HAS_PHASE_TIMERS
+    using Candidate = MatureCandidate;
     size_t blocks = GetImmixCapacityBytes() / ImmixBlockGeometry::BlockBytes;
     Candidate* candidates = new (std::nothrow) Candidate[blocks];
     if (candidates == nullptr)
@@ -4048,6 +4088,23 @@ LaxoriRcResult LaxoriReferenceCounting::SelectMatureCandidates()
             }
         }
         count = eligible;
+#ifdef LAXORI_HAS_PHASE_TIMERS
+        LaxoriPhaseScope tailTimer(m_pause_timers, LaxoriPauseTimers::SelectTail);
+#endif // LAXORI_HAS_PHASE_TIMERS
+        result = ApplyMatureSelection(candidates, count, freeBytes);
+    }
+    delete[] candidates;
+    return result;
+}
+
+// The part that the serial and the parallel selection share: sorts the eligible candidates, applies the copy budget, and
+// stores the evacuation set. The input order decides the order of equal keys (std::sort is not stable), so both selections
+// give it the same order: ascending block address.
+LaxoriRcResult LaxoriReferenceCounting::ApplyMatureSelection(MatureCandidate* candidates, size_t count, size_t freeBytes)
+{
+    using Candidate = MatureCandidate;
+    LaxoriRcResult result = LaxoriRcResult::Success;
+    {
         m_mature_metrics[0].fetch_add(count, std::memory_order_relaxed);
         std::sort(candidates, candidates + count, [](const Candidate& left, const Candidate& right)
         {
@@ -4058,9 +4115,14 @@ LaxoriRcResult LaxoriReferenceCounting::SelectMatureCandidates()
         result = GetDefragHeadroomBytes(&headroom);
         if (result != LaxoriRcResult::Success)
         {
-            delete[] candidates;
             return Fail(result);
         }
+#ifdef LAXORI_SIDE_METADATA_TEST_PLATFORM
+        if (m_select_headroom_override != SIZE_MAX)
+        {
+            headroom = m_select_headroom_override;
+        }
+#endif // LAXORI_SIDE_METADATA_TEST_PLATFORM
         size_t budget = m_pause_kind == LaxoriPauseKind::Full ? (freeBytes > headroom ? freeBytes : headroom) : headroom;
         // Unlike the reference's shared page resource, only admitted Immix pages are usable to-space here.
         budget = budget < freeBytes ? budget : freeBytes;
@@ -4086,9 +4148,541 @@ LaxoriRcResult LaxoriReferenceCounting::SelectMatureCandidates()
         }
         m_mature_metrics[3].fetch_add(estimated, std::memory_order_relaxed);
     }
-    delete[] candidates;
     return result;
 }
+
+struct LaxoriReferenceCounting::SelectionRun
+{
+    // The longest wait of the pause thread for the packets of the selection. A packet takes milliseconds at most.
+    static constexpr uint32_t SelectTimeoutMilliseconds = 60000;
+    static constexpr size_t ChunkBytes = size_t{1} << 22;
+    static constexpr size_t BlocksPerChunk = ChunkBytes / ImmixBlockGeometry::BlockBytes;
+    static_assert(BlocksPerChunk <= UINT8_MAX);
+
+    uintptr_t start = 0;
+    // The end of the blocks that the serial loop visits.
+    uintptr_t limit = 0;
+    // The first chunk of the heap. It starts at or below the reservation start; the serial loop cuts it the same way.
+    uintptr_t firstChunk = 0;
+    size_t chunks = 0;
+    size_t threshold = 0;
+    bool full = false;
+    // BlocksPerChunk slots for each chunk: a chunk writes its eligible candidates to its own slots, so that no thread writes
+    // to the slots of another and the merge keeps the address order of the serial loop.
+    MatureCandidate* candidates = nullptr;
+    uint8_t* counts = nullptr;
+    uint8_t* freeBlocks = nullptr;
+    std::atomic<size_t> cursor{0};
+    std::atomic<size_t> processed{0};
+    std::atomic<size_t> visited{0};
+    std::atomic<LaxoriRcResult> failure{LaxoriRcResult::Success};
+};
+
+// The number of lines of a block whose count bytes are all zero. The count plane of a block is a few hundred bytes. The mutators
+// are stopped and the lazy work has drained, so plain reads see the planes as they are. The serial selection has the same loop
+// inline (the reference for the validation); the two must stay equal.
+size_t LaxoriReferenceCounting::CountDeadLines(uintptr_t block)
+{
+    size_t deadLines = 0;
+    const size_t logBits = m_rc_metadata.GetLogBitsPerValue();
+    const size_t logBytes = m_rc_metadata.GetLogBytesPerValue();
+    const size_t bitsPerLine = (ImmixBlockGeometry::LineBytes >> logBytes) << logBits;
+    uint32_t byteShift = 0;
+    const volatile uint8_t* plane = m_rc_metadata.LocateByte(block, &byteShift);
+    if (logBits <= 3 && byteShift == 0 && bitsPerLine % 64 == 0)
+    {
+        const size_t wordsPerLine = bitsPerLine / 64;
+        const volatile uint64_t* words = reinterpret_cast<const volatile uint64_t*>(plane);
+#ifdef LAXORI_SELECT_DEAD_LINES_CONTROL
+        // Control: the first line is never counted.
+        for (size_t line = 1; line < ImmixBlockGeometry::LinesPerBlock; line++)
+#else
+        for (size_t line = 0; line < ImmixBlockGeometry::LinesPerBlock; line++)
+#endif // LAXORI_SELECT_DEAD_LINES_CONTROL
+        {
+            uint64_t any = 0;
+            for (size_t word = 0; word < wordsPerLine; word++)
+            {
+                any |= words[line * wordsPerLine + word];
+            }
+            deadLines += any == 0 ? 1 : 0;
+        }
+    }
+    else
+    {
+        for (size_t line = 0; line < ImmixBlockGeometry::LinesPerBlock; line++)
+        {
+            deadLines += m_rc_metadata.IsRangeZero(block + line * ImmixBlockGeometry::LineBytes,
+                ImmixBlockGeometry::LineBytes, SideMetadataMemoryOrder::SequentiallyConsistent) ? 1 : 0;
+        }
+    }
+    return deadLines;
+}
+
+// One chunk of the parallel selection: the first loop of the serial selection over the blocks of the chunk, the count of the
+// occupied blocks of the chunk (the serial selection counts them in a second pass over the chunk), the chunk score, and the
+// filter of the eligible candidates. Everything that it reads or writes belongs to the chunk, except the metadata of the blocks.
+void LaxoriReferenceCounting::SelectChunk(SelectionRun* run, size_t chunk)
+{
+    uintptr_t base = run->firstChunk + chunk * SelectionRun::ChunkBytes;
+    uintptr_t first = base > run->start ? base : run->start;
+    uintptr_t end = base + SelectionRun::ChunkBytes;
+    end = end < run->limit ? end : run->limit;
+    MatureCandidate* out = run->candidates + chunk * SelectionRun::BlocksPerChunk;
+    size_t count = 0;
+    size_t occupied = 0;
+    size_t freeBlocks = 0;
+    for (uintptr_t block = first; block < end; block += ImmixBlockGeometry::BlockBytes)
+    {
+        ImmixBlockState state;
+        uint8_t unavailable;
+        LaxoriRcResult result = FromMetadata(m_blocks.GetStateFast(block, &state, &unavailable));
+        if (result != LaxoriRcResult::Success)
+        {
+            run->failure.store(result, std::memory_order_relaxed);
+            return;
+        }
+        if (state == ImmixBlockState::Unallocated)
+        {
+            bool nursery;
+            result = FromMetadata(m_blocks.IsNurseryFast(block, &nursery));
+            if (result != LaxoriRcResult::Success)
+            {
+                run->failure.store(result, std::memory_order_relaxed);
+                return;
+            }
+            freeBlocks += nursery ? 0 : 1;
+            continue;
+        }
+#ifdef LAXORI_SELECT_OCCUPIED_CONTROL
+        // Control: a pinned block does not count as occupied.
+        if (IsPinnedBlock(block))
+        {
+            continue;
+        }
+        occupied++;
+#else
+        occupied++;
+        if (IsPinnedBlock(block))
+        {
+            // The objects of a pinned block never move, so it is never a source of the evacuation.
+            continue;
+        }
+#endif // LAXORI_SELECT_OCCUPIED_CONTROL
+        out[count++] = {block, CountDeadLines(block), 0};
+    }
+    size_t score = occupied < run->threshold ? SelectionRun::BlocksPerChunk - occupied : 0;
+    size_t kept = 0;
+    for (size_t index = 0; index < count; index++)
+    {
+        if (score != 0 || run->full || out[index].deadLines >= ImmixBlockGeometry::LinesPerBlock / 2)
+        {
+            out[kept] = out[index];
+            out[kept].chunkScore = score;
+            kept++;
+        }
+    }
+    run->counts[chunk] = static_cast<uint8_t>(kept);
+    run->freeBlocks[chunk] = static_cast<uint8_t>(freeBlocks);
+}
+
+// The loop of every thread that takes part in a parallel selection: the pause thread and the packets that it submitted. A thread
+// takes the next chunk from the cursor until none is left, so a thread that wakes late finds nothing to do and the pause thread
+// alone can finish the whole selection.
+void LaxoriReferenceCounting::RunSelectionLoop(SelectionRun* run)
+{
+#ifdef LAXORI_HAS_PHASE_TIMERS
+    int64_t start = m_pause_timers.Enabled() ? m_pause_timers.Stamp() : 0;
+#endif // LAXORI_HAS_PHASE_TIMERS
+    size_t taken = 0;
+    while (run->failure.load(std::memory_order_relaxed) == LaxoriRcResult::Success &&
+        GetFailure() == LaxoriRcResult::Success)
+    {
+        size_t chunk = run->cursor.fetch_add(1, std::memory_order_relaxed);
+        if (chunk >= run->chunks)
+        {
+            break;
+        }
+#if defined(LAXORI_SIDE_METADATA_TEST_PLATFORM) && defined(LAXORI_SELECT_LOSE_CHUNK_CONTROL)
+        // Control: a chunk is lost (it is not visited, so it is not counted as visited).
+        if (chunk % 7 == 3)
+        {
+            run->processed.fetch_add(1, std::memory_order_relaxed);
+            continue;
+        }
+#endif // LAXORI_SIDE_METADATA_TEST_PLATFORM && LAXORI_SELECT_LOSE_CHUNK_CONTROL
+#if defined(LAXORI_SIDE_METADATA_TEST_PLATFORM) && defined(LAXORI_SELECT_SKIP_CHUNK_CONTROL)
+        // Control: a chunk is counted as visited but not visited.
+        if (chunk % 7 == 3)
+        {
+            run->counts[chunk] = 0;
+            run->freeBlocks[chunk] = 0;
+            run->visited.fetch_add(1, std::memory_order_relaxed);
+            run->processed.fetch_add(1, std::memory_order_relaxed);
+            continue;
+        }
+#endif // LAXORI_SIDE_METADATA_TEST_PLATFORM && LAXORI_SELECT_SKIP_CHUNK_CONTROL
+        SelectChunk(run, chunk);
+        run->visited.fetch_add(1, std::memory_order_relaxed);
+        run->processed.fetch_add(1, std::memory_order_relaxed);
+        taken++;
+    }
+#ifdef LAXORI_HAS_PHASE_TIMERS
+    if (taken != 0)
+    {
+        m_select_metrics[3].fetch_add(1, std::memory_order_relaxed);
+        if (start != 0)
+        {
+            m_pause_timers.Add(LaxoriPauseTimers::SelectBusy, m_pause_timers.Stamp() - start);
+        }
+    }
+#else
+    (void)taken;
+#endif // LAXORI_HAS_PHASE_TIMERS
+}
+
+// The parallel selection (Java LAXORI: SelectDefragBlocks packets over the chunks of the heap and a serial tail,
+// plan/laxori/gc_work/mature_evac.rs). The pause thread submits packets to the Unconstrained stage, takes chunks itself, and
+// waits until every chunk is done; only then does it merge the chunks and run the shared tail. So the evacuation set is
+// complete before PrepareWork, as with the serial selection, and the scheduler needs no new stage: no lazy work is queued at
+// this point (the pre-drain of the pause has ended it), and a lazy packet is published only after the mutators resume. The
+// packets that have not started when the chunks are done only read the cursor; Suspend waits for them at its end
+// (FinishSelection), because the cycle of the pause cannot start while the stage is busy.
+LaxoriRcResult LaxoriReferenceCounting::SelectMatureParallel(bool finish)
+{
+#ifdef LAXORI_HAS_PHASE_TIMERS
+    m_select_metrics[1].fetch_add(1, std::memory_order_relaxed);
+#endif // LAXORI_HAS_PHASE_TIMERS
+    size_t blocks = GetImmixCapacityBytes() / ImmixBlockGeometry::BlockBytes;
+    SelectionRun* run = new (std::nothrow) SelectionRun;
+    if (run == nullptr)
+    {
+        return Fail(LaxoriRcResult::OutOfMemory);
+    }
+    run->start = GetReservationStart();
+    run->limit = run->start + blocks * ImmixBlockGeometry::BlockBytes;
+    run->firstChunk = run->start & ~(static_cast<uintptr_t>(SelectionRun::ChunkBytes) - 1);
+    run->chunks = (run->limit - run->firstChunk + SelectionRun::ChunkBytes - 1) / SelectionRun::ChunkBytes;
+    run->full = m_pause_kind == LaxoriPauseKind::Full;
+    size_t percent = m_configuration.chunkDefragPercent;
+    if (run->full)
+    {
+        percent = percent > 50 ? 100 : percent * 2;
+    }
+    run->threshold = SelectionRun::BlocksPerChunk * percent / 100;
+    run->threshold = run->threshold == 0 ? 1 : run->threshold;
+    run->candidates = new (std::nothrow) MatureCandidate[run->chunks * SelectionRun::BlocksPerChunk];
+    run->counts = new (std::nothrow) uint8_t[run->chunks];
+    run->freeBlocks = new (std::nothrow) uint8_t[run->chunks];
+    if (run->candidates == nullptr || run->counts == nullptr || run->freeBlocks == nullptr)
+    {
+        delete[] run->candidates;
+        delete[] run->counts;
+        delete[] run->freeBlocks;
+        delete run;
+        return Fail(LaxoriRcResult::OutOfMemory);
+    }
+    LaxoriRcResult result = LaxoriRcResult::Success;
+    {
+#ifdef LAXORI_HAS_PHASE_TIMERS
+        LaxoriPhaseScope scanTimer(m_pause_timers, LaxoriPauseTimers::SelectScan);
+#endif // LAXORI_HAS_PHASE_TIMERS
+        m_select_run.store(run, std::memory_order_release);
+        size_t helpers = m_configuration.workers < run->chunks - 1 ? m_configuration.workers : run->chunks - 1;
+        size_t submitted = 0;
+        for (; submitted < helpers && result == LaxoriRcResult::Success; submitted++)
+        {
+            result = SubmitWork(NewWork(WorkKind::SelectMature, nullptr, 0, LaxoriWorkBucketStage::Unconstrained));
+        }
+        RunSelectionLoop(run);
+        // The threads that took a chunk are done with it when the counter reaches the number of chunks. A packet that has not
+        // started yet finds the cursor at the end and returns at once, so the pause does not wait for the wake-up of the workers:
+        // FinishSelection waits for the stage at the end of Suspend, after the pause has done other work.
+        for (unsigned spins = 0; run->processed.load(std::memory_order_acquire) < run->chunks &&
+            run->failure.load(std::memory_order_relaxed) == LaxoriRcResult::Success && GetFailure() == LaxoriRcResult::Success;
+            spins++)
+        {
+            if (spins < 64)
+            {
+                YieldProcessor();
+            }
+            else
+            {
+                GCToOSInterface::YieldThread(0);
+            }
+        }
+    }
+    size_t visited = run->visited.load(std::memory_order_acquire);
+    if (result == LaxoriRcResult::Success)
+    {
+        result = run->failure.load(std::memory_order_relaxed);
+    }
+    if (result == LaxoriRcResult::Success && GetFailure() == LaxoriRcResult::Success && visited != run->chunks)
+    {
+        // Every chunk is visited exactly once; a lost chunk would change the evacuation set.
+#ifdef LAXORI_HAS_PHASE_TIMERS
+        m_select_metrics[5].fetch_add(run->chunks - visited, std::memory_order_relaxed);
+#endif // LAXORI_HAS_PHASE_TIMERS
+        result = Fail(LaxoriRcResult::InvariantViolation);
+    }
+    if (result == LaxoriRcResult::Success)
+    {
+        result = GetFailure();
+    }
+    if (result == LaxoriRcResult::Success)
+    {
+#ifdef LAXORI_HAS_PHASE_TIMERS
+        m_select_metrics[2].fetch_add(run->chunks, std::memory_order_relaxed);
+#endif // LAXORI_HAS_PHASE_TIMERS
+        // The chunks are in address order, as the candidates of the serial loop are.
+        size_t total = 0;
+        size_t freeBlocks = 0;
+        {
+#ifdef LAXORI_HAS_PHASE_TIMERS
+            LaxoriPhaseScope gatherTimer(m_pause_timers, LaxoriPauseTimers::SelectGather);
+#endif // LAXORI_HAS_PHASE_TIMERS
+            for (size_t index = 0; index < run->chunks; index++)
+            {
+#if defined(LAXORI_SIDE_METADATA_TEST_PLATFORM) && defined(LAXORI_SELECT_GATHER_REVERSED_CONTROL)
+                // Control: the chunks are merged in descending address order.
+                size_t chunk = run->chunks - 1 - index;
+#else
+                size_t chunk = index;
+#endif // LAXORI_SIDE_METADATA_TEST_PLATFORM && LAXORI_SELECT_GATHER_REVERSED_CONTROL
+                size_t chunkCount = run->counts[chunk];
+                MatureCandidate* source = run->candidates + chunk * SelectionRun::BlocksPerChunk;
+                if (source != run->candidates + total && chunkCount != 0)
+                {
+                    memmove(run->candidates + total, source, chunkCount * sizeof(MatureCandidate));
+                }
+                total += chunkCount;
+                freeBlocks += run->freeBlocks[chunk];
+            }
+        }
+#ifdef LAXORI_HAS_PHASE_TIMERS
+        LaxoriPhaseScope tailTimer(m_pause_timers, LaxoriPauseTimers::SelectTail);
+#endif // LAXORI_HAS_PHASE_TIMERS
+        result = ApplyMatureSelection(run->candidates, total, freeBlocks * ImmixBlockGeometry::BlockBytes);
+    }
+    // A packet that is late may still read the cursor of the run, so the run is freed by FinishSelection, after the wait for
+    // the stage. The caller of a test calls it at once; Suspend calls it at the end of the pause preparation.
+    return finish ? FinishSelection(result) : result;
+}
+
+// Waits until no packet of the selection is queued or running, then frees the run. It runs at the end of Suspend: the stage must
+// be idle before the pause starts its cycle (BeginStwCycle), and the late workers have woken by then. A packet that did not
+// finish in time may still use the run, so the run stays allocated; the engine has failed then.
+LaxoriRcResult LaxoriReferenceCounting::FinishSelection(LaxoriRcResult result)
+{
+    SelectionRun* run = m_select_run.load(std::memory_order_acquire);
+    if (run == nullptr)
+    {
+        return result;
+    }
+    LaxoriRcResult waited = FromScheduler(m_scheduler.WaitForBucketIdle(
+        LaxoriWorkBucketStage::Unconstrained, SelectionRun::SelectTimeoutMilliseconds));
+    if (waited != LaxoriRcResult::Success)
+    {
+        return result == LaxoriRcResult::Success ? waited : result;
+    }
+    m_select_run.store(nullptr, std::memory_order_release);
+    delete[] run->candidates;
+    delete[] run->counts;
+    delete[] run->freeBlocks;
+    delete run;
+    return result;
+}
+
+// Runs the serial and the parallel selection on the same state of the heap and compares the evacuation set, its side
+// metadata and the counters of the selection (LAXORISelectValidate, and the P4 tests). It leaves the state of the parallel
+// selection, which must equal the serial one.
+LaxoriRcResult LaxoriReferenceCounting::SelectMatureValidated()
+{
+    size_t blocks = GetImmixCapacityBytes() / ImmixBlockGeometry::BlockBytes;
+    uint8_t* evacuation = new (std::nothrow) uint8_t[4 * blocks];
+    if (evacuation == nullptr)
+    {
+        return Fail(LaxoriRcResult::OutOfMemory);
+    }
+    uint8_t* before = evacuation;
+    uint8_t* beforeDefrag = evacuation + blocks;
+    uint8_t* serial = evacuation + 2 * blocks;
+    uint8_t* serialDefrag = evacuation + 3 * blocks;
+    auto snapshot = [&](uint8_t* flags, uint8_t* defrag)
+    {
+        for (size_t index = 0; index < blocks; index++)
+        {
+            flags[index] = m_evacuation_sources[index].load(std::memory_order_relaxed);
+            defrag[index] = static_cast<uint8_t>(m_defrag_metadata.Load(
+                GetReservationStart() + index * ImmixBlockGeometry::BlockBytes, SideMetadataMemoryOrder::SequentiallyConsistent));
+        }
+    };
+    snapshot(before, beforeDefrag);
+    uint64_t counters[4];
+    for (size_t index = 0; index < 4; index++)
+    {
+        counters[index] = m_mature_metrics[index].load(std::memory_order_relaxed);
+    }
+    LaxoriRcResult result = SelectMatureSerial();
+    uint64_t serialCounters[4];
+    for (size_t index = 0; index < 4; index++)
+    {
+        serialCounters[index] = m_mature_metrics[index].load(std::memory_order_relaxed) - counters[index];
+    }
+    if (result == LaxoriRcResult::Success)
+    {
+        snapshot(serial, serialDefrag);
+        for (size_t index = 0; index < blocks && result == LaxoriRcResult::Success; index++)
+        {
+            m_evacuation_sources[index].store(before[index], std::memory_order_relaxed);
+            result = FromMetadata(m_metadata.Store(LaxoriSideMetadataKind::BlockDefrag,
+                GetReservationStart() + index * ImmixBlockGeometry::BlockBytes, beforeDefrag[index],
+                SideMetadataMemoryOrder::SequentiallyConsistent));
+        }
+        for (size_t index = 0; index < 4; index++)
+        {
+            m_mature_metrics[index].store(counters[index], std::memory_order_relaxed);
+        }
+    }
+    if (result == LaxoriRcResult::Success)
+    {
+        result = SelectMatureParallel();
+    }
+    if (result == LaxoriRcResult::Success)
+    {
+        // The parallel state goes to `before`, which is free now.
+        snapshot(before, beforeDefrag);
+        uint64_t differences = 0;
+        for (size_t index = 0; index < blocks; index++)
+        {
+            differences += before[index] != serial[index] ? 1 : 0;
+            differences += beforeDefrag[index] != serialDefrag[index] ? 1 : 0;
+        }
+        for (size_t index = 0; index < 4; index++)
+        {
+            differences += m_mature_metrics[index].load(std::memory_order_relaxed) - counters[index] !=
+                serialCounters[index] ? 1 : 0;
+        }
+        if (differences != 0)
+        {
+#ifdef LAXORI_HAS_PHASE_TIMERS
+            m_select_metrics[4].fetch_add(differences, std::memory_order_relaxed);
+#endif // LAXORI_HAS_PHASE_TIMERS
+#ifdef LAXORI_SIDE_METADATA_TEST_PLATFORM
+            fprintf(stderr, "LAXORI selection validation: %llu differences\n", static_cast<unsigned long long>(differences));
+            if (!m_select_report_only)
+            {
+                result = Fail(LaxoriRcResult::InvariantViolation);
+            }
+#else
+            GCToEEInterface::LogErrorToHost("LAXORI selection validation: the parallel evacuation set differs from the serial one.");
+            result = Fail(LaxoriRcResult::InvariantViolation);
+#endif // LAXORI_SIDE_METADATA_TEST_PLATFORM
+        }
+    }
+    delete[] evacuation;
+    return result;
+}
+
+#ifdef LAXORI_SIDE_METADATA_TEST_PLATFORM
+LaxoriRcResult LaxoriReferenceCounting::SelectionEquivalenceForTest(
+    uint64_t seed, LaxoriPauseKind kind, uint32_t occupiedPercent, uint32_t partialChunkPercent, uint32_t pinnedPercent,
+    uint32_t sourcePercent, uint32_t deadLinePercent, size_t headroomBytes, uint64_t* mismatches, uint64_t* selected,
+    uint64_t* eligible)
+{
+    if (mismatches == nullptr || selected == nullptr || eligible == nullptr || m_evacuation_sources == nullptr)
+    {
+        return LaxoriRcResult::InvalidArgument;
+    }
+    uint64_t state = seed * 0x9E3779B97F4A7C15ull + 1;
+    auto next = [&state]()
+    {
+        state += 0x9E3779B97F4A7C15ull;
+        uint64_t value = state;
+        value = (value ^ (value >> 30)) * 0xBF58476D1CE4E5B9ull;
+        value = (value ^ (value >> 27)) * 0x94D049BB133111EBull;
+        return value ^ (value >> 31);
+    };
+    size_t blocks = GetImmixCapacityBytes() / ImmixBlockGeometry::BlockBytes;
+    constexpr size_t BlocksPerChunk = SelectionRun::BlocksPerChunk;
+    uint8_t epoch = m_blocks.GetGlobalPhaseEpoch();
+    uint8_t nurseryEpoch = (epoch & 1) != 0 ? epoch : static_cast<uint8_t>(epoch - 1);
+    constexpr size_t SlotsPerLine = ImmixBlockGeometry::LineBytes / sizeof(uintptr_t);
+    size_t chunkBlocks = 0;
+    uint32_t chunkOccupied = occupiedPercent;
+    for (size_t index = 0; index < blocks; index++)
+    {
+        uintptr_t block = GetReservationStart() + index * ImmixBlockGeometry::BlockBytes;
+        if (chunkBlocks == 0 || (block & (SelectionRun::ChunkBytes - 1)) == 0)
+        {
+            chunkBlocks = BlocksPerChunk;
+            chunkOccupied = next() % 100 < partialChunkPercent ? occupiedPercent / 4 : occupiedPercent;
+        }
+        bool occupied = next() % 100 < chunkOccupied;
+        uint8_t raw = 0;
+        if (occupied)
+        {
+            uint64_t pick = next() % 3;
+            raw = pick == 0 ? UINT8_MAX : (pick == 1 ? UINT8_MAX - 1 : static_cast<uint8_t>(1 + next() % 200));
+        }
+        LaxoriRcResult result = FromMetadata(m_metadata.Store(
+            LaxoriSideMetadataKind::BlockMark, block, raw, SideMetadataMemoryOrder::SequentiallyConsistent));
+        if (result == LaxoriRcResult::Success)
+        {
+            // A free block is a nursery block half of the time: it does not count as free space.
+            uint8_t blockEpoch = !occupied && (next() & 1) != 0 ? nurseryEpoch : 0;
+            result = FromMetadata(m_metadata.Store(
+                LaxoriSideMetadataKind::PhaseEpoch, block, blockEpoch, SideMetadataMemoryOrder::SequentiallyConsistent));
+        }
+        if (result != LaxoriRcResult::Success)
+        {
+            return result;
+        }
+        if (m_block_flags != nullptr)
+        {
+            uint8_t flags = next() % 100 < pinnedPercent ? ImmixAllocationManager::PinnedBlockFlag : 0;
+            m_block_flags[index].store(flags, std::memory_order_relaxed);
+        }
+        bool source = next() % 100 < sourcePercent;
+        m_evacuation_sources[index].store(source ? 1 : 0, std::memory_order_relaxed);
+        result = FromMetadata(m_metadata.Store(LaxoriSideMetadataKind::BlockDefrag, block,
+            source ? UINT8_MAX : 0, SideMetadataMemoryOrder::SequentiallyConsistent));
+        if (result != LaxoriRcResult::Success)
+        {
+            return result;
+        }
+        // The dead lines: each block has its own share of live lines.
+        uint32_t liveShare = static_cast<uint32_t>(next() % 101);
+        for (size_t line = 0; line < ImmixBlockGeometry::LinesPerBlock; line++)
+        {
+            uintptr_t lineStart = block + line * ImmixBlockGeometry::LineBytes;
+            for (size_t slot = 0; slot < SlotsPerLine; slot++)
+            {
+                m_rc_metadata.Store(lineStart + slot * sizeof(uintptr_t), 0, SideMetadataMemoryOrder::Relaxed);
+            }
+            if (occupied && next() % 100 < liveShare * (100 - deadLinePercent) / 100)
+            {
+                m_rc_metadata.Store(lineStart + (next() % SlotsPerLine) * sizeof(uintptr_t), 1,
+                    SideMetadataMemoryOrder::Relaxed);
+            }
+        }
+        chunkBlocks--;
+    }
+    m_pause_kind = kind;
+    m_select_headroom_override = headroomBytes;
+    m_select_report_only = true;
+    uint64_t differencesBefore = m_select_metrics[4].load(std::memory_order_relaxed);
+    uint64_t eligibleBefore = m_mature_metrics[0].load(std::memory_order_relaxed);
+    uint64_t selectedBefore = m_mature_metrics[1].load(std::memory_order_relaxed);
+    LaxoriRcResult result = SelectMatureValidated();
+    m_select_headroom_override = SIZE_MAX;
+    m_select_report_only = false;
+    *mismatches = m_select_metrics[4].load(std::memory_order_relaxed) - differencesBefore;
+    *eligible = m_mature_metrics[0].load(std::memory_order_relaxed) - eligibleBefore;
+    *selected = m_mature_metrics[1].load(std::memory_order_relaxed) - selectedBefore;
+    return result;
+}
+#endif // LAXORI_SIDE_METADATA_TEST_PLATFORM
 
 LaxoriRcResult LaxoriReferenceCounting::RetainPinnedMatureBlocks()
 {
@@ -6468,6 +7062,7 @@ void LaxoriReferenceCounting::Execute(LaxoriWorkPacket* packet, size_t worker, v
             timed = engine->m_pause_trace_open.load(std::memory_order_relaxed);
             break;
         case WorkKind::MarkClear: timed = false; break;
+        case WorkKind::SelectMature: timed = false; break;
         case WorkKind::PrepareTrace: group = LaxoriPauseTimers::PrepareTrace; break;
         case WorkKind::WeakClosure: group = LaxoriPauseTimers::WeakClosure; break;
         case WorkKind::EpochClosure: group = LaxoriPauseTimers::EpochClosure; break;
@@ -6646,6 +7241,15 @@ void LaxoriReferenceCounting::Execute(LaxoriWorkPacket* packet, size_t worker, v
         case WorkKind::MarkClear:
             engine->RunMarkClearPacket();
             break;
+        case WorkKind::SelectMature:
+        {
+            SelectionRun* run = engine->m_select_run.load(std::memory_order_acquire);
+            if (run != nullptr)
+            {
+                engine->RunSelectionLoop(run);
+            }
+            break;
+        }
     }
 }
 

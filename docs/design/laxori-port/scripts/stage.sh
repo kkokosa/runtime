@@ -20,6 +20,6 @@ bash hunt3.sh $V/libclrlaxorigc-count-$tag.so 54 $O/hunt-count-L2.txt 0 DOTNET_L
 bash hunt3.sh $V/libclrlaxorigc-bitmap-$tag.so 54 $O/hunt-bitmap-L2.txt 0 DOTNET_LAXORIVerifyPrivate=1
 bash hunt3.sh $V/libclrlaxorigc-count-$tag.so 36 $O/hunt-count-L1.txt 0 DOTNET_LAXORIVerifyPrivate=1 DOTNET_LAXORIEscapedInPlace=0
 bash hunt3.sh $V/libclrlaxorigc-bitmap-$tag.so 36 $O/hunt-bitmap-L1.txt 0 DOTNET_LAXORIVerifyPrivate=1 DOTNET_LAXORIEscapedInPlace=0
-LAXORI_SO_WALK=$V/libclrlaxorigc-count-$tag.so LAXORI_SO_BITMAP=$V/libclrlaxorigc-bitmap-$tag.so flock /tmp/lxr-bench.lock \
-  python3 bench3.py $O/checksums 1 laxori-walk,laxori-bitmap binarytrees,requests,listsuffix,mixedmedium,losarrays,mediumarrays > $O/checksums.txt 2>&1
+LAXORI_SO_WALK=$V/libclrlaxorigc-count-$tag.so LAXORI_SO_BITMAP=$V/libclrlaxorigc-bitmap-$tag.so DRIVER=/root/laxori/drv4/bin/CompareDriver.dll flock /tmp/lxr-bench.lock \
+  python3 bench3.py $O/checksums 1 laxori-walk,laxori-bitmap binarytrees,requests,listsuffix,mixedmedium,losarrays,mediumarrays,losmany > $O/checksums.txt 2>&1
 echo STAGE-DONE > $O/done

@@ -9866,6 +9866,86 @@ namespace
         Check(engine.DetachMutator(mutator) == LaxoriRcResult::Success, "the release stage test allocator detaches");
     }
 
+    // P50 (item 8a). The parallel selection of the evacuation set gives the same set as the serial one. Each case fills a heap of
+    // a few chunks with random block states, then runs both selections on it (SelectMatureValidated, which compares the flags,
+    // the defrag plane and the counters). The cases cover free, nursery, pinned and source blocks, chunks that are
+    // partly full, a Full pause (every candidate is eligible) and a copy budget that ends in the middle of the list.
+    void ValidateParallelSelection(size_t workers, size_t heapBlocks)
+    {
+        uint64_t totalEligible = 0;
+        uint64_t totalSelected = 0;
+        uint64_t budgetLimited = 0;
+        size_t cases = 0;
+        uint64_t threads = 0;
+        uint64_t lost = 0;
+        struct Case
+        {
+            LaxoriPauseKind kind;
+            uint32_t occupied, partial, pinned, source, dead;
+            size_t headroomBlocks;
+        };
+        const Case table[] = {
+            {LaxoriPauseKind::InitialMark, 80, 30, 5, 10, 40, 100000},
+            {LaxoriPauseKind::InitialMark, 95, 70, 0, 0, 60, 100000},
+            {LaxoriPauseKind::InitialMark, 60, 100, 20, 30, 70, 100000},
+            {LaxoriPauseKind::InitialMark, 90, 50, 3, 5, 50, 4},
+            {LaxoriPauseKind::InitialMark, 100, 0, 0, 0, 55, 1},
+            {LaxoriPauseKind::Full, 85, 40, 5, 10, 30, 100000},
+            {LaxoriPauseKind::Full, 96, 80, 10, 50, 45, 25},
+            {LaxoriPauseKind::Full, 30, 10, 2, 0, 50, 100000},
+            {LaxoriPauseKind::InitialMark, 10, 0, 0, 0, 20, 100000},
+            {LaxoriPauseKind::Full, 100, 0, 100, 0, 50, 100000},
+        };
+        for (uint64_t seed = 1; seed <= 3; seed++)
+        {
+            for (const Case& parameters : table)
+            {
+                LaxoriReferenceCounting engine;
+                LaxoriRcConfiguration configuration{
+                    heapBlocks * ImmixBlockGeometry::BlockBytes, 2 * LaxoriLargeObjectSpace::MinimumObjectBytes, 4, 4096,
+                    workers, 8,
+                };
+                configuration.evacuateMature = true;
+                // The checks below call the selection directly: the threshold only decides what a pause does.
+                configuration.selectParallelBlocks = 0;
+                LaxoriPauseRuntimeAdapter adapter{Suspend, Resume, nullptr, false};
+                if (!Check(engine.Initialize(configuration, adapter) == LaxoriRcResult::Success,
+                        "the engine of the selection test initializes"))
+                {
+                    return;
+                }
+                uint64_t mismatches = UINT64_MAX;
+                uint64_t selected = 0;
+                uint64_t eligible = 0;
+                LaxoriRcResult result = engine.SelectionEquivalenceForTest(
+                    seed * 100 + cases, parameters.kind, parameters.occupied, parameters.partial, parameters.pinned,
+                    parameters.source, parameters.dead, parameters.headroomBlocks * ImmixBlockGeometry::BlockBytes,
+                    &mismatches, &selected, &eligible);
+                Check(result == LaxoriRcResult::Success, "both selections of the random heap complete");
+                if (std::getenv("LAXORI_SELECT_TEST_VERBOSE") != nullptr)
+                {
+                    std::printf("case %zu kind %d eligible %llu selected %llu mismatches %llu\n", cases,
+                        static_cast<int>(parameters.kind), static_cast<unsigned long long>(eligible),
+                        static_cast<unsigned long long>(selected), static_cast<unsigned long long>(mismatches));
+                }
+                Check(mismatches == 0, "the parallel selection gives the evacuation set, the defrag plane and the counters of the serial one");
+                Check(engine.GetSelectMetric(1) == 1 && engine.GetSelectMetric(0) == 1,
+                    "the validation runs the serial selection once and the parallel selection once");
+                Check(engine.GetSelectMetric(5) == 0, "the parallel selection visits every chunk");
+                threads += engine.GetSelectMetric(3);
+                lost += engine.GetSelectMetric(5);
+                totalEligible += eligible;
+                totalSelected += selected;
+                budgetLimited += selected < eligible ? 1 : 0;
+                cases++;
+            }
+        }
+        Check(totalEligible > 3 * heapBlocks && totalSelected > heapBlocks, "the random heaps give a real evacuation set");
+        Check(budgetLimited >= 3, "a copy budget that ends in the middle of the candidates occurs in the cases");
+        Check(threads >= cases, "every parallel selection has at least one thread that visits chunks");
+        Check(lost == 0, "no chunk is lost in any case");
+    }
+
     struct StressContext
     {
         std::vector<Object*> exact;
@@ -11099,6 +11179,15 @@ int main(int argc, char** argv)
             Failures == 0 ? "PASS" : "FAIL", Checks - Failures, Checks);
         return Failures == 0 ? 0 : 1;
     }
+    if (argc == 2 && strcmp(argv[1], "--select-parallel") == 0)
+    {
+        ValidateParallelSelection(4, 1100);
+        ValidateParallelSelection(1, 300);
+        ValidateParallelSelection(4, 70);
+        std::printf("%s: %d/%d parallel selection checks\n",
+            Failures == 0 ? "PASS" : "FAIL", Checks - Failures, Checks);
+        return Failures == 0 ? 0 : 1;
+    }
     if (argc == 2 && strcmp(argv[1], "--release-stage") == 0)
     {
         ValidateParallelRelease(4, 2700, 16, 5);
@@ -11149,6 +11238,9 @@ int main(int argc, char** argv)
     ValidateParallelRelease(1, 1100, 8, 2);
     ValidateParallelRelease(4, 3, 4, 1);
     ValidateParallelRelease(4, 1100, 16, 2, 500);
+    ValidateParallelSelection(4, 1100);
+    ValidateParallelSelection(1, 300);
+    ValidateParallelSelection(4, 70);
     ValidateParallelLazySweep();
     ValidateEagerMarkClear(false);
     ValidateEagerMarkClear(true);
