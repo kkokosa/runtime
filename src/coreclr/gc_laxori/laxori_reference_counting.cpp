@@ -646,7 +646,12 @@ struct alignas(64) LaxoriReferenceCounting::CopyLog
 {
     struct Chunk
     {
-        static constexpr size_t Capacity = 1024;
+        // The chunk is allocated with new and freed with delete by every worker, one chunk for each 1000 copied objects. On
+        // Windows the process heap serves only blocks up to 16368 bytes from its scalable low-fragmentation front end. A larger
+        // block goes to the back end, which takes a global lock and walks its free lists: with 13 workers and tens of
+        // thousands of chunks in one pause the delete loop of RetireSourceChunks took 38 s. 1020 entries keep the chunk
+        // inside the front end. The assert keeps it so.
+        static constexpr size_t Capacity = 1020;
         struct Entry
         {
             uintptr_t start;
@@ -657,6 +662,7 @@ struct alignas(64) LaxoriReferenceCounting::CopyLog
         size_t count = 0;
         Chunk* next = nullptr;
     };
+    static_assert(sizeof(Chunk) <= 16368, "a copy log chunk must stay in the low-fragmentation heap on Windows");
 
     Chunk* head = nullptr;
     std::atomic_flag lock = ATOMIC_FLAG_INIT;
