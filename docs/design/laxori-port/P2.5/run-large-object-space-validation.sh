@@ -12,12 +12,15 @@ laxori_root="$repository_root/src/coreclr/gc_laxori"
 native_root="$repository_root/src/native"
 
 mkdir -p "$output_root"
+extra_flags=()
+if [[ -n "${LAXORI_LOS_EXTRA_FLAGS:-}" ]]; then read -r -a extra_flags <<< "$LAXORI_LOS_EXTRA_FLAGS"; fi
 command=(
   g++ -std=c++17 -O2 -Wall -Wextra -Werror
   -Wno-invalid-offsetof -Wno-strict-aliasing -Wno-unused-parameter -pthread
   -DBUILD_AS_STANDALONE -DLAXORI_SIDE_METADATA_TEST_PLATFORM $([[ -n "${LAXORI_OBJECT_START_BITMAP:-}" ]] || echo -DLAXORI_OBJECT_START_WALK)
   -DTARGET_UNIX -DHOST_UNIX -DTARGET_LINUX -DHOST_LINUX
   -DTARGET_AMD64 -DHOST_AMD64 -DTARGET_64BIT -DHOST_64BIT
+  "${extra_flags[@]}"
   -I"$laxori_root"
   -I"$gc_root" -I"$gc_root/env" -I"$native_root" -I"$native_root/inc"
   "$script_root/large-object-space-validation.cpp"

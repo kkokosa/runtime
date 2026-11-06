@@ -405,8 +405,53 @@ internal static class GcBench
         return cs;
     }
 
+    private static int LargeSize() => (int)(64 * 1024 * Math.Pow(16.0, Rnd(1000) / 1000.0));
+
+    // Many live large objects (the losmany workload of LXR P44): "entries" arrays of 64 KiB to 1 MiB (log-uniform) stay live. Each operation
+    // replaces one of them (the old one dies) and allocates a short list of small objects, so the pauses come at a steady rate.
+    private static long LosMany(int entries, long count, bool calibrate)
+    {
+        byte[]?[] table = new byte[entries][];
+        for (int i = 0; i < entries; i++)
+        {
+            table[i] = new byte[LargeSize()];
+            table[i]![0] = (byte)i;
+        }
+        if (calibrate)
+        {
+            s_keep = table;
+            return 0;
+        }
+        long cs = 0;
+        for (long r = 0; r < count; r++)
+        {
+            Item? head = null;
+            for (int i = 0; i < 24; i++)
+            {
+                Item it = new() { V = i, Data = new byte[64] };
+                it.Data[0] = (byte)i;
+                it.Next = head;
+                head = it;
+            }
+            for (Item? it = head; it is not null; it = it.Next)
+            {
+                cs += it.V + it.Data![0];
+            }
+            int slot = Rnd(entries);
+            byte[] old = table[slot]!;
+            cs += old.Length + old[0];
+            byte[] a = new byte[LargeSize()];
+            a[0] = (byte)r;
+            a[a.Length - 1] = (byte)(r >> 8);
+            table[slot] = a;
+            cs += table[Rnd(entries)]!.Length;
+        }
+        return cs;
+    }
+
     private static long Run(string workload, int size, long ops, long[]? latency, bool calibrate) => workload switch
     {
+        "losmany" => LosMany(size, ops, calibrate),
         "losarrays" => LosArrays(size, ops, calibrate),
         "binarytrees" => BinaryTrees(size, calibrate),
         "requests" => Requests(size, ops, latency, calibrate),

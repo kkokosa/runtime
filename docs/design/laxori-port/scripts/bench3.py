@@ -22,11 +22,21 @@ SO = {
     "lxr-walk": os.environ.get("LXR_SO_WALK", "/root/p31/so/libclrlxrgc-walk.so"),
     "lxr-bitmap": os.environ.get("LXR_SO_BITMAP", "/root/p31/so/libclrlxrgc-base.so"),
 }
-WORK = {"binarytrees": (18, 1), "requests": (8192, 200000), "listsuffix": (8192, 600000),
+WORK = {"binarytrees": (18, 1), "requests": (8192, 200000), "listsuffix": (8192, 600000), "losmany": (2000, 60000),
         "mediumarrays": (20000, 300000), "mixedmedium": (12000, 200000), "losarrays": (1500, 100000)}
 SUMS = {"requests": 27134172608, "binarytrees": 68332294, "listsuffix": 159636632672, "mixedmedium": 40586599707,
-        "losarrays": 13936826922, "mediumarrays": 7032863679}
+        "losarrays": 13936826922, "mediumarrays": 7032863679, "losmany": 42674603309}
 METRICS = [("wall_ms", "wall ms"), ("cpu_ms", "cpu ms"), ("pause_ms", "pause ms"), ("peak_rss_mb", "rss MB")]
+
+
+def so_path(name):
+    """A name like laxori-count-b or laxori-bitmap-c is /root/laxori/v/libclrlaxorigc-<variant>-<tag>.so (a tagged build copy)."""
+    if name in SO:
+        return SO[name]
+    parts = name.split("-")
+    if len(parts) == 3 and parts[0] == "laxori":
+        return f"/root/laxori/v/libclrlaxorigc-{parts[1]}-{parts[2]}.so"
+    raise SystemExit("bad config " + name)
 
 
 def config(name, workload):
@@ -37,9 +47,11 @@ def config(name, workload):
     if name == "satori":
         return {"DOTNET_gcServer": "0", "DOTNET_GCPath": FRAME + "/libsatorigc.so"}
     prefix = "LAXORI" if name.startswith("laxori") else "LXR"
-    e = {"DOTNET_gcServer": "1", "DOTNET_GCPath": SO[name]}
+    e = {"DOTNET_gcServer": "1", "DOTNET_GCPath": so_path(name)}
     if workload == "mediumarrays":
         e.update({f"DOTNET_{prefix}ImmixInitialMB": "200", f"DOTNET_{prefix}ImmixReserveMB": "400"})
+    if workload == "losmany":
+        e.update({f"DOTNET_{prefix}LOSInitialMB": "1000", f"DOTNET_{prefix}LOSReserveMB": "1600", f"DOTNET_{prefix}NativePlaneLimitMB": "16000"})
     return e
 
 

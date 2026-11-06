@@ -104,7 +104,7 @@ internal static class CompareDriver
         Stopwatch warmup = Stopwatch.StartNew();
         do
         {
-            Invoke(workload == "binarytrees" ? Math.Min(size, 14) : Math.Min(size, 4096), 20000);
+            Invoke(workload == "binarytrees" ? Math.Min(size, 14) : Math.Min(size, 4096), workload == "losmany" ? 300 : 20000);
         } while (warmup.Elapsed.TotalSeconds < 3);
         warmup.Stop();
 
