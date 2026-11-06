@@ -54,7 +54,11 @@ def main():
             spec = os.path.join(rundir, "spec.json")
             json.dump({"config": c, "cap": cap, "live": live, "seconds": secs, "rundir": rundir}, open(spec, "w"))
             inner = [PYTHON, os.path.abspath(__file__), "--one", spec]
-            subprocess.run(["wsl.exe", "-d", "Ubuntu-22.04", "--exec", "flock", LOCK, "/mnt/c/Windows/System32/cmd.exe", "/c"] + inner)
+            if os.environ.get("NOLOCK") == "1":
+                # WSL2 is shut down (a quiet window for the big heap): no other timed work can run on the VM.
+                subprocess.run(inner)
+            else:
+                subprocess.run(["wsl.exe", "-d", "Ubuntu-22.04", "--exec", "flock", LOCK, "/mnt/c/Windows/System32/cmd.exe", "/c"] + inner)
             pc, rj = os.path.join(rundir, "pauses.csv"), os.path.join(rundir, "result.json")
             if not (os.path.exists(pc) and os.path.exists(rj)):
                 print(rep, c, "FAILED", flush=True)

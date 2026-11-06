@@ -24,7 +24,8 @@ def load_windows(path):
 
 def load_linux(root):
     rows = {}
-    for rep_dir in sorted(glob.glob(os.path.join(root, "rep*")), key=lambda p: int(os.path.basename(p)[3:])):
+    dirs = [p for p in glob.glob(os.path.join(root, "rep*")) if os.path.isdir(p)]
+    for rep_dir in sorted(dirs, key=lambda p: int(os.path.basename(p)[3:])):
         if not os.path.isdir(rep_dir):
             continue
         rep = int(os.path.basename(rep_dir)[3:])
