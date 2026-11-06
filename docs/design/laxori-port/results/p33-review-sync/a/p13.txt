@@ -1,0 +1,5 @@
+count-L2: 0/20 failed
+bitmap-L2: 0/20 failed
+count-L1: 0/20 failed
+bitmap-L1: 0/20 failed
+done

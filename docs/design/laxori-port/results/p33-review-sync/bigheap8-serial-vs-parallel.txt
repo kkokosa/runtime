@@ -1,0 +1,12 @@
+0 c+serial {'n': 71, 'longn': 71, 'longmed': 236.09, 'longmax': 276.141, 'med': 236.09}
+0 c {'n': 73, 'longn': 73, 'longmed': 229.0, 'longmax': 284.453, 'med': 229.0}
+1 c+serial {'n': 68, 'longn': 68, 'longmed': 242.1925, 'longmax': 310.729, 'med': 242.1925}
+1 c {'n': 73, 'longn': 73, 'longmed': 230.951, 'longmax': 281.097, 'med': 230.951}
+2 c+serial {'n': 70, 'longn': 70, 'longmed': 239.9455, 'longmax': 321.641, 'med': 239.9455}
+2 c {'n': 74, 'longn': 74, 'longmed': 228.3585, 'longmax': 282.304, 'med': 228.3585}
+3 c+serial {'n': 70, 'longn': 70, 'longmed': 240.0375, 'longmax': 293.063, 'med': 240.0375}
+3 c {'n': 71, 'longn': 71, 'longmed': 231.133, 'longmax': 268.876, 'med': 231.133}
+
+medians over runs: pauses / long pauses (>= 30 ms) / median of long ms / max ms / median of all ms
+c+serial n=4     70    70    240.0    301.9 239.99
+c      n=4     73    73    230.0    281.7 229.98

@@ -1,0 +1,14 @@
+0 i1 {'n': 74, 'longn': 74, 'longmed': 238.8865, 'longmax': 274.82, 'med': 238.8865}
+0 c {'n': 72, 'longn': 72, 'longmed': 241.166, 'longmax': 283.062, 'med': 241.166}
+1 i1 {'n': 73, 'longn': 73, 'longmed': 238.308, 'longmax': 284.64, 'med': 238.308}
+1 c {'n': 73, 'longn': 73, 'longmed': 228.206, 'longmax': 364.502, 'med': 228.206}
+2 i1 {'n': 73, 'longn': 73, 'longmed': 235.049, 'longmax': 307.229, 'med': 235.049}
+2 c {'n': 73, 'longn': 73, 'longmed': 237.308, 'longmax': 276.638, 'med': 237.308}
+3 i1 {'n': 72, 'longn': 72, 'longmed': 229.3195, 'longmax': 281.931, 'med': 229.3195}
+3 c {'n': 75, 'longn': 75, 'longmed': 229.968, 'longmax': 269.584, 'med': 229.968}
+4 i1 {'n': 73, 'longn': 73, 'longmed': 232.086, 'longmax': 282.67, 'med': 232.086}
+4 c {'n': 62, 'longn': 62, 'longmed': 246.6945, 'longmax': 374.613, 'med': 246.6945}
+
+medians over runs: pauses / long pauses (>= 30 ms) / median of long ms / max ms / median of all ms
+i1     n=5     73    73    235.0    282.7 235.05
+c      n=5     73    73    237.3    283.1 237.31

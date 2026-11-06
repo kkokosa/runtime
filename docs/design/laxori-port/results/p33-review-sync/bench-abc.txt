@@ -1,0 +1,514 @@
+0 binarytrees laxori-count-i1 1119 68332294 
+0 binarytrees laxori-count-a 1097 68332294 
+0 binarytrees laxori-count-b 1157 68332294 
+0 binarytrees laxori-count-c 1115 68332294 
+0 requests laxori-count-i1 360 27134172608 
+0 requests laxori-count-a 391 27134172608 
+0 requests laxori-count-b 383 27134172608 
+0 requests laxori-count-c 392 27134172608 
+0 listsuffix laxori-count-i1 1833 159636632672 
+0 listsuffix laxori-count-a 1832 159636632672 
+0 listsuffix laxori-count-b 1746 159636632672 
+0 listsuffix laxori-count-c 1899 159636632672 
+0 mixedmedium laxori-count-i1 1661 40586599707 
+0 mixedmedium laxori-count-a 1717 40586599707 
+0 mixedmedium laxori-count-b 1675 40586599707 
+0 mixedmedium laxori-count-c 1885 40586599707 
+0 losarrays laxori-count-i1 1264 13936826922 
+0 losarrays laxori-count-a 1363 13936826922 
+0 losarrays laxori-count-b 1229 13936826922 
+0 losarrays laxori-count-c 1328 13936826922 
+0 mediumarrays laxori-count-i1 1229 7032863679 
+0 mediumarrays laxori-count-a 1237 7032863679 
+0 mediumarrays laxori-count-b 1156 7032863679 
+0 mediumarrays laxori-count-c 1173 7032863679 
+0 losmany laxori-count-i1 1346 42674603309 
+0 losmany laxori-count-a 1323 42674603309 
+0 losmany laxori-count-b 1209 42674603309 
+0 losmany laxori-count-c 1283 42674603309 
+1 binarytrees laxori-count-i1 1302 68332294 
+1 binarytrees laxori-count-a 1139 68332294 
+1 binarytrees laxori-count-b 1233 68332294 
+1 binarytrees laxori-count-c 1124 68332294 
+1 requests laxori-count-i1 363 27134172608 
+1 requests laxori-count-a 393 27134172608 
+1 requests laxori-count-b 359 27134172608 
+1 requests laxori-count-c 415 27134172608 
+1 listsuffix laxori-count-i1 1730 159636632672 
+1 listsuffix laxori-count-a 1694 159636632672 
+1 listsuffix laxori-count-b 1714 159636632672 
+1 listsuffix laxori-count-c 1624 159636632672 
+1 mixedmedium laxori-count-i1 1570 40586599707 
+1 mixedmedium laxori-count-a 1597 40586599707 
+1 mixedmedium laxori-count-b 1601 40586599707 
+1 mixedmedium laxori-count-c 1647 40586599707 
+1 losarrays laxori-count-i1 1391 13936826922 
+1 losarrays laxori-count-a 1257 13936826922 
+1 losarrays laxori-count-b 1307 13936826922 
+1 losarrays laxori-count-c 1244 13936826922 
+1 mediumarrays laxori-count-i1 1123 7032863679 
+1 mediumarrays laxori-count-a 1130 7032863679 
+1 mediumarrays laxori-count-b 1133 7032863679 
+1 mediumarrays laxori-count-c 1137 7032863679 
+1 losmany laxori-count-i1 1189 42674603309 
+1 losmany laxori-count-a 1255 42674603309 
+1 losmany laxori-count-b 1126 42674603309 
+1 losmany laxori-count-c 1165 42674603309 
+2 binarytrees laxori-count-i1 1081 68332294 
+2 binarytrees laxori-count-a 1137 68332294 
+2 binarytrees laxori-count-b 1118 68332294 
+2 binarytrees laxori-count-c 1110 68332294 
+2 requests laxori-count-i1 328 27134172608 
+2 requests laxori-count-a 368 27134172608 
+2 requests laxori-count-b 368 27134172608 
+2 requests laxori-count-c 333 27134172608 
+2 listsuffix laxori-count-i1 1727 159636632672 
+2 listsuffix laxori-count-a 1653 159636632672 
+2 listsuffix laxori-count-b 1684 159636632672 
+2 listsuffix laxori-count-c 1705 159636632672 
+2 mixedmedium laxori-count-i1 1557 40586599707 
+2 mixedmedium laxori-count-a 1582 40586599707 
+2 mixedmedium laxori-count-b 1539 40586599707 
+2 mixedmedium laxori-count-c 1562 40586599707 
+2 losarrays laxori-count-i1 1260 13936826922 
+2 losarrays laxori-count-a 1348 13936826922 
+2 losarrays laxori-count-b 1224 13936826922 
+2 losarrays laxori-count-c 1219 13936826922 
+2 mediumarrays laxori-count-i1 1121 7032863679 
+2 mediumarrays laxori-count-a 1117 7032863679 
+2 mediumarrays laxori-count-b 1083 7032863679 
+2 mediumarrays laxori-count-c 1151 7032863679 
+2 losmany laxori-count-i1 1221 42674603309 
+2 losmany laxori-count-a 1199 42674603309 
+2 losmany laxori-count-b 1247 42674603309 
+2 losmany laxori-count-c 1094 42674603309 
+3 binarytrees laxori-count-i1 1080 68332294 
+3 binarytrees laxori-count-a 1053 68332294 
+3 binarytrees laxori-count-b 1127 68332294 
+3 binarytrees laxori-count-c 1079 68332294 
+3 requests laxori-count-i1 425 27134172608 
+3 requests laxori-count-a 344 27134172608 
+3 requests laxori-count-b 366 27134172608 
+3 requests laxori-count-c 342 27134172608 
+3 listsuffix laxori-count-i1 1821 159636632672 
+3 listsuffix laxori-count-a 1679 159636632672 
+3 listsuffix laxori-count-b 1738 159636632672 
+3 listsuffix laxori-count-c 1807 159636632672 
+3 mixedmedium laxori-count-i1 1861 40586599707 
+3 mixedmedium laxori-count-a 1641 40586599707 
+3 mixedmedium laxori-count-b 1735 40586599707 
+3 mixedmedium laxori-count-c 1666 40586599707 
+3 losarrays laxori-count-i1 1505 13936826922 
+3 losarrays laxori-count-a 1384 13936826922 
+3 losarrays laxori-count-b 1303 13936826922 
+3 losarrays laxori-count-c 1257 13936826922 
+3 mediumarrays laxori-count-i1 1136 7032863679 
+3 mediumarrays laxori-count-a 1155 7032863679 
+3 mediumarrays laxori-count-b 1124 7032863679 
+3 mediumarrays laxori-count-c 1078 7032863679 
+3 losmany laxori-count-i1 1226 42674603309 
+3 losmany laxori-count-a 1289 42674603309 
+3 losmany laxori-count-b 1196 42674603309 
+3 losmany laxori-count-c 1197 42674603309 
+4 binarytrees laxori-count-i1 1109 68332294 
+4 binarytrees laxori-count-a 1079 68332294 
+4 binarytrees laxori-count-b 1122 68332294 
+4 binarytrees laxori-count-c 1143 68332294 
+4 requests laxori-count-i1 362 27134172608 
+4 requests laxori-count-a 368 27134172608 
+4 requests laxori-count-b 384 27134172608 
+4 requests laxori-count-c 360 27134172608 
+4 listsuffix laxori-count-i1 1747 159636632672 
+4 listsuffix laxori-count-a 1699 159636632672 
+4 listsuffix laxori-count-b 1760 159636632672 
+4 listsuffix laxori-count-c 1804 159636632672 
+4 mixedmedium laxori-count-i1 1694 40586599707 
+4 mixedmedium laxori-count-a 1702 40586599707 
+4 mixedmedium laxori-count-b 1667 40586599707 
+4 mixedmedium laxori-count-c 1690 40586599707 
+4 losarrays laxori-count-i1 1319 13936826922 
+4 losarrays laxori-count-a 1324 13936826922 
+4 losarrays laxori-count-b 1315 13936826922 
+4 losarrays laxori-count-c 1302 13936826922 
+4 mediumarrays laxori-count-i1 1175 7032863679 
+4 mediumarrays laxori-count-a 1165 7032863679 
+4 mediumarrays laxori-count-b 1136 7032863679 
+4 mediumarrays laxori-count-c 1163 7032863679 
+4 losmany laxori-count-i1 1354 42674603309 
+4 losmany laxori-count-a 1324 42674603309 
+4 losmany laxori-count-b 1282 42674603309 
+4 losmany laxori-count-c 1334 42674603309 
+5 binarytrees laxori-count-i1 1150 68332294 
+5 binarytrees laxori-count-a 1203 68332294 
+5 binarytrees laxori-count-b 1042 68332294 
+5 binarytrees laxori-count-c 1121 68332294 
+5 requests laxori-count-i1 365 27134172608 
+5 requests laxori-count-a 362 27134172608 
+5 requests laxori-count-b 374 27134172608 
+5 requests laxori-count-c 343 27134172608 
+5 listsuffix laxori-count-i1 1713 159636632672 
+5 listsuffix laxori-count-a 1622 159636632672 
+5 listsuffix laxori-count-b 1661 159636632672 
+5 listsuffix laxori-count-c 1785 159636632672 
+5 mixedmedium laxori-count-i1 1553 40586599707 
+5 mixedmedium laxori-count-a 1542 40586599707 
+5 mixedmedium laxori-count-b 1630 40586599707 
+5 mixedmedium laxori-count-c 1669 40586599707 
+5 losarrays laxori-count-i1 1216 13936826922 
+5 losarrays laxori-count-a 1261 13936826922 
+5 losarrays laxori-count-b 1251 13936826922 
+5 losarrays laxori-count-c 1237 13936826922 
+5 mediumarrays laxori-count-i1 1112 7032863679 
+5 mediumarrays laxori-count-a 1110 7032863679 
+5 mediumarrays laxori-count-b 1118 7032863679 
+5 mediumarrays laxori-count-c 1063 7032863679 
+5 losmany laxori-count-i1 1216 42674603309 
+5 losmany laxori-count-a 1168 42674603309 
+5 losmany laxori-count-b 1132 42674603309 
+5 losmany laxori-count-c 1213 42674603309 
+6 binarytrees laxori-count-i1 1122 68332294 
+6 binarytrees laxori-count-a 1126 68332294 
+6 binarytrees laxori-count-b 1130 68332294 
+6 binarytrees laxori-count-c 1113 68332294 
+6 requests laxori-count-i1 357 27134172608 
+6 requests laxori-count-a 365 27134172608 
+6 requests laxori-count-b 349 27134172608 
+6 requests laxori-count-c 336 27134172608 
+6 listsuffix laxori-count-i1 1774 159636632672 
+6 listsuffix laxori-count-a 1638 159636632672 
+6 listsuffix laxori-count-b 1676 159636632672 
+6 listsuffix laxori-count-c 1620 159636632672 
+6 mixedmedium laxori-count-i1 1600 40586599707 
+6 mixedmedium laxori-count-a 1609 40586599707 
+6 mixedmedium laxori-count-b 1596 40586599707 
+6 mixedmedium laxori-count-c 1598 40586599707 
+6 losarrays laxori-count-i1 1229 13936826922 
+6 losarrays laxori-count-a 1318 13936826922 
+6 losarrays laxori-count-b 1225 13936826922 
+6 losarrays laxori-count-c 1288 13936826922 
+6 mediumarrays laxori-count-i1 1149 7032863679 
+6 mediumarrays laxori-count-a 1123 7032863679 
+6 mediumarrays laxori-count-b 1130 7032863679 
+6 mediumarrays laxori-count-c 1102 7032863679 
+6 losmany laxori-count-i1 1285 42674603309 
+6 losmany laxori-count-a 1265 42674603309 
+6 losmany laxori-count-b 1251 42674603309 
+6 losmany laxori-count-c 1244 42674603309 
+7 binarytrees laxori-count-i1 1094 68332294 
+7 binarytrees laxori-count-a 1179 68332294 
+7 binarytrees laxori-count-b 1179 68332294 
+7 binarytrees laxori-count-c 1114 68332294 
+7 requests laxori-count-i1 379 27134172608 
+7 requests laxori-count-a 410 27134172608 
+7 requests laxori-count-b 336 27134172608 
+7 requests laxori-count-c 377 27134172608 
+7 listsuffix laxori-count-i1 1749 159636632672 
+7 listsuffix laxori-count-a 1713 159636632672 
+7 listsuffix laxori-count-b 1732 159636632672 
+7 listsuffix laxori-count-c 1776 159636632672 
+7 mixedmedium laxori-count-i1 1653 40586599707 
+7 mixedmedium laxori-count-a 1774 40586599707 
+7 mixedmedium laxori-count-b 1757 40586599707 
+7 mixedmedium laxori-count-c 1695 40586599707 
+7 losarrays laxori-count-i1 1357 13936826922 
+7 losarrays laxori-count-a 1324 13936826922 
+7 losarrays laxori-count-b 1314 13936826922 
+7 losarrays laxori-count-c 1222 13936826922 
+7 mediumarrays laxori-count-i1 1102 7032863679 
+7 mediumarrays laxori-count-a 1114 7032863679 
+7 mediumarrays laxori-count-b 1074 7032863679 
+7 mediumarrays laxori-count-c 1067 7032863679 
+7 losmany laxori-count-i1 1249 42674603309 
+7 losmany laxori-count-a 1205 42674603309 
+7 losmany laxori-count-b 1515 42674603309 
+7 losmany laxori-count-c 1239 42674603309 
+8 binarytrees laxori-count-i1 1249 68332294 
+8 binarytrees laxori-count-a 1077 68332294 
+8 binarytrees laxori-count-b 1160 68332294 
+8 binarytrees laxori-count-c 1107 68332294 
+8 requests laxori-count-i1 423 27134172608 
+8 requests laxori-count-a 375 27134172608 
+8 requests laxori-count-b 357 27134172608 
+8 requests laxori-count-c 375 27134172608 
+8 listsuffix laxori-count-i1 1763 159636632672 
+8 listsuffix laxori-count-a 1820 159636632672 
+8 listsuffix laxori-count-b 1782 159636632672 
+8 listsuffix laxori-count-c 1735 159636632672 
+8 mixedmedium laxori-count-i1 1753 40586599707 
+8 mixedmedium laxori-count-a 1644 40586599707 
+8 mixedmedium laxori-count-b 1655 40586599707 
+8 mixedmedium laxori-count-c 1624 40586599707 
+8 losarrays laxori-count-i1 1239 13936826922 
+8 losarrays laxori-count-a 1252 13936826922 
+8 losarrays laxori-count-b 1329 13936826922 
+8 losarrays laxori-count-c 1233 13936826922 
+8 mediumarrays laxori-count-i1 1115 7032863679 
+8 mediumarrays laxori-count-a 1213 7032863679 
+8 mediumarrays laxori-count-b 1122 7032863679 
+8 mediumarrays laxori-count-c 1072 7032863679 
+8 losmany laxori-count-i1 1212 42674603309 
+8 losmany laxori-count-a 1359 42674603309 
+8 losmany laxori-count-b 1211 42674603309 
+8 losmany laxori-count-c 1193 42674603309 
+9 binarytrees laxori-count-i1 1130 68332294 
+9 binarytrees laxori-count-a 1125 68332294 
+9 binarytrees laxori-count-b 1134 68332294 
+9 binarytrees laxori-count-c 1106 68332294 
+9 requests laxori-count-i1 328 27134172608 
+9 requests laxori-count-a 367 27134172608 
+9 requests laxori-count-b 358 27134172608 
+9 requests laxori-count-c 354 27134172608 
+9 listsuffix laxori-count-i1 1806 159636632672 
+9 listsuffix laxori-count-a 1633 159636632672 
+9 listsuffix laxori-count-b 1682 159636632672 
+9 listsuffix laxori-count-c 1760 159636632672 
+9 mixedmedium laxori-count-i1 1619 40586599707 
+9 mixedmedium laxori-count-a 1937 40586599707 
+9 mixedmedium laxori-count-b 1671 40586599707 
+9 mixedmedium laxori-count-c 1619 40586599707 
+9 losarrays laxori-count-i1 1232 13936826922 
+9 losarrays laxori-count-a 1206 13936826922 
+9 losarrays laxori-count-b 1297 13936826922 
+9 losarrays laxori-count-c 1229 13936826922 
+9 mediumarrays laxori-count-i1 1179 7032863679 
+9 mediumarrays laxori-count-a 1163 7032863679 
+9 mediumarrays laxori-count-b 1084 7032863679 
+9 mediumarrays laxori-count-c 1050 7032863679 
+9 losmany laxori-count-i1 1306 42674603309 
+9 losmany laxori-count-a 1257 42674603309 
+9 losmany laxori-count-b 1154 42674603309 
+9 losmany laxori-count-c 1163 42674603309 
+10 binarytrees laxori-count-i1 1147 68332294 
+10 binarytrees laxori-count-a 1178 68332294 
+10 binarytrees laxori-count-b 1159 68332294 
+10 binarytrees laxori-count-c 1105 68332294 
+10 requests laxori-count-i1 371 27134172608 
+10 requests laxori-count-a 339 27134172608 
+10 requests laxori-count-b 414 27134172608 
+10 requests laxori-count-c 378 27134172608 
+10 listsuffix laxori-count-i1 1659 159636632672 
+10 listsuffix laxori-count-a 1809 159636632672 
+10 listsuffix laxori-count-b 1797 159636632672 
+10 listsuffix laxori-count-c 1833 159636632672 
+10 mixedmedium laxori-count-i1 1699 40586599707 
+10 mixedmedium laxori-count-a 1718 40586599707 
+10 mixedmedium laxori-count-b 1648 40586599707 
+10 mixedmedium laxori-count-c 1717 40586599707 
+10 losarrays laxori-count-i1 1289 13936826922 
+10 losarrays laxori-count-a 1342 13936826922 
+10 losarrays laxori-count-b 1268 13936826922 
+10 losarrays laxori-count-c 1284 13936826922 
+10 mediumarrays laxori-count-i1 1114 7032863679 
+10 mediumarrays laxori-count-a 1126 7032863679 
+10 mediumarrays laxori-count-b 1159 7032863679 
+10 mediumarrays laxori-count-c 1104 7032863679 
+10 losmany laxori-count-i1 1189 42674603309 
+10 losmany laxori-count-a 1312 42674603309 
+10 losmany laxori-count-b 1234 42674603309 
+10 losmany laxori-count-c 1222 42674603309 
+11 binarytrees laxori-count-i1 1059 68332294 
+11 binarytrees laxori-count-a 1087 68332294 
+11 binarytrees laxori-count-b 1159 68332294 
+11 binarytrees laxori-count-c 1190 68332294 
+11 requests laxori-count-i1 395 27134172608 
+11 requests laxori-count-a 353 27134172608 
+11 requests laxori-count-b 388 27134172608 
+11 requests laxori-count-c 398 27134172608 
+11 listsuffix laxori-count-i1 1756 159636632672 
+11 listsuffix laxori-count-a 1660 159636632672 
+11 listsuffix laxori-count-b 1676 159636632672 
+11 listsuffix laxori-count-c 1819 159636632672 
+11 mixedmedium laxori-count-i1 1785 40586599707 
+11 mixedmedium laxori-count-a 1607 40586599707 
+11 mixedmedium laxori-count-b 1664 40586599707 
+11 mixedmedium laxori-count-c 1631 40586599707 
+11 losarrays laxori-count-i1 1337 13936826922 
+11 losarrays laxori-count-a 1321 13936826922 
+11 losarrays laxori-count-b 1307 13936826922 
+11 losarrays laxori-count-c 1234 13936826922 
+11 mediumarrays laxori-count-i1 1154 7032863679 
+11 mediumarrays laxori-count-a 1148 7032863679 
+11 mediumarrays laxori-count-b 1173 7032863679 
+11 mediumarrays laxori-count-c 1204 7032863679 
+11 losmany laxori-count-i1 1297 42674603309 
+11 losmany laxori-count-a 1268 42674603309 
+11 losmany laxori-count-b 1159 42674603309 
+11 losmany laxori-count-c 1211 42674603309 
+12 binarytrees laxori-count-i1 1128 68332294 
+12 binarytrees laxori-count-a 1101 68332294 
+12 binarytrees laxori-count-b 1144 68332294 
+12 binarytrees laxori-count-c 1101 68332294 
+12 requests laxori-count-i1 351 27134172608 
+12 requests laxori-count-a 345 27134172608 
+12 requests laxori-count-b 348 27134172608 
+12 requests laxori-count-c 344 27134172608 
+12 listsuffix laxori-count-i1 1661 159636632672 
+12 listsuffix laxori-count-a 1649 159636632672 
+12 listsuffix laxori-count-b 1716 159636632672 
+12 listsuffix laxori-count-c 1744 159636632672 
+12 mixedmedium laxori-count-i1 1579 40586599707 
+12 mixedmedium laxori-count-a 1576 40586599707 
+12 mixedmedium laxori-count-b 1513 40586599707 
+12 mixedmedium laxori-count-c 1515 40586599707 
+12 losarrays laxori-count-i1 1250 13936826922 
+12 losarrays laxori-count-a 1294 13936826922 
+12 losarrays laxori-count-b 1219 13936826922 
+12 losarrays laxori-count-c 1233 13936826922 
+12 mediumarrays laxori-count-i1 1153 7032863679 
+12 mediumarrays laxori-count-a 1117 7032863679 
+12 mediumarrays laxori-count-b 1130 7032863679 
+12 mediumarrays laxori-count-c 1177 7032863679 
+12 losmany laxori-count-i1 1303 42674603309 
+12 losmany laxori-count-a 1237 42674603309 
+12 losmany laxori-count-b 1147 42674603309 
+12 losmany laxori-count-c 1150 42674603309 
+13 binarytrees laxori-count-i1 1124 68332294 
+13 binarytrees laxori-count-a 1077 68332294 
+13 binarytrees laxori-count-b 1145 68332294 
+13 binarytrees laxori-count-c 1129 68332294 
+13 requests laxori-count-i1 342 27134172608 
+13 requests laxori-count-a 344 27134172608 
+13 requests laxori-count-b 399 27134172608 
+13 requests laxori-count-c 337 27134172608 
+13 listsuffix laxori-count-i1 1657 159636632672 
+13 listsuffix laxori-count-a 1680 159636632672 
+13 listsuffix laxori-count-b 1741 159636632672 
+13 listsuffix laxori-count-c 1750 159636632672 
+13 mixedmedium laxori-count-i1 1652 40586599707 
+13 mixedmedium laxori-count-a 1552 40586599707 
+13 mixedmedium laxori-count-b 1546 40586599707 
+13 mixedmedium laxori-count-c 1590 40586599707 
+13 losarrays laxori-count-i1 1249 13936826922 
+13 losarrays laxori-count-a 1226 13936826922 
+13 losarrays laxori-count-b 1221 13936826922 
+13 losarrays laxori-count-c 1250 13936826922 
+13 mediumarrays laxori-count-i1 1080 7032863679 
+13 mediumarrays laxori-count-a 1120 7032863679 
+13 mediumarrays laxori-count-b 1138 7032863679 
+13 mediumarrays laxori-count-c 1163 7032863679 
+13 losmany laxori-count-i1 1175 42674603309 
+13 losmany laxori-count-a 1263 42674603309 
+13 losmany laxori-count-b 1175 42674603309 
+13 losmany laxori-count-c 1137 42674603309 
+14 binarytrees laxori-count-i1 1112 68332294 
+14 binarytrees laxori-count-a 1118 68332294 
+14 binarytrees laxori-count-b 1121 68332294 
+14 binarytrees laxori-count-c 1115 68332294 
+14 requests laxori-count-i1 333 27134172608 
+14 requests laxori-count-a 358 27134172608 
+14 requests laxori-count-b 359 27134172608 
+14 requests laxori-count-c 336 27134172608 
+14 listsuffix laxori-count-i1 1727 159636632672 
+14 listsuffix laxori-count-a 1741 159636632672 
+14 listsuffix laxori-count-b 1702 159636632672 
+14 listsuffix laxori-count-c 1664 159636632672 
+14 mixedmedium laxori-count-i1 1509 40586599707 
+14 mixedmedium laxori-count-a 1573 40586599707 
+14 mixedmedium laxori-count-b 1503 40586599707 
+14 mixedmedium laxori-count-c 1609 40586599707 
+14 losarrays laxori-count-i1 1253 13936826922 
+14 losarrays laxori-count-a 1218 13936826922 
+14 losarrays laxori-count-b 1202 13936826922 
+14 losarrays laxori-count-c 1231 13936826922 
+14 mediumarrays laxori-count-i1 1099 7032863679 
+14 mediumarrays laxori-count-a 1116 7032863679 
+14 mediumarrays laxori-count-b 1152 7032863679 
+14 mediumarrays laxori-count-c 1109 7032863679 
+14 losmany laxori-count-i1 1152 42674603309 
+14 losmany laxori-count-a 1184 42674603309 
+14 losmany laxori-count-b 1156 42674603309 
+14 losmany laxori-count-c 1155 42674603309 
+15 binarytrees laxori-count-i1 1151 68332294 
+15 binarytrees laxori-count-a 1065 68332294 
+15 binarytrees laxori-count-b 1079 68332294 
+15 binarytrees laxori-count-c 1103 68332294 
+15 requests laxori-count-i1 368 27134172608 
+15 requests laxori-count-a 353 27134172608 
+15 requests laxori-count-b 471 27134172608 
+15 requests laxori-count-c 354 27134172608 
+15 listsuffix laxori-count-i1 1865 159636632672 
+15 listsuffix laxori-count-a 1652 159636632672 
+15 listsuffix laxori-count-b 1629 159636632672 
+15 listsuffix laxori-count-c 1587 159636632672 
+15 mixedmedium laxori-count-i1 1576 40586599707 
+15 mixedmedium laxori-count-a 1581 40586599707 
+15 mixedmedium laxori-count-b 1593 40586599707 
+15 mixedmedium laxori-count-c 1537 40586599707 
+15 losarrays laxori-count-i1 1262 13936826922 
+15 losarrays laxori-count-a 1290 13936826922 
+15 losarrays laxori-count-b 1216 13936826922 
+15 losarrays laxori-count-c 1222 13936826922 
+15 mediumarrays laxori-count-i1 1133 7032863679 
+15 mediumarrays laxori-count-a 1176 7032863679 
+15 mediumarrays laxori-count-b 1114 7032863679 
+15 mediumarrays laxori-count-c 1081 7032863679 
+15 losmany laxori-count-i1 1235 42674603309 
+15 losmany laxori-count-a 1132 42674603309 
+15 losmany laxori-count-b 1164 42674603309 
+15 losmany laxori-count-c 1295 42674603309 
+
+medians: wall ms / cpu ms / pause ms / peak RSS MB / collections
+binarytrees  laxori-count-i1    1123    2599    123    198    48 n=16 bad=0
+binarytrees  laxori-count-a    1109    2569    120    196    49 n=16 bad=0
+binarytrees  laxori-count-b    1139    2659    130    201    50 n=16 bad=0
+binarytrees  laxori-count-c    1114    2469    116    197    50 n=16 bad=0
+requests     laxori-count-i1     363     439     10    165    28 n=16 bad=0
+requests     laxori-count-a     364     436     10    166    28 n=16 bad=0
+requests     laxori-count-b     367     444     11    166    28 n=16 bad=0
+requests     laxori-count-c     354     417     10    165    28 n=16 bad=0
+listsuffix   laxori-count-i1    1748    4937    221    203    32 n=16 bad=0
+listsuffix   laxori-count-a    1680    4316    205    200    32 n=16 bad=0
+listsuffix   laxori-count-b    1715    4387    213    199    32 n=16 bad=0
+listsuffix   laxori-count-c    1755    4558    227    199    32 n=16 bad=0
+mixedmedium  laxori-count-i1    1636    2711    239    195   328 n=16 bad=0
+mixedmedium  laxori-count-a    1608    2718    232    195   326 n=16 bad=0
+mixedmedium  laxori-count-b    1639    2721    230    195   325 n=16 bad=0
+mixedmedium  laxori-count-c    1627    2738    232    195   326 n=16 bad=0
+losarrays    laxori-count-i1    1261    2621    499    107   358 n=16 bad=0
+losarrays    laxori-count-a    1306    2687    509    107   232 n=16 bad=0
+losarrays    laxori-count-b    1260    2643    486    107   282 n=16 bad=0
+losarrays    laxori-count-c    1236    2623    480    107   318 n=16 bad=0
+mediumarrays laxori-count-i1    1128    1889     97    486    80 n=16 bad=0
+mediumarrays laxori-count-a    1128    1906     97    486    80 n=16 bad=0
+mediumarrays laxori-count-b    1130    1870     99    486    80 n=16 bad=0
+mediumarrays laxori-count-c    1106    1837     96    486    81 n=16 bad=0
+losmany      laxori-count-i1    1231    2972    279    179   169 n=16 bad=0
+losmany      laxori-count-a    1260    2961    272    179   169 n=16 bad=0
+losmany      laxori-count-b    1185    2919    220    179   170 n=16 bad=0
+losmany      laxori-count-c    1204    2878    231    180   170 n=16 bad=0
+
+paired difference (A-B)/B in percent, A=laxori-count-a B=laxori-count-i1: median [min .. max], reps where A is lower
+binarytrees  | wall ms   -1.2 CI95 [ -3.1,  +2.6] [-13.8.. +7.7] 9/16 | cpu ms   -0.9 CI95 [ -7.0,  +7.0] [-32.7..+88.4] 9/16 | pause ms   -4.9 CI95 [-13.0,  +9.5] [-50.9..+124.2] 9/16 | rss MB   -0.2 CI95 [ -1.5,  +0.7] [ -7.1.. +8.3] 9/16
+requests     | wall ms   +1.2 CI95 [ -4.1,  +8.0] [-19.1..+12.0] 7/16 | cpu ms   +0.2 CI95 [ -5.4,  +8.6] [-17.8..+20.1] 8/16 | pause ms   +1.1 CI95 [ -3.8,  +8.8] [-26.4..+73.3] 5/16 | rss MB   +0.1 CI95 [ -0.1,  +0.2] [ -0.7.. +0.5] 7/16
+listsuffix   | wall ms   -2.4 CI95 [ -6.0,  +0.0] [-11.4.. +9.0] 12/16 | cpu ms  -10.7 CI95 [-15.8,  -9.8] [-19.4..+11.7] 15/16 | pause ms   -7.2 CI95 [-10.2,  -4.5] [-19.7..+30.9] 14/16 | rss MB   -1.6 CI95 [ -2.0,  -1.2] [ -2.7.. +0.1] 15/16
+mixedmedium  | wall ms   +0.5 CI95 [ -2.8,  +2.5] [-11.8..+19.6] 6/16 | cpu ms   +0.4 CI95 [ -2.8,  +1.7] [-12.0..+24.2] 8/16 | pause ms   +1.1 CI95 [ -7.0,  +4.9] [-16.0..+25.6] 7/16 | rss MB   -0.0 CI95 [ -0.1,  +0.0] [ -0.3.. +0.1] 9/16
+losarrays    | wall ms   +0.7 CI95 [ -2.2,  +3.8] [ -9.6.. +7.8] 7/16 | cpu ms   +1.1 CI95 [ -2.0,  +2.3] [ -9.1.. +6.4] 6/16 | pause ms   -0.6 CI95 [ -1.8,  +2.2] [-11.0.. +8.1] 10/16 | rss MB   -0.2 CI95 [ -0.4,  +0.0] [ -1.1.. +0.8] 11/16
+mediumarrays | wall ms   +0.7 CI95 [ -0.6,  +1.6] [ -3.2.. +8.8] 7/16 | cpu ms   +0.4 CI95 [ -1.2,  +2.0] [ -4.0.. +9.8] 6/16 | pause ms   -0.9 CI95 [ -2.9,  +5.0] [ -8.2..+11.4] 9/16 | rss MB   +0.0 CI95 [ -0.0,  +0.1] [ -0.0.. +0.1] 5/16
+losmany      | wall ms   -1.7 CI95 [ -3.5,  +5.1] [ -8.3..+12.1] 10/16 | cpu ms   -0.8 CI95 [ -2.2,  +1.8] [-14.7.. +8.5] 10/16 | pause ms   -2.5 CI95 [ -5.5, +11.6] [-15.7..+40.3] 10/16 | rss MB   -0.0 CI95 [ -0.2,  +0.1] [-28.9..+40.6] 10/16
+
+paired difference (A-B)/B in percent, A=laxori-count-b B=laxori-count-a: median [min .. max], reps where A is lower
+binarytrees  | wall ms   +2.6 CI95 [ +0.3,  +6.2] [-13.3.. +8.3] 4/16 | cpu ms   +5.9 CI95 [ -0.7, +24.2] [-57.1..+39.2] 5/16 | pause ms  +11.3 CI95 [ +4.1, +20.1] [-53.3..+52.8] 1/16 | rss MB   +2.9 CI95 [ -0.4,  +4.6] [ -9.5.. +8.0] 6/16
+requests     | wall ms   +0.5 CI95 [ -2.4,  +6.5] [-18.1..+33.5] 7/16 | cpu ms   +0.5 CI95 [ -2.5,  +7.7] [-23.2..+29.5] 6/16 | pause ms   +1.5 CI95 [ -6.0, +13.9] [-45.4..+90.7] 6/16 | rss MB   -0.0 CI95 [ -0.1,  +0.1] [ -0.7.. +0.5] 9/16
+listsuffix   | wall ms   +1.5 CI95 [ -0.6,  +3.0] [ -4.7.. +4.1] 5/16 | cpu ms   +0.3 CI95 [ -1.8,  +2.6] [ -7.4.. +5.2] 6/16 | pause ms   +3.2 CI95 [ +0.4,  +6.7] [-15.3..+13.7] 3/16 | rss MB   -0.1 CI95 [ -0.7,  +0.1] [ -1.9.. +0.5] 9/16
+mixedmedium  | wall ms   -0.9 CI95 [ -3.1,  +0.7] [-13.7.. +5.8] 10/16 | cpu ms   -1.4 CI95 [ -2.5,  +0.5] [-17.1.. +8.0] 12/16 | pause ms   -1.8 CI95 [ -5.0,  +1.5] [-17.5.. +8.3] 11/16 | rss MB   +0.0 CI95 [ -0.0,  +0.1] [ -0.8.. +0.2] 7/16
+losarrays    | wall ms   -1.2 CI95 [ -5.8,  -0.6] [ -9.8.. +7.5] 13/16 | cpu ms   -1.3 CI95 [ -4.0,  +0.6] [ -6.2.. +8.6] 9/16 | pause ms   -4.8 CI95 [ -6.0,  -3.2] [-11.5.. +2.7] 14/16 | rss MB   +0.1 CI95 [ -0.1,  +0.3] [ -0.9.. +1.0] 6/16
+mediumarrays | wall ms   -1.1 CI95 [ -3.5,  +1.2] [ -7.5.. +3.2] 8/16 | cpu ms   -2.0 CI95 [ -4.1,  +1.2] [ -8.3.. +2.7] 10/16 | pause ms   +0.2 CI95 [ -3.4,  +3.2] [ -8.1..+11.8] 8/16 | rss MB   -0.0 CI95 [ -0.1,  +0.0] [ -0.1.. +0.1] 11/16
+losmany      | wall ms   -6.5 CI95 [ -8.2,  -2.3] [-10.9..+25.7] 13/16 | cpu ms   -3.0 CI95 [ -5.0,  +2.5] [ -7.0..+18.9] 10/16 | pause ms  -19.6 CI95 [-23.4, -10.0] [-40.9..+28.9] 15/16 | rss MB   +0.1 CI95 [ -0.0,  +0.2] [-28.8..+40.4] 5/16
+
+paired difference (A-B)/B in percent, A=laxori-count-c B=laxori-count-b: median [min .. max], reps where A is lower
+binarytrees  | wall ms   -2.0 CI95 [ -4.2,  -0.6] [ -8.8.. +7.5] 12/16 | cpu ms   -7.7 CI95 [-16.5,  +0.6] [-24.6..+87.7] 11/16 | pause ms  -10.3 CI95 [-16.5,  -1.8] [-32.0..+95.9] 12/16 | rss MB   -1.8 CI95 [ -3.4,  +0.8] [ -5.8.. +7.0] 10/16
+requests     | wall ms   -5.0 CI95 [ -8.3,  +2.5] [-24.8..+15.5] 11/16 | cpu ms   -3.6 CI95 [ -9.3,  +0.6] [-27.6..+16.7] 11/16 | pause ms   -5.3 CI95 [-40.4,  +6.9] [-49.6..+86.1] 10/16 | rss MB   -0.1 CI95 [ -0.5,  +0.0] [ -0.8.. +0.8] 10/16
+listsuffix   | wall ms   +1.8 CI95 [ -2.2,  +4.0] [ -5.3.. +8.8] 5/16 | cpu ms   +2.7 CI95 [ +0.7,  +7.8] [ -5.6..+10.0] 3/16 | pause ms   +5.8 CI95 [ +0.5, +11.8] [-14.2..+18.4] 4/16 | rss MB   +0.1 CI95 [ -0.3,  +0.5] [ -1.0.. +1.4] 8/16
+mixedmedium  | wall ms   +0.8 CI95 [ -2.5,  +2.8] [ -4.0..+12.6] 6/16 | cpu ms   +0.0 CI95 [ -1.4,  +3.8] [ -5.6..+13.7] 8/16 | pause ms   +1.5 CI95 [ -2.1,  +5.2] [ -5.0..+12.1] 5/16 | rss MB   +0.0 CI95 [ -0.0,  +0.0] [ -0.1.. +1.0] 7/16
+losarrays    | wall ms   -0.7 CI95 [ -4.9,  +1.3] [ -7.2.. +8.0] 9/16 | cpu ms   +0.7 CI95 [ -2.9,  +1.6] [ -8.0.. +5.9] 6/16 | pause ms   -0.2 CI95 [ -3.3,  +1.9] [ -7.0.. +6.8] 8/16 | rss MB   +0.1 CI95 [ -0.0,  +0.2] [ -0.3.. +0.6] 6/16
+mediumarrays | wall ms   -1.6 CI95 [ -3.7,  +2.2] [ -4.9.. +6.3] 9/16 | cpu ms   -2.7 CI95 [ -3.6,  +3.0] [ -6.3..+12.5] 10/16 | pause ms   -2.2 CI95 [ -7.2,  +3.9] [-10.4..+14.7] 11/16 | rss MB   +0.0 CI95 [ -0.0,  +0.1] [ -0.1.. +0.1] 6/16
+losmany      | wall ms   +0.2 CI95 [ -0.9,  +4.1] [-18.2..+11.2] 7/16 | cpu ms   -0.6 CI95 [ -7.4,  +1.6] [-16.8.. +8.9] 8/16 | pause ms   +3.7 CI95 [ -5.5, +15.3] [-29.6..+58.6] 7/16 | rss MB   +0.0 CI95 [ -0.2, +40.2] [-28.7..+40.4] 8/16
+
+paired difference (A-B)/B in percent, A=laxori-count-c B=laxori-count-i1: median [min .. max], reps where A is lower
+binarytrees  | wall ms   -0.5 CI95 [ -2.6,  +0.9] [-13.6..+12.3] 10/16 | cpu ms   -0.1 CI95 [ -9.1,  +6.1] [-29.3..+70.0] 8/16 | pause ms   -1.5 CI95 [ -9.8,  +9.2] [-28.0..+74.1] 10/16 | rss MB   -0.3 CI95 [ -2.6,  +2.2] [ -4.3..+11.2] 9/16
+requests     | wall ms   -0.6 CI95 [ -3.9,  +1.5] [-19.4..+14.2] 9/16 | cpu ms   -2.5 CI95 [ -8.4,  +1.2] [-18.0..+14.9] 11/16 | pause ms   -1.3 CI95 [-17.8,  +6.6] [-41.7..+85.8] 8/16 | rss MB   -0.0 CI95 [ -0.6,  +0.1] [ -0.8.. +0.7] 9/16
+listsuffix   | wall ms   +0.4 CI95 [ -2.5,  +3.8] [-14.9..+10.5] 8/16 | cpu ms   -7.6 CI95 [-10.5,  -4.6] [-20.1.. +2.1] 15/16 | pause ms   -0.1 CI95 [ -6.0, +10.7] [-12.8..+18.1] 8/16 | rss MB   -1.7 CI95 [ -2.2,  -1.1] [ -3.2.. -0.7] 16/16
+mixedmedium  | wall ms   -0.1 CI95 [ -3.8,  +2.6] [-10.5..+13.5] 9/16 | cpu ms   -0.5 CI95 [ -4.1,  +3.5] [-10.3..+13.1] 9/16 | pause ms   -0.3 CI95 [ -5.8,  +2.8] [-18.1..+15.8] 8/16 | rss MB   +0.0 CI95 [ -0.1,  +0.1] [ -0.2.. +0.2] 8/16
+losarrays    | wall ms   -1.3 CI95 [ -5.4,  -0.2] [-16.4.. +5.0] 12/16 | cpu ms   +0.1 CI95 [ -1.6,  +2.6] [-10.9.. +5.7] 8/16 | pause ms   -4.8 CI95 [ -8.2,  -2.7] [-18.7.. +1.0] 15/16 | rss MB   +0.0 CI95 [ -0.2,  +0.1] [ -0.4.. +0.9] 6/16
+mediumarrays | wall ms   -2.1 CI95 [ -4.4,  +1.2] [-11.0.. +7.7] 10/16 | cpu ms   -2.5 CI95 [ -4.2,  +0.1] [-10.2.. +6.2] 11/16 | pause ms   -1.7 CI95 [ -2.9,  +0.5] [ -9.9..+20.9] 12/16 | rss MB   +0.0 CI95 [ -0.0,  +0.1] [ -0.1.. +0.1] 4/16
+losmany      | wall ms   -2.2 CI95 [ -4.6,  -0.8] [-11.7.. +4.9] 13/16 | cpu ms   -0.1 CI95 [ -7.3,  +1.0] [-19.6..+10.8] 8/16 | pause ms  -15.3 CI95 [-17.6,  -7.4] [-30.6..+26.2] 14/16 | rss MB   +0.0 CI95 [ -0.1, +20.2] [-28.7..+40.7] 8/16

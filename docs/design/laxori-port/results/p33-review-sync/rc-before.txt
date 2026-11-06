@@ -1,0 +1,735 @@
+         0 | class LaxoriPauseTimers
+         0 |   struct std::atomic<_Bool> m_enabled
+         0 |     struct std::__atomic_base<_Bool> _M_base
+         0 |       std::__atomic_base<_Bool>::__int_type _M_i
+         8 |   std::atomic<int64_t>[50] m_scalar
+       408 |   struct LaxoriPauseTimers::GroupState[9] m_groups
+       696 |   struct std::atomic<unsigned long> m_sequence
+       696 |     struct std::__atomic_base<unsigned long> (base)
+       696 |       std::__atomic_base<unsigned long>::__int_type _M_i
+       704 |   struct std::atomic<unsigned long> m_kind
+       704 |     struct std::__atomic_base<unsigned long> (base)
+       704 |       std::__atomic_base<unsigned long>::__int_type _M_i
+       712 |   struct std::atomic<_Bool> m_paused
+       712 |     struct std::__atomic_base<_Bool> _M_base
+       712 |       std::__atomic_base<_Bool>::__int_type _M_i
+       720 |   struct std::atomic<unsigned long> m_timestamps
+       720 |     struct std::__atomic_base<unsigned long> (base)
+       720 |       std::__atomic_base<unsigned long>::__int_type _M_i
+       728 |   struct std::atomic<unsigned long> m_published_timestamps
+       728 |     struct std::__atomic_base<unsigned long> (base)
+       728 |       std::__atomic_base<unsigned long>::__int_type _M_i
+       736 |   std::atomic<uint64_t>[77] m_last
+      1352 |   std::atomic<uint64_t>[77] m_total
+      1968 |   std::atomic<uint64_t>[4][78] m_kind_total
+      4464 |   int64_t m_begin
+      4472 |   uint64_t m_begin_timestamps
+           | [sizeof=4480, dsize=4480, align=8,
+           |  nvsize=4480, nvalign=8]
+
+         0 | struct LaxoriRcConfiguration
+         0 |   size_t immixBytes
+         8 |   size_t largeObjectBytes
+        16 |   size_t maximumMutators
+        24 |   size_t maximumRoots
+        32 |   size_t workers
+        40 |   uint8_t referenceCountBits
+        48 |   size_t immixReservationBytes
+        56 |   size_t largeObjectReservationBytes
+        64 |   size_t hardLimitBytes
+        72 |   size_t minimumReuseLines
+        80 |   size_t bufferSize
+        88 |   size_t allocationBufferBytes
+        96 |   size_t concurrentTraceWorkers
+       104 |   _Bool lazyDecrements
+       105 |   _Bool parallelSweep
+       106 |   _Bool parallelPauseTrace
+       112 |   size_t pauseTraceBatch
+       120 |   _Bool eagerMarkClear
+       121 |   _Bool lineRecycling
+       122 |   _Bool mediumOverflow
+       128 |   size_t mediumOverflowMode
+       136 |   _Bool copyLineRecycling
+       137 |   _Bool evacuateNursery
+       144 |   size_t maximumYoungCopyBytes
+       152 |   uint32_t forwardingMask
+       156 |   uint32_t forwardingShift
+       160 |   _Bool evacuateMature
+       168 |   size_t defragHeadroomPercent
+       176 |   size_t chunkDefragPercent
+       184 |   _Bool overshootToSpace
+       185 |   _Bool prezero
+       186 |   _Bool prezeroThread
+       192 |   size_t prezeroMarginBlocks
+       200 |   size_t prezeroWindowBlocks
+           | [sizeof=208, dsize=208, align=8,
+           |  nvsize=208, nvalign=8]
+
+         0 | class LaxoriReferenceCounting
+         0 |   uint64_t * m_region_owner
+         8 |   std::atomic<uint64_t>[44] m_region_metrics
+       360 |   uintptr_t m_pinned_span_start
+       368 |   class SideMetadataAccessor m_straddle_metadata
+       368 |     uintptr_t m_base
+       376 |     uintptr_t m_value_mask
+       384 |     const class SideMetadataManager * m_manager
+       392 |     uint8_t m_log_bytes_per_value
+       393 |     uint8_t m_log_bits_per_value
+       394 |     enum LaxoriSideMetadataKind m_kind
+       400 |   std::atomic<uint64_t>[4] m_lookup_metrics
+       432 |   struct LaxoriRcConfiguration m_configuration
+       432 |     size_t immixBytes
+       440 |     size_t largeObjectBytes
+       448 |     size_t maximumMutators
+       456 |     size_t maximumRoots
+       464 |     size_t workers
+       472 |     uint8_t referenceCountBits
+       480 |     size_t immixReservationBytes
+       488 |     size_t largeObjectReservationBytes
+       496 |     size_t hardLimitBytes
+       504 |     size_t minimumReuseLines
+       512 |     size_t bufferSize
+       520 |     size_t allocationBufferBytes
+       528 |     size_t concurrentTraceWorkers
+       536 |     _Bool lazyDecrements
+       537 |     _Bool parallelSweep
+       538 |     _Bool parallelPauseTrace
+       544 |     size_t pauseTraceBatch
+       552 |     _Bool eagerMarkClear
+       553 |     _Bool lineRecycling
+       554 |     _Bool mediumOverflow
+       560 |     size_t mediumOverflowMode
+       568 |     _Bool copyLineRecycling
+       569 |     _Bool evacuateNursery
+       576 |     size_t maximumYoungCopyBytes
+       584 |     uint32_t forwardingMask
+       588 |     uint32_t forwardingShift
+       592 |     _Bool evacuateMature
+       600 |     size_t defragHeadroomPercent
+       608 |     size_t chunkDefragPercent
+       616 |     _Bool overshootToSpace
+       617 |     _Bool prezero
+       618 |     _Bool prezeroThread
+       624 |     size_t prezeroMarginBlocks
+       632 |     size_t prezeroWindowBlocks
+       640 |   struct LaxoriRcObjectModel m_object_model
+       640 |     GetLoaderAllocatorObjectSlot getLoaderAllocatorSlot
+       648 |     _Bool admitFinalizable
+       656 |     LaxoriRcTraceClosure finishTrace
+       664 |     void * context
+       672 |     _Bool (*)(class Object *, void *) isImmortal
+       680 |     LaxoriRcTraceClosure finishEpoch
+       688 |     _Bool (*)(size_t, size_t, _Bool, void *) admitRange
+       696 |     LaxoriRcTraceClosure finishLazy
+       704 |     _Bool (*)(size_t, size_t, size_t, void *) canAdmitRange
+       712 |     LaxoriRcTraceClosure finishRelocation
+       720 |     _Bool (*)(size_t, size_t, _Bool, void *) releaseRange
+       728 |   _Bool m_observer
+       736 |   struct LaxoriPauseRuntimeAdapter m_runtime
+       736 |     LaxoriPauseSuspendCallback suspend
+       744 |     LaxoriPauseResumeCallback resume
+       752 |     void * context
+       760 |     _Bool finishedGc
+       768 |   LaxoriRcCaptureRoots m_capture
+       776 |   void * m_capture_context
+       784 |   class LaxoriSideMetadataLayout m_layout
+       784 |     struct SideMetadataSpec[15] m_specs
+      1384 |     size_t m_global_size
+      1392 |     size_t m_local_size
+      1400 |   class SideMetadataManager m_metadata
+      1400 |     const class LaxoriSideMetadataLayout * m_layout
+      1408 |     void * m_global_reservation
+      1416 |     void * m_local_reservation
+      1424 |     struct SideMetadataManager::DataRange * m_data_ranges
+      1432 |     uint64_t m_enabled_spec_mask
+      1440 |     _Bool m_commit_failed
+      1448 |   class SideMetadataAccessor m_rc_metadata
+      1448 |     uintptr_t m_base
+      1456 |     uintptr_t m_value_mask
+      1464 |     const class SideMetadataManager * m_manager
+      1472 |     uint8_t m_log_bytes_per_value
+      1473 |     uint8_t m_log_bits_per_value
+      1474 |     enum LaxoriSideMetadataKind m_kind
+      1480 |   class SideMetadataAccessor m_mark_metadata
+      1480 |     uintptr_t m_base
+      1488 |     uintptr_t m_value_mask
+      1496 |     const class SideMetadataManager * m_manager
+      1504 |     uint8_t m_log_bytes_per_value
+      1505 |     uint8_t m_log_bits_per_value
+      1506 |     enum LaxoriSideMetadataKind m_kind
+      1512 |   class SideMetadataAccessor m_unlogged_metadata
+      1512 |     uintptr_t m_base
+      1520 |     uintptr_t m_value_mask
+      1528 |     const class SideMetadataManager * m_manager
+      1536 |     uint8_t m_log_bytes_per_value
+      1537 |     uint8_t m_log_bits_per_value
+      1538 |     enum LaxoriSideMetadataKind m_kind
+      1544 |   class SideMetadataAccessor m_valid_metadata
+      1544 |     uintptr_t m_base
+      1552 |     uintptr_t m_value_mask
+      1560 |     const class SideMetadataManager * m_manager
+      1568 |     uint8_t m_log_bytes_per_value
+      1569 |     uint8_t m_log_bits_per_value
+      1570 |     enum LaxoriSideMetadataKind m_kind
+      1576 |   class SideMetadataAccessor m_defrag_metadata
+      1576 |     uintptr_t m_base
+      1584 |     uintptr_t m_value_mask
+      1592 |     const class SideMetadataManager * m_manager
+      1600 |     uint8_t m_log_bytes_per_value
+      1601 |     uint8_t m_log_bits_per_value
+      1602 |     enum LaxoriSideMetadataKind m_kind
+      1608 |   class SideMetadataAccessor m_line_reuse_metadata
+      1608 |     uintptr_t m_base
+      1616 |     uintptr_t m_value_mask
+      1624 |     const class SideMetadataManager * m_manager
+      1632 |     uint8_t m_log_bytes_per_value
+      1633 |     uint8_t m_log_bits_per_value
+      1634 |     enum LaxoriSideMetadataKind m_kind
+      1640 |   class SideMetadataAccessor m_page_reuse_metadata
+      1640 |     uintptr_t m_base
+      1648 |     uintptr_t m_value_mask
+      1656 |     const class SideMetadataManager * m_manager
+      1664 |     uint8_t m_log_bytes_per_value
+      1665 |     uint8_t m_log_bits_per_value
+      1666 |     enum LaxoriSideMetadataKind m_kind
+      1728 |   class ImmixBlockManager m_blocks
+      1728 |     class SideMetadataManager * m_metadata
+      1736 |     class SideMetadataAccessor[15] m_accessors
+      2216 |     class SideMetadataAccessor m_reference_count
+      2216 |       uintptr_t m_base
+      2224 |       uintptr_t m_value_mask
+      2232 |       const class SideMetadataManager * m_manager
+      2240 |       uint8_t m_log_bytes_per_value
+      2241 |       uint8_t m_log_bits_per_value
+      2242 |       enum LaxoriSideMetadataKind m_kind
+      2304 |     struct std::atomic<unsigned char> m_global_phase_epoch
+      2304 |       struct std::__atomic_base<unsigned char> (base)
+      2304 |         std::__atomic_base<unsigned char>::__int_type _M_i
+      2305 |     struct std::atomic<_Bool> m_phase_transition
+      2305 |       struct std::__atomic_base<_Bool> _M_base
+      2305 |         std::__atomic_base<_Bool>::__int_type _M_i
+      2312 |     struct std::atomic<unsigned long> m_flip_serial
+      2312 |       struct std::__atomic_base<unsigned long> (base)
+      2312 |         std::__atomic_base<unsigned long>::__int_type _M_i
+      2368 |     struct ImmixBlockManager::OperationStripe[16] m_operation_stripes
+      3392 |     struct std::atomic<unsigned long> m_non_free_blocks
+      3392 |       struct std::__atomic_base<unsigned long> (base)
+      3392 |         std::__atomic_base<unsigned long>::__int_type _M_i
+      3400 |     struct std::atomic<unsigned long> m_reusable_free_lines
+      3400 |       struct std::__atomic_base<unsigned long> (base)
+      3400 |         std::__atomic_base<unsigned long>::__int_type _M_i
+      3408 |     struct std::atomic<unsigned long> m_reusable_serial
+      3408 |       struct std::__atomic_base<unsigned long> (base)
+      3408 |         std::__atomic_base<unsigned long>::__int_type _M_i
+      3456 |   class ReferenceCountTable m_counts
+      3456 |     class SideMetadataManager * m_metadata
+      3464 |     class SideMetadataAccessor m_rc
+      3464 |       uintptr_t m_base
+      3472 |       uintptr_t m_value_mask
+      3480 |       const class SideMetadataManager * m_manager
+      3488 |       uint8_t m_log_bytes_per_value
+      3489 |       uint8_t m_log_bits_per_value
+      3490 |       enum LaxoriSideMetadataKind m_kind
+      3496 |     class SideMetadataAccessor m_valid
+      3496 |       uintptr_t m_base
+      3504 |       uintptr_t m_value_mask
+      3512 |       const class SideMetadataManager * m_manager
+      3520 |       uint8_t m_log_bytes_per_value
+      3521 |       uint8_t m_log_bits_per_value
+      3522 |       enum LaxoriSideMetadataKind m_kind
+      3528 |     class SideMetadataAccessor m_straddle
+      3528 |       uintptr_t m_base
+      3536 |       uintptr_t m_value_mask
+      3544 |       const class SideMetadataManager * m_manager
+      3552 |       uint8_t m_log_bytes_per_value
+      3553 |       uint8_t m_log_bits_per_value
+      3554 |       enum LaxoriSideMetadataKind m_kind
+      3560 |     uint8_t m_log_reference_count_bits
+      3568 |   class ImmixAllocationManager m_allocation
+      3568 |     class SideMetadataManager * m_metadata
+      3576 |     class SideMetadataAccessor m_reference_count
+      3576 |       uintptr_t m_base
+      3584 |       uintptr_t m_value_mask
+      3592 |       const class SideMetadataManager * m_manager
+      3600 |       uint8_t m_log_bytes_per_value
+      3601 |       uint8_t m_log_bits_per_value
+      3602 |       enum LaxoriSideMetadataKind m_kind
+      3608 |     class SideMetadataAccessor m_valid_object
+      3608 |       uintptr_t m_base
+      3616 |       uintptr_t m_value_mask
+      3624 |       const class SideMetadataManager * m_manager
+      3632 |       uint8_t m_log_bytes_per_value
+      3633 |       uint8_t m_log_bits_per_value
+      3634 |       enum LaxoriSideMetadataKind m_kind
+      3640 |     class SideMetadataAccessor m_field_unlogged
+      3640 |       uintptr_t m_base
+      3648 |       uintptr_t m_value_mask
+      3656 |       const class SideMetadataManager * m_manager
+      3664 |       uint8_t m_log_bytes_per_value
+      3665 |       uint8_t m_log_bits_per_value
+      3666 |       enum LaxoriSideMetadataKind m_kind
+      3672 |     class SideMetadataAccessor m_object_mark
+      3672 |       uintptr_t m_base
+      3680 |       uintptr_t m_value_mask
+      3688 |       const class SideMetadataManager * m_manager
+      3696 |       uint8_t m_log_bytes_per_value
+      3697 |       uint8_t m_log_bits_per_value
+      3698 |       enum LaxoriSideMetadataKind m_kind
+      3704 |     class SideMetadataAccessor m_line_reuse
+      3704 |       uintptr_t m_base
+      3712 |       uintptr_t m_value_mask
+      3720 |       const class SideMetadataManager * m_manager
+      3728 |       uint8_t m_log_bytes_per_value
+      3729 |       uint8_t m_log_bits_per_value
+      3730 |       enum LaxoriSideMetadataKind m_kind
+      3736 |     size_t m_rc_words_per_line
+      3744 |     class ImmixBlockManager * m_blocks
+      3752 |     uintptr_t m_arena_start
+      3760 |     size_t m_arena_size
+      3768 |     size_t m_block_count
+      3776 |     size_t m_minimum_reuse_lines
+      3784 |     struct std::atomic<unsigned long> m_next_fresh_block
+      3784 |       struct std::__atomic_base<unsigned long> (base)
+      3784 |         std::__atomic_base<unsigned long>::__int_type _M_i
+      3792 |     struct std::atomic<unsigned long> m_next_recycled_block
+      3792 |       struct std::__atomic_base<unsigned long> (base)
+      3792 |         std::__atomic_base<unsigned long>::__int_type _M_i
+      3800 |     struct std::atomic<unsigned long> m_next_pinned_block
+      3800 |       struct std::__atomic_base<unsigned long> (base)
+      3800 |         std::__atomic_base<unsigned long>::__int_type _M_i
+      3808 |     struct std::atomic<unsigned long> m_next_run_block
+      3808 |       struct std::__atomic_base<unsigned long> (base)
+      3808 |         std::__atomic_base<unsigned long>::__int_type _M_i
+      3816 |     _Bool m_placement
+      3824 |     size_t m_mutator_fresh_blocks
+      3832 |     struct std::atomic<unsigned long> m_next_copy_block
+      3832 |       struct std::__atomic_base<unsigned long> (base)
+      3832 |         std::__atomic_base<unsigned long>::__int_type _M_i
+      3840 |     struct ImmixAllocationManager::AcquireNotes m_notes
+      3840 |       std::atomic<uint8_t> * allocated_flags
+      3848 |       uint32_t * allocated_list
+      3856 |       std::atomic<size_t> * allocated_count
+      3864 |       std::atomic<uint8_t> * refresh_flags
+      3872 |       std::atomic<uint8_t> * pinned_flags
+      3880 |       std::atomic<uint8_t> * zero_state
+      3888 |     struct std::atomic<unsigned long> m_fresh_blocks_acquired
+      3888 |       struct std::__atomic_base<unsigned long> (base)
+      3888 |         std::__atomic_base<unsigned long>::__int_type _M_i
+      3896 |     struct std::atomic<unsigned long> m_recycled_blocks_acquired
+      3896 |       struct std::__atomic_base<unsigned long> (base)
+      3896 |         std::__atomic_base<unsigned long>::__int_type _M_i
+      3904 |     struct std::atomic<unsigned long> m_recycled_lines_consumed
+      3904 |       struct std::__atomic_base<unsigned long> (base)
+      3904 |         std::__atomic_base<unsigned long>::__int_type _M_i
+      3912 |     struct std::atomic<unsigned long> m_holes_skipped
+      3912 |       struct std::__atomic_base<unsigned long> (base)
+      3912 |         std::__atomic_base<unsigned long>::__int_type _M_i
+      3920 |     struct std::atomic<unsigned long> m_blocks_in_use
+      3920 |       struct std::__atomic_base<unsigned long> (base)
+      3920 |         std::__atomic_base<unsigned long>::__int_type _M_i
+      3928 |     std::atomic<uint64_t>[10] m_zero_stats
+      4008 |     struct std::atomic<_Bool> m_prezero_gate
+      4008 |       struct std::__atomic_base<_Bool> _M_base
+      4008 |         std::__atomic_base<_Bool>::__int_type _M_i
+      4009 |     struct std::atomic<_Bool> m_prezero_inside
+      4009 |       struct std::__atomic_base<_Bool> _M_base
+      4009 |         std::__atomic_base<_Bool>::__int_type _M_i
+      4016 |     size_t m_prezero_frontier
+      4024 |     struct std::atomic<unsigned int> m_prezero_resumes
+      4024 |       struct std::__atomic_base<unsigned int> (base)
+      4024 |         std::__atomic_base<unsigned int>::__int_type _M_i
+      4028 |     uint32_t m_prezero_seen_resumes
+      4032 |     struct std::atomic<unsigned long> m_prezero_wake_index
+      4032 |       struct std::__atomic_base<unsigned long> (base)
+      4032 |         std::__atomic_base<unsigned long>::__int_type _M_i
+      4040 |     ImmixAllocationManager::PreZeroWakeCallback m_prezero_wake
+      4048 |     void * m_prezero_wake_context
+      4056 |   class LaxoriLargeObjectSpace m_large
+      4056 |     class SideMetadataManager * m_metadata
+      4064 |     void * m_reservation
+      4072 |     size_t m_reservation_bytes
+      4080 |     struct std::atomic<unsigned long> m_admitted_bytes
+      4080 |       struct std::__atomic_base<unsigned long> (base)
+      4080 |         std::__atomic_base<unsigned long>::__int_type _M_i
+      4088 |     struct std::atomic<unsigned long> m_span_bytes
+      4088 |       struct std::__atomic_base<unsigned long> (base)
+      4088 |         std::__atomic_base<unsigned long>::__int_type _M_i
+      4096 |     _Bool m_owns_reservation
+      4104 |     struct LaxoriLargeObjectSpace::Span * m_active_spans
+      4112 |     struct LaxoriLargeObjectSpace::Span * m_quarantined_spans
+      4120 |     struct LaxoriLargeObjectSpace::Span * m_span_pool
+      4128 |     struct LaxoriLargeObjectSpace::SpanChunk * m_span_chunks
+      4136 |     std::atomic<uintptr_t> * m_page_map
+      4144 |     uint32_t * m_free_tree
+      4152 |     size_t m_tree_leaves
+      4160 |     struct std::atomic<unsigned long> m_inflight_allocations
+      4160 |       struct std::__atomic_base<unsigned long> (base)
+      4160 |         std::__atomic_base<unsigned long>::__int_type _M_i
+      4168 |     struct std::atomic<unsigned long> m_pending_releases
+      4168 |       struct std::__atomic_base<unsigned long> (base)
+      4168 |         std::__atomic_base<unsigned long>::__int_type _M_i
+      4176 |     struct std::atomic<enum LaxoriLargeObjectPhase> m_phase
+      4176 |       enum LaxoriLargeObjectPhase _M_i
+      4177 |     struct std::atomic<unsigned char> m_mark_state
+      4177 |       struct std::__atomic_base<unsigned char> (base)
+      4177 |         std::__atomic_base<unsigned char>::__int_type _M_i
+      4178 |     struct std::atomic_flag m_lock
+      4178 |       struct std::__atomic_flag_base (base)
+      4178 |         std::__atomic_flag_data_type _M_i
+      4184 |     struct LaxoriLargeObjectSpace::SideState * m_side
+      4192 |   class LaxoriWorkScheduler m_scheduler
+      4192 |     class LaxoriWorkScheduler::Impl * m_impl
+      4200 |   class LaxoriPauseCoordinator m_coordinator
+      4200 |     class LaxoriWorkScheduler * m_scheduler
+      4208 |     struct LaxoriPauseRuntimeAdapter m_adapter
+      4208 |       LaxoriPauseSuspendCallback suspend
+      4216 |       LaxoriPauseResumeCallback resume
+      4224 |       void * context
+      4232 |       _Bool finishedGc
+      4240 |     enum LaxoriPauseCoordinatorState m_state
+      4241 |     enum LaxoriPauseKind m_current_kind
+      4248 |     struct std::chrono::time_point<struct std::chrono::steady_clock, struct std::chrono::duration<long, struct std::ratio<1, 1000000000> > > m_pause_start
+      4248 |       struct std::chrono::duration<long, struct std::ratio<1, 1000000000> > __d
+      4248 |         std::chrono::duration<long, struct std::ratio<1, 1000000000> >::rep __r
+      4256 |     struct std::array<struct LaxoriPauseKindMetrics, 4> m_metrics
+      4256 |       typename _AT_Type::_Type _M_elems
+      4352 |   void * m_arena
+      4360 |   class LaxoriVirtualArray<struct std::atomic<unsigned char> > m_allocated_block_storage
+      4360 |     struct std::atomic<unsigned char> * m_data
+      4368 |     size_t m_bytes
+      4376 |     size_t m_count
+      4384 |     size_t[2] m_starts
+      4400 |     size_t[2] m_ends
+      4416 |     struct std::atomic<unsigned long> m_committed_bytes
+      4416 |       struct std::__atomic_base<unsigned long> (base)
+      4416 |         std::__atomic_base<unsigned long>::__int_type _M_i
+      4424 |   uint32_t * m_allocated_list
+      4432 |   struct std::atomic<unsigned long> m_allocated_count
+      4432 |     struct std::__atomic_base<unsigned long> (base)
+      4432 |       std::__atomic_base<unsigned long>::__int_type _M_i
+      4440 |   struct std::atomic<unsigned long> m_immix_capacity
+      4440 |     struct std::__atomic_base<unsigned long> (base)
+      4440 |       std::__atomic_base<unsigned long>::__int_type _M_i
+      4448 |   size_t m_initial_immix
+      4456 |   size_t m_initial_large
+      4464 |   size_t m_grow_bytes
+      4472 |   _Bool m_grow_large
+      4473 |   _Bool m_grow_exact
+      4474 |   enum LaxoriRcResult m_growth_result
+      4480 |   struct std::atomic<unsigned long> m_growth_count
+      4480 |     struct std::__atomic_base<unsigned long> (base)
+      4480 |       std::__atomic_base<unsigned long>::__int_type _M_i
+      4488 |   _Bool m_overshoot
+      4496 |   size_t m_immix_floor
+      4504 |   size_t m_borrow_request_pages
+      4512 |   std::atomic<uint64_t>[19] m_overshoot_metrics
+      4664 |   struct std::atomic<unsigned long> m_epoch_fresh_blocks
+      4664 |     struct std::__atomic_base<unsigned long> (base)
+      4664 |       std::__atomic_base<unsigned long>::__int_type _M_i
+      4672 |   struct std::atomic<unsigned long> m_epoch_recycled_lines
+      4672 |     struct std::__atomic_base<unsigned long> (base)
+      4672 |       std::__atomic_base<unsigned long>::__int_type _M_i
+      4680 |   struct std::atomic<long> m_release_end_stamp
+      4680 |     struct std::__atomic_base<long> (base)
+      4680 |       std::__atomic_base<long>::__int_type _M_i
+      4688 |   std::atomic<uint64_t>[9] m_storage_metrics
+      4760 |   std::atomic<uint64_t>[5] m_trace_batch_metrics
+      4800 |   struct std::atomic<unsigned long> m_increment_traces
+      4800 |     struct std::__atomic_base<unsigned long> (base)
+      4800 |       std::__atomic_base<unsigned long>::__int_type _M_i
+      4808 |   struct std::atomic<_Bool> m_storage_diagnostics
+      4808 |     struct std::__atomic_base<_Bool> _M_base
+      4808 |       std::__atomic_base<_Bool>::__int_type _M_i
+      4816 |   std::atomic<uint8_t> * m_trace_locks
+      4824 |   struct LaxoriReferenceCounting::TraceScanBucket * m_scan_buckets
+      4832 |   struct std::atomic<unsigned long> m_scan_index_count
+      4832 |     struct std::__atomic_base<unsigned long> (base)
+      4832 |       std::__atomic_base<unsigned long>::__int_type _M_i
+      4864 |   class LaxoriPinList m_pins
+      4864 |     struct LaxoriPinList::Shard[16] m_shards
+      5888 |     class LaxoriWordArray m_merged
+      5888 |       uintptr_t * m_data
+      5896 |       size_t m_size
+      5904 |       size_t m_capacity
+      5912 |     struct std::atomic<_Bool> m_sealed
+      5912 |       struct std::__atomic_base<_Bool> _M_base
+      5912 |         std::__atomic_base<_Bool>::__int_type _M_i
+      5920 |     struct std::atomic<unsigned long> m_added
+      5920 |       struct std::__atomic_base<unsigned long> (base)
+      5920 |         std::__atomic_base<unsigned long>::__int_type _M_i
+      5928 |     _Bool m_failed
+      5952 |   std::atomic<uint8_t> * m_block_flags
+      5960 |   std::atomic<uint8_t> * m_zero_state
+      5968 |   class LaxoriBlockZeroer m_zeroer
+      5968 |     class ImmixAllocationManager * m_manager
+      5976 |     size_t m_margin
+      5984 |     size_t m_window
+      5992 |     _Bool m_running
+      5993 |     _Bool m_stop
+      5994 |     _Bool m_wake
+      6000 |     class std::thread m_thread
+      6000 |       class std::thread::id _M_id
+      6000 |         std::thread::native_handle_type _M_thread
+      6008 |     class std::mutex m_mutex
+      6008 |       class std::__mutex_base (base)
+      6008 |         pthread_mutex_t _M_mutex
+      6008 |           struct __pthread_mutex_s __data
+      6008 |             int __lock
+      6012 |             unsigned int __count
+      6016 |             int __owner
+      6020 |             unsigned int __nusers
+      6024 |             int __kind
+      6028 |             short __spins
+      6030 |             short __elision
+      6032 |             struct __pthread_internal_list __list
+      6032 |               struct __pthread_internal_list * __prev
+      6040 |               struct __pthread_internal_list * __next
+      6008 |           char[40] __size
+      6008 |           long __align
+      6048 |     class std::condition_variable m_condition
+      6048 |       class std::__condvar _M_cond
+      6048 |         pthread_cond_t _M_cond
+      6048 |           struct __pthread_cond_s __data
+      6048 |             __atomic_wide_counter __wseq
+      6048 |               unsigned long long __value64
+      6048 |               struct __atomic_wide_counter::(unnamed at /usr/include/x86_64-linux-gnu/bits/atomic_wide_counter.h:28:3) __value32
+      6048 |                 unsigned int __low
+      6052 |                 unsigned int __high
+      6056 |             __atomic_wide_counter __g1_start
+      6056 |               unsigned long long __value64
+      6056 |               struct __atomic_wide_counter::(unnamed at /usr/include/x86_64-linux-gnu/bits/atomic_wide_counter.h:28:3) __value32
+      6056 |                 unsigned int __low
+      6060 |                 unsigned int __high
+      6064 |             unsigned int[2] __g_refs
+      6072 |             unsigned int[2] __g_size
+      6080 |             unsigned int __g1_orig_size
+      6084 |             unsigned int __wrefs
+      6088 |             unsigned int[2] __g_signals
+      6048 |           char[48] __size
+      6048 |           long long __align
+      6096 |   class ImmixBumpAllocator m_pinned_allocator
+      6096 |     class ImmixAllocationManager * m_manager
+      6104 |     uintptr_t m_owner
+      6112 |     uintptr_t m_block
+      6120 |     uintptr_t m_cursor
+      6128 |     uintptr_t m_limit
+      6136 |     size_t m_next_search_line
+      6144 |     enum ImmixAllocationSource m_source
+      6152 |   struct std::atomic_flag m_pinned_lock
+      6152 |     struct std::__atomic_flag_base (base)
+      6152 |       std::__atomic_flag_data_type _M_i
+      6160 |   struct std::atomic<unsigned long> m_pause_pinned_roots
+      6160 |     struct std::__atomic_base<unsigned long> (base)
+      6160 |       std::__atomic_base<unsigned long>::__int_type _M_i
+      6168 |   struct std::atomic<struct LaxoriReferenceCounting::TraceScan *> m_scan_work
+      6168 |     struct std::__atomic_base<struct LaxoriReferenceCounting::TraceScan *> _M_b
+      6168 |       std::__atomic_base<struct LaxoriReferenceCounting::TraceScan *>::__pointer_type _M_p
+      6176 |   struct std::atomic<enum LaxoriTracePhase> m_trace_phase
+      6176 |     enum LaxoriTracePhase _M_i
+      6177 |   struct std::atomic<_Bool> m_marking
+      6177 |     struct std::__atomic_base<_Bool> _M_base
+      6177 |       std::__atomic_base<_Bool>::__int_type _M_i
+      6178 |   struct std::atomic<_Bool> m_hold_trace
+      6178 |     struct std::__atomic_base<_Bool> _M_base
+      6178 |       std::__atomic_base<_Bool>::__int_type _M_i
+      6179 |   struct std::atomic<_Bool> m_first_window
+      6179 |     struct std::__atomic_base<_Bool> _M_base
+      6179 |       std::__atomic_base<_Bool>::__int_type _M_i
+      6184 |   struct std::atomic<unsigned long> m_scan_checkpoint
+      6184 |     struct std::__atomic_base<unsigned long> (base)
+      6184 |       std::__atomic_base<unsigned long>::__int_type _M_i
+      6192 |   struct std::atomic<_Bool> m_scan_checkpoint_active
+      6192 |     struct std::__atomic_base<_Bool> _M_base
+      6192 |       std::__atomic_base<_Bool>::__int_type _M_i
+      6200 |   struct std::atomic<unsigned long> m_trace_pending
+      6200 |     struct std::__atomic_base<unsigned long> (base)
+      6200 |       std::__atomic_base<unsigned long>::__int_type _M_i
+      6208 |   std::atomic<uint64_t>[14] m_trace_metrics
+      6320 |   enum LaxoriPauseKind m_pause_kind
+      6321 |   struct std::atomic<_Bool> m_cycle_sweep
+      6321 |     struct std::__atomic_base<_Bool> _M_base
+      6321 |       std::__atomic_base<_Bool>::__int_type _M_i
+      6328 |   struct std::atomic<unsigned long> m_sweep_cursor
+      6328 |     struct std::__atomic_base<unsigned long> (base)
+      6328 |       std::__atomic_base<unsigned long>::__int_type _M_i
+      6336 |   struct std::atomic<unsigned long> m_sweep_remaining
+      6336 |     struct std::__atomic_base<unsigned long> (base)
+      6336 |       std::__atomic_base<unsigned long>::__int_type _M_i
+      6344 |   struct std::atomic<enum LaxoriReferenceCounting::SweepPhase> m_sweep_phase
+      6344 |     enum LaxoriReferenceCounting::SweepPhase _M_i
+      6352 |   size_t m_sweep_units
+      6360 |   size_t m_sweep_immix_units
+      6368 |   size_t m_sweep_immix_slots
+      6376 |   size_t m_sweep_large_first_slot
+      6384 |   size_t m_sweep_large_slots
+      6392 |   size_t m_sweep_blocks
+      6400 |   size_t m_sweep_block_units
+      6408 |   struct std::atomic<enum LaxoriReferenceCounting::MarkPlane> m_mark_plane
+      6408 |     enum LaxoriReferenceCounting::MarkPlane _M_i
+      6416 |   struct std::atomic<unsigned long> m_mark_clear_cursor
+      6416 |     struct std::__atomic_base<unsigned long> (base)
+      6416 |       std::__atomic_base<unsigned long>::__int_type _M_i
+      6424 |   struct std::atomic<unsigned long> m_mark_clear_remaining
+      6424 |     struct std::__atomic_base<unsigned long> (base)
+      6424 |       std::__atomic_base<unsigned long>::__int_type _M_i
+      6432 |   size_t m_mark_clear_units
+      6440 |   size_t m_mark_clear_immix_units
+      6448 |   uintptr_t m_mark_clear_large_start
+      6456 |   size_t m_mark_clear_large_bytes
+      6464 |   struct std::atomic<long> m_lazy_start_stamp
+      6464 |     struct std::__atomic_base<long> (base)
+      6464 |       std::__atomic_base<long>::__int_type _M_i
+      6472 |   struct std::atomic<long> m_lazy_sweep_stamp
+      6472 |     struct std::__atomic_base<long> (base)
+      6472 |       std::__atomic_base<long>::__int_type _M_i
+      6480 |   struct std::atomic<long> m_lazy_cycle_stamp
+      6480 |     struct std::__atomic_base<long> (base)
+      6480 |       std::__atomic_base<long>::__int_type _M_i
+      6488 |   struct std::atomic<long> m_mark_clear_stamp
+      6488 |     struct std::__atomic_base<long> (base)
+      6488 |       std::__atomic_base<long>::__int_type _M_i
+      6496 |   std::atomic<uint64_t>[12] m_lazy_metrics
+      6592 |   class LaxoriRcMutator * m_mutators
+      6600 |   class LaxoriSpanList m_young_spans
+      6600 |     struct LaxoriSpan * m_data
+      6608 |     size_t m_size
+      6616 |     size_t m_capacity
+      6624 |     struct std::atomic<unsigned char> m_sort_state
+      6624 |       struct std::__atomic_base<unsigned char> (base)
+      6624 |         std::__atomic_base<unsigned char>::__int_type _M_i
+      6632 |   class LaxoriSpanList m_detached_spans
+      6632 |     struct LaxoriSpan * m_data
+      6640 |     size_t m_size
+      6648 |     size_t m_capacity
+      6656 |     struct std::atomic<unsigned char> m_sort_state
+      6656 |       struct std::__atomic_base<unsigned char> (base)
+      6656 |         std::__atomic_base<unsigned char>::__int_type _M_i
+      6664 |   struct std::atomic_flag m_detached_lock
+      6664 |     struct std::__atomic_flag_base (base)
+      6664 |       std::__atomic_flag_data_type _M_i
+      6672 |   std::atomic<uint64_t>[4] m_span_metrics
+      6704 |   struct std::atomic<unsigned long> m_overflow_blocks
+      6704 |     struct std::__atomic_base<unsigned long> (base)
+      6704 |       std::__atomic_base<unsigned long>::__int_type _M_i
+      6712 |   class ImmixBumpAllocator * m_copy_allocators
+      6720 |   struct LaxoriReferenceCounting::CopyLog * m_copy_logs
+      6728 |   struct LaxoriReferenceCounting::ReleaseStage m_release
+      6728 |     struct std::atomic<_Bool> started
+      6728 |       struct std::__atomic_base<_Bool> _M_base
+      6728 |         std::__atomic_base<_Bool>::__int_type _M_i
+      6729 |     struct std::atomic<_Bool> ready
+      6729 |       struct std::__atomic_base<_Bool> _M_base
+      6729 |         std::__atomic_base<_Bool>::__int_type _M_i
+      6736 |     struct std::atomic<unsigned long> active
+      6736 |       struct std::__atomic_base<unsigned long> (base)
+      6736 |         std::__atomic_base<unsigned long>::__int_type _M_i
+      6744 |     struct std::atomic<unsigned long> packets
+      6744 |       struct std::__atomic_base<unsigned long> (base)
+      6744 |         std::__atomic_base<unsigned long>::__int_type _M_i
+      6752 |     int64_t startStamp
+      6760 |     size_t blocks
+      6768 |     struct std::atomic<unsigned long> blockCursor
+      6768 |       struct std::__atomic_base<unsigned long> (base)
+      6768 |         std::__atomic_base<unsigned long>::__int_type _M_i
+      6776 |     void ** chunks
+      6784 |     size_t chunkCount
+      6792 |     struct std::atomic<unsigned long> chunkCursor
+      6792 |       struct std::__atomic_base<unsigned long> (base)
+      6792 |         std::__atomic_base<unsigned long>::__int_type _M_i
+      6800 |   struct LaxoriReferenceCounting::WorkerCounters * m_worker_counters
+      6808 |   struct std::atomic<_Bool> m_copy_exhausted
+      6808 |     struct std::__atomic_base<_Bool> _M_base
+      6808 |       std::__atomic_base<_Bool>::__int_type _M_i
+      6809 |   struct std::atomic<_Bool> m_mature_copy_exhausted
+      6809 |     struct std::__atomic_base<_Bool> _M_base
+      6809 |       std::__atomic_base<_Bool>::__int_type _M_i
+      6816 |   std::atomic<uint64_t>[6] m_nursery_metrics
+      6864 |   std::atomic<uint64_t>[5] m_walk
+      6904 |   struct std::atomic<unsigned long> m_pause_copied_bytes
+      6904 |     struct std::__atomic_base<unsigned long> (base)
+      6904 |       std::__atomic_base<unsigned long>::__int_type _M_i
+      6912 |   std::atomic<uint8_t> * m_evacuation_sources
+      6920 |   struct std::atomic<struct LaxoriReferenceCounting::RememberedChunk *> m_remembered_chunks
+      6920 |     struct std::__atomic_base<struct LaxoriReferenceCounting::RememberedChunk *> _M_b
+      6920 |       std::__atomic_base<struct LaxoriReferenceCounting::RememberedChunk *>::__pointer_type _M_p
+      6928 |   struct LaxoriReferenceCounting::RememberedChunk * m_replay_chunks
+      6936 |   struct std::atomic<_Bool> m_pause_trace_open
+      6936 |     struct std::__atomic_base<_Bool> _M_base
+      6936 |       std::__atomic_base<_Bool>::__int_type _M_i
+      6944 |   struct std::atomic<unsigned long> m_trace_batch_limit
+      6944 |     struct std::__atomic_base<unsigned long> (base)
+      6944 |       std::__atomic_base<unsigned long>::__int_type _M_i
+      6952 |   std::atomic<uint64_t>[4] m_pause_trace_metrics
+      6984 |   std::atomic<uint64_t>[13] m_mature_metrics
+      7088 |   std::atomic<uint64_t>[9] m_cost_ticks
+      7160 |   class LaxoriPauseTimers m_pause_timers
+      7160 |     struct std::atomic<_Bool> m_enabled
+      7160 |       struct std::__atomic_base<_Bool> _M_base
+      7160 |         std::__atomic_base<_Bool>::__int_type _M_i
+      7168 |     std::atomic<int64_t>[50] m_scalar
+      7568 |     struct LaxoriPauseTimers::GroupState[9] m_groups
+      7856 |     struct std::atomic<unsigned long> m_sequence
+      7856 |       struct std::__atomic_base<unsigned long> (base)
+      7856 |         std::__atomic_base<unsigned long>::__int_type _M_i
+      7864 |     struct std::atomic<unsigned long> m_kind
+      7864 |       struct std::__atomic_base<unsigned long> (base)
+      7864 |         std::__atomic_base<unsigned long>::__int_type _M_i
+      7872 |     struct std::atomic<_Bool> m_paused
+      7872 |       struct std::__atomic_base<_Bool> _M_base
+      7872 |         std::__atomic_base<_Bool>::__int_type _M_i
+      7880 |     struct std::atomic<unsigned long> m_timestamps
+      7880 |       struct std::__atomic_base<unsigned long> (base)
+      7880 |         std::__atomic_base<unsigned long>::__int_type _M_i
+      7888 |     struct std::atomic<unsigned long> m_published_timestamps
+      7888 |       struct std::__atomic_base<unsigned long> (base)
+      7888 |         std::__atomic_base<unsigned long>::__int_type _M_i
+      7896 |     std::atomic<uint64_t>[77] m_last
+      8512 |     std::atomic<uint64_t>[77] m_total
+      9128 |     std::atomic<uint64_t>[4][78] m_kind_total
+     11624 |     int64_t m_begin
+     11632 |     uint64_t m_begin_timestamps
+     11640 |   struct std::atomic<unsigned long> m_pause_mature_copied_bytes
+     11640 |     struct std::__atomic_base<unsigned long> (base)
+     11640 |       std::__atomic_base<unsigned long>::__int_type _M_i
+     11648 |   struct LaxoriReferenceCounting::LogChunk * m_mutator_chunks
+     11656 |   struct LaxoriReferenceCounting::LogBank * m_banks
+     11664 |   uintptr_t *[2] m_roots
+     11680 |   size_t[2] m_root_counts
+     11696 |   size_t[2] m_root_capacity
+     11712 |   class LaxoriWordArray m_retained_roots
+     11712 |     uintptr_t * m_data
+     11720 |     size_t m_size
+     11728 |     size_t m_capacity
+     11736 |   class LaxoriWordArray m_released_roots
+     11736 |     uintptr_t * m_data
+     11744 |     size_t m_size
+     11752 |     size_t m_capacity
+     11760 |   size_t m_current_roots
+     11768 |   uintptr_t * m_dead_large
+     11776 |   std::atomic<uint8_t> * m_mature_candidates
+     11784 |   struct std::atomic<unsigned long> m_dead_large_count
+     11784 |     struct std::__atomic_base<unsigned long> (base)
+     11784 |       std::__atomic_base<unsigned long>::__int_type _M_i
+     11792 |   struct std::atomic<unsigned long> m_producer_bank
+     11792 |     struct std::__atomic_base<unsigned long> (base)
+     11792 |       std::__atomic_base<unsigned long>::__int_type _M_i
+     11800 |   struct std::atomic<struct LaxoriReferenceCounting::Work *> m_work
+     11800 |     struct std::__atomic_base<struct LaxoriReferenceCounting::Work *> _M_b
+     11800 |       std::__atomic_base<struct LaxoriReferenceCounting::Work *>::__pointer_type _M_p
+     11808 |   struct std::atomic<struct LaxoriReferenceCounting::Work *> m_trace_unsubmitted
+     11808 |     struct std::__atomic_base<struct LaxoriReferenceCounting::Work *> _M_b
+     11808 |       std::__atomic_base<struct LaxoriReferenceCounting::Work *>::__pointer_type _M_p
+     11816 |   struct std::atomic<struct LaxoriReferenceCounting::Work *> m_trace_done
+     11816 |     struct std::__atomic_base<struct LaxoriReferenceCounting::Work *> _M_b
+     11816 |       std::__atomic_base<struct LaxoriReferenceCounting::Work *>::__pointer_type _M_p
+     11824 |   struct std::atomic<unsigned long> m_next_id
+     11824 |     struct std::__atomic_base<unsigned long> (base)
+     11824 |       std::__atomic_base<unsigned long>::__int_type _M_i
+     11832 |   struct std::atomic<enum LaxoriRcPhase> m_phase
+     11832 |     enum LaxoriRcPhase _M_i
+     11833 |   struct std::atomic<enum LaxoriRcResult> m_failure
+     11833 |     enum LaxoriRcResult _M_i
+     11840 |   std::atomic<uint64_t>[18] m_metrics
+           | [sizeof=12032, dsize=11984, align=64,
+           |  nvsize=11984, nvalign=64]
+

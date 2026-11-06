@@ -1,0 +1,20 @@
+count [] t=1: rc=0 PASS 
+count [] t=4: rc=0 PASS 
+count [] t=13: rc=0 PASS 
+count [DOTNET_LAXORIEscapedInPlace=0] t=1: rc=0 PASS 
+count [DOTNET_LAXORIEscapedInPlace=0] t=4: rc=0 PASS 
+count [DOTNET_LAXORIEscapedInPlace=0] t=13: rc=0 PASS 
+bitmap [] t=1: rc=0 PASS 
+bitmap [] t=4: rc=0 PASS 
+bitmap [] t=13: rc=0 PASS 
+bitmap [DOTNET_LAXORIEscapedInPlace=0] t=1: rc=0 PASS 
+bitmap [DOTNET_LAXORIEscapedInPlace=0] t=4: rc=0 PASS 
+bitmap [DOTNET_LAXORIEscapedInPlace=0] t=13: rc=0 PASS 
+binarytrees: laxori: acquired=3630 dissolvedPause=1 dissolvedFull=3620 dissolvedEscape=9 dissolvedExit=0 localCollections=4583 localSkipped=3397 markAborted=223 notWorth=0 survivorBytes=2369216 reclaimedBytes=1197513416 escapeCalls=14684 escapedObjects=655088 escapedBytes=20964760 foreign=0 acquireFailures=10 bulkEscapes=0
+68332294
+requests: laxori: acquired=719 dissolvedPause=0 dissolvedFull=659 dissolvedEscape=60 dissolvedExit=0 localCollections=3040 localSkipped=659 markAborted=0 notWorth=0 survivorBytes=6820448 reclaimedBytes=759408544 escapeCalls=33363 escapedObjects=295957 escapedBytes=15838520 foreign=0 acquireFailures=2 bulkEscapes=0
+27134172608
+listsuffix: laxori: acquired=756 dissolvedPause=0 dissolvedFull=0 dissolvedEscape=757 dissolvedExit=0 localCollections=0 localSkipped=0 markAborted=0 notWorth=0 survivorBytes=0 reclaimedBytes=0 escapeCalls=1049597 escapedObjects=1565693 escapedBytes=50102176 foreign=0 acquireFailures=294 bulkEscapes=0
+159636632672
+mixedmedium: laxori: acquired=133 dissolvedPause=0 dissolvedFull=82 dissolvedEscape=52 dissolvedExit=0 localCollections=0 localSkipped=82 markAborted=0 notWorth=0 survivorBytes=0 reclaimedBytes=0 escapeCalls=8258 escapedObjects=14754 escapedBytes=7748248 foreign=0 acquireFailures=1024 bulkEscapes=0
+40586599707

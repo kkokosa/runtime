@@ -1,0 +1,65 @@
+***          0 | struct LaxoriLargeObjectSpace::Span
+         0 |   struct std::atomic<unsigned int> version
+         0 |     struct std::__atomic_base<unsigned int> (base)
+         0 |       std::__atomic_base<unsigned int>::__int_type _M_i
+         4 |   struct std::atomic<enum LaxoriLargeObjectSpace::SpanState> state
+         4 |     enum LaxoriLargeObjectSpace::SpanState _M_i
+         8 |   struct std::atomic<unsigned long> page_start
+         8 |     struct std::__atomic_base<unsigned long> (base)
+         8 |       std::__atomic_base<unsigned long>::__int_type _M_i
+        16 |   struct std::atomic<unsigned long> page_count
+        16 |     struct std::__atomic_base<unsigned long> (base)
+        16 |       std::__atomic_base<unsigned long>::__int_type _M_i
+        24 |   struct std::atomic<unsigned long> object
+        24 |     struct std::__atomic_base<unsigned long> (base)
+        24 |       std::__atomic_base<unsigned long>::__int_type _M_i
+        32 |   struct std::atomic<unsigned long> object_bytes
+        32 |     struct std::__atomic_base<unsigned long> (base)
+        32 |       std::__atomic_base<unsigned long>::__int_type _M_i
+        40 |   struct std::atomic<unsigned long> padding_bytes
+        40 |     struct std::__atomic_base<unsigned long> (base)
+        40 |       std::__atomic_base<unsigned long>::__int_type _M_i
+        48 |   struct std::atomic<unsigned long> owner
+        48 |     struct std::__atomic_base<unsigned long> (base)
+        48 |       std::__atomic_base<unsigned long>::__int_type _M_i
+        56 |   struct LaxoriLargeObjectSpace::Span * next
+        64 |   struct LaxoriLargeObjectSpace::Span * previous
+        72 |   _Bool linked
+           | [sizeof=80, dsize=73, align=8,
+           |  nvsize=73, nvalign=8]
+
+***          0 | class LaxoriLargeObjectSpace
+         0 |   class SideMetadataManager * m_metadata
+         8 |   void * m_reservation
+        16 |   size_t m_reservation_bytes
+        24 |   struct std::atomic<unsigned long> m_admitted_bytes
+        24 |     struct std::__atomic_base<unsigned long> (base)
+        24 |       std::__atomic_base<unsigned long>::__int_type _M_i
+        32 |   struct std::atomic<unsigned long> m_span_bytes
+        32 |     struct std::__atomic_base<unsigned long> (base)
+        32 |       std::__atomic_base<unsigned long>::__int_type _M_i
+        40 |   _Bool m_owns_reservation
+        48 |   struct LaxoriLargeObjectSpace::Span * m_active_spans
+        56 |   struct LaxoriLargeObjectSpace::Span * m_quarantined_spans
+        64 |   struct LaxoriLargeObjectSpace::Span * m_span_pool
+        72 |   struct LaxoriLargeObjectSpace::SpanChunk * m_span_chunks
+        80 |   std::atomic<uintptr_t> * m_page_map
+        88 |   uint32_t * m_free_tree
+        96 |   size_t m_tree_leaves
+       104 |   struct std::atomic<unsigned long> m_inflight_allocations
+       104 |     struct std::__atomic_base<unsigned long> (base)
+       104 |       std::__atomic_base<unsigned long>::__int_type _M_i
+       112 |   struct std::atomic<unsigned long> m_pending_releases
+       112 |     struct std::__atomic_base<unsigned long> (base)
+       112 |       std::__atomic_base<unsigned long>::__int_type _M_i
+       120 |   struct std::atomic<enum LaxoriLargeObjectPhase> m_phase
+       120 |     enum LaxoriLargeObjectPhase _M_i
+       121 |   struct std::atomic<unsigned char> m_mark_state
+       121 |     struct std::__atomic_base<unsigned char> (base)
+       121 |       std::__atomic_base<unsigned char>::__int_type _M_i
+       122 |   struct std::atomic_flag m_lock
+       122 |     struct std::__atomic_flag_base (base)
+       122 |       std::__atomic_flag_data_type _M_i
+           | [sizeof=128, dsize=123, align=8,
+           |  nvsize=123, nvalign=8]
+

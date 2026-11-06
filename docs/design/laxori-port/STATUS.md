@@ -17,6 +17,83 @@ with `DOTNET_GCPath`.
 | Cycle recovery by trial deletion (item i of the description) | **Not implemented.** The shared heap uses the LXR trace (inherited). |
 | P31 count-plane object starts (port of LXR a3a225d40a9) | Done, **default**. Bitmap build kept as `libclrlaxorigc-bitmap.so`. See "Update: P31" below. |
 | Two inherited LXR defects behind `PrivateTests all 2 13` failures (LXR 1d351781d03) | Ported and fixed. 13-thread failure rate 0/80 (was 12/20 in L1). See "Update: P32" below. |
+| Sync with `lxr-gc-review` a782e26dc3e: item 13 marking window, safe LOS, parallel selection | Ported, three commits. See "Update: P33" below. |
+
+## Update: P33 sync with lxr-gc-review a782e26dc3e (results in `results/p33-review-sync/`)
+
+Three squash commits of LXR are ported, each as its own commit and validated before the next one (the validation of one stage is `scripts/stage.sh`):
+
+| Commit here | LXR commit | What |
+|---|---|---|
+| `bf100a9c809` | 504de1576aa | Item 13: dead objects of the first lazy epoch after InitialMark do not mark (`m_first_window`, `MarkDeadObjects()`), P4 `--marking-window` (39 checks, controls `MarkingWindowWide`, `MarkingWindowNone`) |
+| `77e745bcdf4` | 3a6fe592c8e | Safe LOS: young-span list for `SweepNursery`, running totals for `GetMatureStatistics`, `SideState` behind one pointer at the end of the class, `LAXORI_LOS_LEGACY_WALKS`, `LAXORI_LOS_VALIDATE`, P2.5 (209037 checks, four controls) |
+| `5f807d080b0` | a782e26dc3e | Parallel evacuation-set selection: chunk packets on the Unconstrained stage, serial below 4096 blocks in use, `LAXORISelectParallelBlocks`, `LAXORISelectValidate`, P4 `--select-parallel` (462 checks, five controls), P3.1 fork-join test (652 checks) |
+
+The new settings use the Laxori names (the rename of the engine copy: `LAXORIWindowStats`, `LAXORISelectParallelBlocks`, `LAXORISelectValidate`; the LOS
+switches are environment variables `LAXORI_LOS_LEGACY_WALKS` and `LAXORI_LOS_VALIDATE`). Item 4 (barrier) of LXR is not ported (decision).
+Each patch applied without conflicts (`resync.py`); the item 1 and P32 ports of the earlier updates are in the same tree.
+
+Laxori-specific checks (code reading plus tests):
+* **Item 13.** The SATB argument (P46 section 4) is about counted objects. A private object has no count, never enters the decrement path, and the
+  pause dissolves every region (`FlushMutators` in `Suspend`) before any increment, decrement or copy: the survivors of a region are young objects
+  that the stack scan finds, and they are counted by the increments of that pause. So points 1 to 4 of the argument hold unchanged for every
+  object that the flag touches. This is an argument and the P4 test, not a proof.
+* **LOS.** A private region holds small objects only (larger ones go to the shared allocator), and a dissolved region becomes Immix spans, not LOS
+  spans. So the young list of the LOS holds only shared large objects and sees the same state as in LXR. Layout (`scripts/los-layout.sh`,
+  `results/p33-review-sync/los-before.txt` and `los-after.txt`): `Span` is 80 bytes with the same offsets; `LaxoriLargeObjectSpace` keeps all
+  offsets and gets one pointer (`m_side`) at offset 128, the end (sizeof 128 -> 136).
+* **Selection.** Regions are not candidates and are not seen: `Suspend` dissolves them before `SelectMatureCandidates`, `AcquireRegion` takes its blocks
+  with `TryAcquireRun` like a mutator block, and the selection reads only block state, block epoch, pinned flag and the count plane. After the
+  dissolve a region block is an ordinary young block. Test on live Laxori heaps: `PrivateTests all 2` at 1/4/13 threads (L1 and L2, both builds)
+  and four workloads with `DOTNET_LAXORISelectParallelBlocks=0 DOTNET_LAXORISelectValidate=1` (parallel path forced, compared with the serial one in every pause):
+  all pass, no mismatch. `sizeof(LaxoriReferenceCounting)` stays 12032 (`scripts/rc-layout.sh`; the two settings sit in the padding of `LaxoriRcConfiguration`).
+
+Validation (each stage, count-plane build and bitmap build):
+* Native: the 10 programs, all P4 selectors, the walk build and the bitmap build: all pass. The only failure is `--mature-released-candidate` in some runs
+  (a known flaky selector; it also fails before the ports), and `--zero-rc-control` (expected). All mutation controls of the ports are detected.
+  P2.5 also passes with `LAXORI_LOS_VALIDATE=1` and `LAXORI_LOS_LEGACY_WALKS=1`.
+* `PrivateTests all 2` with verifier at 1/2/4/8/13 threads, L1 and L2: all pass at every stage. `all 2 13`: 0 of 20 in each of count L2, count L1, bitmap L2, bitmap L1
+  at every stage (240 runs). With `LAXORI_LOS_VALIDATE=1`: 0 of 16 failed, no validation message; `losmany`, `losarrays`, `mixedmedium` with validation: no message.
+* Crash hunt (verifier on; 13/3, 4/2, 1/1 workers): 180 of 180 at every stage (count L2 54, bitmap L2 54, count L1 36, bitmap L1 36).
+* Seven checksums (the six standard ones and `losmany` 2000 60000 = 42674603309 with `DOTNET_LAXORILOSInitialMB=1000 LOSReserveMB=1600 NativePlaneLimitMB=16000`):
+  right for both builds at every stage; all 448 benchmark runs right.
+
+Benchmark (16 interleaved runs per cell, count-plane build, six workloads and `losmany`, `flock /tmp/lxr-bench.lock`, `results/p33-review-sync/bench-abc.txt`).
+Median of the paired difference in percent with the 95 percent bootstrap interval. Base `i1` is the previous head `ae1e718f1d5`. Only cells whose
+interval excludes 0 are listed; every other cell is inside the noise.
+
+| Port | Workload | Measure | Difference |
+|---|---|---|---|
+| item 13 (a against i1) | `listsuffix` | CPU | -10.7 [-15.8, -9.8] |
+| | `listsuffix` | pause | -7.2 [-10.2, -4.5] |
+| | `listsuffix` | RSS | -1.6 [-2.0, -1.2] |
+| safe LOS (b against a) | `losmany` | wall | -6.5 [-8.2, -2.3] |
+| | `losmany` | pause | -19.6 [-23.4, -10.0] |
+| | `losarrays` | wall / pause | -1.2 [-5.8, -0.6] / -4.8 [-6.0, -3.2] |
+| | `binarytrees` | wall / pause | +2.6 [+0.3, +6.2] / +11.3 [+4.1, +20.1] (not understood, see below) |
+| selection (c against b) | `binarytrees` | wall / pause | -2.0 [-4.2, -0.6] / -10.3 [-16.5, -1.8] |
+| | `listsuffix` | CPU / pause | +2.7 [+0.7, +7.8] / +5.8 [+0.5, +11.8] |
+| all three (c against i1) | `listsuffix` | CPU / RSS | -7.6 [-10.5, -4.6] / -1.7 [-2.2, -1.1] |
+| | `losarrays` | wall / pause | -1.3 [-5.4, -0.2] / -4.8 [-8.2, -2.7] |
+| | `losmany` | wall / pause | -2.2 [-4.6, -0.8] / -15.3 [-17.6, -7.4] |
+
+Which port has a measurable effect in Laxori: **safe LOS** on `losmany` (pause -15 to -20 percent, wall -2 to -6 percent, the LXR measurement was pause -19.7 and wall -5.8 percent) and a
+little on `losarrays`; **item 13** on `listsuffix` (CPU about -8 to -11 percent; LXR measured a gain only with traces forced, so this is not the LXR picture, and the cause is not
+measured; a cheaper first epoch after InitialMark would help if `listsuffix` runs traces, which I did not check); **selection**: nothing in the six workloads (as in LXR: their heaps are below 128 MiB or
+run the selection 0 to 4 times). The `binarytrees` and `listsuffix` cells of b and c that exclude 0 go in opposite directions in the two steps and are not present in c against i1
+(binarytrees wall -0.5 [-2.6, +0.9], pause -1.5 [-9.8, +9.2]); I treat them as noise from a loaded shared machine, but I did not repeat them.
+
+P49 bigheap (8 GB live in a 14.5 GB heap, one mutator thread, trace threshold 2, 60 s; `scripts/bigheap.py`, the `ScalingDriver` of LXR P49 in `driver-scaling/`).
+The Laxori library has no per-pause kind record, so the numbers are all pauses of the measured window from the runtime events (each of them is 200 to 300 ms, so all
+are long pauses). Before (`ae1e718f1d5`) against after (this head), 5 interleaved runs: median pause 235.0 against 237.3 ms (about 73 pauses each). Same head with the selection forced
+serial against default, 4 interleaved runs: 240.0 against 230.0 ms; pooled over the runs the whole distribution is about 11 ms lower with the parallel selection (mean 240.7 against 229.1, p50 240 against 229,
+p90 270 against 259). So the effect of the parallel selection at 8 GB is about 10 ms of 235 (4 to 5 percent), against 46 ms (122 -> 76 ms) measured in LXR. I did not find why it is smaller **[N]**. Candidates:
+a different pause profile (Laxori pauses here are 235 ms, LXR's InitialMark pauses 122 ms), another set of blocks in use, or noise of this machine. 4 and 5 runs only, so
+the sign is likely and the size is not established.
+
+Not verified: Windows and ARM64; GC stress; the bitmap build in the benchmark (only the count build was benchmarked; the bitmap build ran every correctness test); the
+selection in a heap with pinned blocks inside a Laxori run (only the native tests cover pinned blocks); the `binarytrees` and `listsuffix` cells above; the cause of the small selection effect at 8 GB;
+the time spent in `SelectMatureCandidates` inside a Laxori pause (the product build has no phase timers; perf had no symbols for the stripped library).
 
 ## Update: P32 locked operations per survivor (LXR 8b727c24466, item 1; results in `results/p32-locked-ops/`)
 

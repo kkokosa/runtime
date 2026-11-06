@@ -1,0 +1,30 @@
+0 binarytrees laxori-walk 1218 68332294 
+0 binarytrees laxori-bitmap 1156 68332294 
+0 requests laxori-walk 385 27134172608 
+0 requests laxori-bitmap 467 27134172608 
+0 listsuffix laxori-walk 1800 159636632672 
+0 listsuffix laxori-bitmap 1934 159636632672 
+0 mixedmedium laxori-walk 1761 40586599707 
+0 mixedmedium laxori-bitmap 1698 40586599707 
+0 losarrays laxori-walk 1322 13936826922 
+0 losarrays laxori-bitmap 1378 13936826922 
+0 mediumarrays laxori-walk 1249 7032863679 
+0 mediumarrays laxori-bitmap 1171 7032863679 
+0 losmany laxori-walk 1223 42674603309 
+0 losmany laxori-bitmap 1359 42674603309 
+
+medians: wall ms / cpu ms / pause ms / peak RSS MB / collections
+binarytrees  laxori-walk       1218    2206    110    193    38 n=1 bad=0
+binarytrees  laxori-bitmap     1156    2044     81    193    39 n=1 bad=0
+requests     laxori-walk        385     467     12    165    26 n=1 bad=0
+requests     laxori-bitmap      467     571     12    167    26 n=1 bad=0
+listsuffix   laxori-walk       1800    4921    236    199    30 n=1 bad=0
+listsuffix   laxori-bitmap     1934    5652    281    202    30 n=1 bad=0
+mixedmedium  laxori-walk       1761    3025    259    195   323 n=1 bad=0
+mixedmedium  laxori-bitmap     1698    2960    246    195   317 n=1 bad=0
+losarrays    laxori-walk       1322    2772    530    107   212 n=1 bad=0
+losarrays    laxori-bitmap     1378    2845    546    111   346 n=1 bad=0
+mediumarrays laxori-walk       1249    2064    109    486    77 n=1 bad=0
+mediumarrays laxori-bitmap     1171    1983    103    492    77 n=1 bad=0
+losmany      laxori-walk       1223    2992    233    179   169 n=1 bad=0
+losmany      laxori-bitmap     1359    3281    252    195   158 n=1 bad=0
