@@ -388,6 +388,7 @@ HRESULT LaxoriGcHeap::Initialize()
         !ReadSetting("LAXORINurseryCapMB", &nurseryCapMB, 10, SIZE_MAX >> 20) ||
         !ReadBooleanSetting("LAXORIPolicyTrace", &m_policy_trace) ||
         !ReadBooleanSetting("LAXORILookupStats", &m_lookup_stats) ||
+        !ReadBooleanSetting("LAXORIWindowStats", &m_window_stats) ||
         !ReadBooleanSetting("LAXORIPrezero", &configuration.prezero) ||
         !ReadBooleanSetting("LAXORIPrezeroThread", &configuration.prezeroThread) ||
         !ReadSetting("LAXORIPrezeroMarginBlocks", &configuration.prezeroMarginBlocks, 10, 4096) ||
@@ -1506,6 +1507,28 @@ void LaxoriGcHeap::Resume(bool finished, void* context)
             static_cast<unsigned long long>(minipal_hires_tick_frequency()));
     }
     LaxoriPauseTimers& timers = heap->m_engine.GetPauseTimers();
+#ifdef LAXORI_HAS_PHASE_TIMERS
+    if (heap->m_window_stats &&
+        (heap->m_current_pause_kind == LaxoriPauseKind::FinalMark || heap->m_current_pause_kind == LaxoriPauseKind::Full))
+    {
+        LaxoriTraceMetrics trace = heap->m_engine.GetTraceMetrics();
+        LaxoriRcMetrics rc = heap->m_engine.GetMetrics();
+        fprintf(stderr,
+            "LAXORIWINDOW pause=%u kind=%u initial=%llu final=%llu full=%llu tracePauses=%llu deaths=%llu "
+            "first_deaths=%llu first_marked=%llu first_children=%llu later_deaths=%llu later_marked=%llu "
+            "later_children=%llu deletion_marks=%llu satb=%llu\n",
+            heap->m_collections.load(), static_cast<unsigned>(heap->m_current_pause_kind),
+            static_cast<unsigned long long>(trace.initialMarks), static_cast<unsigned long long>(trace.finalMarks),
+            static_cast<unsigned long long>(trace.fullMarks), static_cast<unsigned long long>(trace.tracePauses),
+            static_cast<unsigned long long>(rc.deaths), static_cast<unsigned long long>(trace.firstEpochDeaths),
+            static_cast<unsigned long long>(trace.firstEpochMarked),
+            static_cast<unsigned long long>(trace.firstEpochChildren),
+            static_cast<unsigned long long>(trace.laterEpochDeaths),
+            static_cast<unsigned long long>(trace.laterEpochMarked),
+            static_cast<unsigned long long>(trace.laterEpochChildren),
+            static_cast<unsigned long long>(trace.deletionMarks), static_cast<unsigned long long>(trace.satbEntries));
+    }
+#endif // LAXORI_HAS_PHASE_TIMERS
     {
         LaxoriPhaseScope resume(timers, LaxoriPauseTimers::ResumeRuntime);
         // A tracing pause leaves a lazy sweep of dead cycles. It reads the type data of dead objects, which the runtime

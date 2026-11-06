@@ -325,6 +325,9 @@ private:
     bool m_policy_trace = false;
     // Prints the interior-lookup counters of the engine at the end of every pause (LAXORILookupStats).
     bool m_lookup_stats = false;
+    // Prints the work of the lazy decrements in the first epoch of a trace and in later epochs when a trace ends
+    // (LAXORIWindowStats). Only a library built with phase timers or diagnostic probes counts it.
+    bool m_window_stats = false;
     ObjectReferenceEnumerationParameters m_enumeration;
     ObjectHeaderBitsParameters m_header_bits{};
     FrozenSegment m_frozen[MaximumFrozenSegments];

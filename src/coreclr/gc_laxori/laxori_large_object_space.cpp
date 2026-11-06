@@ -1232,8 +1232,9 @@ LaxoriLargeObjectResult LaxoriLargeObjectSpace::ReleaseAfterDecrements(
     }
     LaxoriLargeObjectPhase phase = m_phase.load(std::memory_order_acquire);
     // The lazy release runs after the pause that killed the object. While a concurrent trace is active the space
-    // is in ConcurrentMark between pauses, so that phase must be accepted too. The dying object was marked and
-    // scanned before its count reached zero (FinishDyingTraceObject), so the trace holds no reference to it.
+    // is in ConcurrentMark between pauses, so that phase must be accepted too. A dying object was marked and scanned before its
+    // count reached zero (FinishDyingTraceObject), so the trace holds no reference to it. An object that dies in the first epoch
+    // after InitialMark is not marked (P46): it was unreachable at the snapshot, so the trace holds no reference to it either.
     if (phase == LaxoriLargeObjectPhase::Shutdown)
     {
         return LaxoriLargeObjectResult::InvalidPhase;

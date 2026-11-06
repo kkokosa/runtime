@@ -3561,6 +3561,97 @@ namespace
         Check(engine.DetachMutator(mutator) == LaxoriRcResult::Success, "deletion race owner detaches");
     }
 
+    // P46 (item 13). Marking window. The lazy decrements of the epoch right after InitialMark come from the epoch before the
+    // snapshot, so the objects that die there were not reachable at the snapshot: the trace never needs them, and they must not
+    // be marked (Java LAXORI: rc.rs ProcessDecs, previous_pause != InitialMark). The decrements of every later epoch of the trace
+    // belong to the snapshot: an object that dies there must be marked and scanned (the mark-and-scan-on-delete rule). The test
+    // follows one trace through four pauses:
+    //   1. RefCount pause: roots {live, head, cycle}. live -> shared -> tail. head -> mid -> shared. cycle <-> twin.
+    //   2. InitialMark with roots {live}: head and cycle lose their root. head and mid die in the first lazy epoch, which
+    //      must mark nothing (deletionMarks stays 0). shared keeps one count, the cycle keeps its counts.
+    //   3. RefCount pause with live -> shared deleted: shared and tail die in the second lazy epoch, which must mark both.
+    //   4. FinalMark with roots {live}: the trace ends, the cycle is swept, and only live is left.
+    // Controls: LAXORI_MARKING_WINDOW_WIDE_CONTROL (the first epoch marks as well, the rule before P46) and
+    // LAXORI_MARKING_WINDOW_NONE_CONTROL (no epoch marks, a window that is too narrow).
+    void ValidateMarkingWindow()
+    {
+        Type link(24, 1);
+        Type leaf(24, 0);
+        LaxoriReferenceCounting engine;
+        int identity;
+        LaxoriRcMutator* mutator;
+        if (!Initialize(engine, 8, &mutator, &identity))
+        {
+            return;
+        }
+        Object* live = Allocate(engine, mutator, link);
+        Object* shared = Allocate(engine, mutator, link);
+        Object* tail = Allocate(engine, mutator, leaf);
+        Object* head = Allocate(engine, mutator, link);
+        Object* mid = Allocate(engine, mutator, link);
+        Object* cycle = Allocate(engine, mutator, link);
+        Object* twin = Allocate(engine, mutator, link);
+        if (live == nullptr || shared == nullptr || tail == nullptr || head == nullptr || mid == nullptr ||
+            cycle == nullptr || twin == nullptr)
+        {
+            return;
+        }
+        Check(Store(engine, mutator, Field(live), shared) && Store(engine, mutator, Field(shared), tail) &&
+                Store(engine, mutator, Field(head), mid) && Store(engine, mutator, Field(mid), shared) &&
+                Store(engine, mutator, Field(cycle), twin) && Store(engine, mutator, Field(twin), cycle),
+            "marking window graph initializes");
+        if (!Epoch(engine, {live, head, cycle}) ||
+            !Check(engine.HoldTrace(true) == LaxoriRcResult::Success, "marking window trace gate arms") ||
+            !TracePause(engine, {live}, LaxoriPauseKind::InitialMark))
+        {
+            return;
+        }
+        if (!Check(engine.Drain(Timeout) == LaxoriRcResult::Success, "first lazy epoch after InitialMark drains"))
+        {
+            return;
+        }
+        Check(Count(engine, head) == 0 && Count(engine, mid) == 0 && Count(engine, shared) == 1 &&
+                Count(engine, tail) == 1 && Count(engine, cycle) == 1 && Count(engine, twin) == 1,
+            "the first lazy epoch kills the pre-snapshot chain and keeps every object that is still referenced");
+        Check(engine.GetTraceMetrics().deletionMarks == 0 && !engine.IsMarked(head) && !engine.IsMarked(mid),
+            "objects that die in the first lazy epoch after InitialMark are not marked (they were dead at the snapshot)");
+        Check(engine.GetTraceMetrics().firstEpochDeaths == 2 && engine.GetTraceMetrics().firstEpochMarked == 0 &&
+                engine.GetTraceMetrics().laterEpochDeaths == 0,
+            "the epoch counters see both deaths in the first epoch and no mark");
+        Check(engine.GetTracePhase() == LaxoriTracePhase::Concurrent && !engine.IsMarked(live),
+            "the trace is still held after the first epoch");
+        if (!Check(Store(engine, mutator, Field(live), nullptr), "snapshot reference is deleted in the first trace epoch"))
+        {
+            return;
+        }
+        uint64_t marksBefore = engine.GetTraceMetrics().deletionMarks;
+        std::vector<Object*> liveRoot{live};
+        Roots roots{&liveRoot};
+        if (!Check(engine.Collect(Capture, &roots, Timeout) == LaxoriRcResult::Success,
+                "RC pause interrupts the held trace") ||
+            !Check(engine.Drain(Timeout) == LaxoriRcResult::Success, "second lazy epoch drains"))
+        {
+            return;
+        }
+        Check(Count(engine, shared) == 0 && Count(engine, tail) == 0,
+            "the second lazy epoch kills the snapshot object and its child");
+        Check(engine.GetTraceMetrics().deletionMarks - marksBefore == 2 &&
+                engine.GetTraceMetrics().laterEpochDeaths == 2 && engine.GetTraceMetrics().laterEpochMarked == 2,
+            "objects that die in a later epoch of the trace are marked and scanned before zero publication");
+        if (!TracePause(engine, {live}, LaxoriPauseKind::FinalMark))
+        {
+            return;
+        }
+        LaxoriTraceMetrics metrics = engine.GetTraceMetrics();
+        Check(engine.GetTracePhase() == LaxoriTracePhase::Inactive && metrics.finalMarks == 1,
+            "FinalMark finishes the trace");
+        Check(!engine.IsCycleSweepPending() && metrics.cycleObjects == 2 && metrics.cycleBytes == 48,
+            "the garbage cycle is released when the trace ends");
+        Check(engine.GetLiveBytes() == 24 && Count(engine, live) != 0,
+            "only the root survives the trace: no snapshot object is lost and no dead object is kept");
+        Check(engine.DetachMutator(mutator) == LaxoriRcResult::Success, "marking window owner detaches");
+    }
+
     void ValidateSharedSatbStream()
     {
         constexpr size_t Fields = 4097;
@@ -10993,10 +11084,18 @@ int main(int argc, char** argv)
             ValidateCycleReclamation(bits);
         }
         ValidateMarkAndScanOnDelete();
+        ValidateMarkingWindow();
         ValidateSharedSatbStream();
         ValidateRetiredLeaseReuse();
         ValidateBlackNewbornClosure();
         std::printf("%s: %d/%d trace engine checks\n",
+            Failures == 0 ? "PASS" : "FAIL", Checks - Failures, Checks);
+        return Failures == 0 ? 0 : 1;
+    }
+    if (argc == 2 && strcmp(argv[1], "--marking-window") == 0)
+    {
+        ValidateMarkingWindow();
+        std::printf("%s: %d/%d marking window checks\n",
             Failures == 0 ? "PASS" : "FAIL", Checks - Failures, Checks);
         return Failures == 0 ? 0 : 1;
     }
@@ -11042,6 +11141,7 @@ int main(int argc, char** argv)
     ValidateFirstStoreBeforeAllocation();
     ValidateFirstStoreBeforeAllocation(true);
     ValidateMarkAndScanOnDelete();
+    ValidateMarkingWindow();
     ValidateSharedSatbStream();
     ValidateRetiredLeaseReuse();
     ValidateBlackNewbornClosure();

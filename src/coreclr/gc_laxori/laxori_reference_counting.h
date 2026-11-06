@@ -219,6 +219,15 @@ struct LaxoriTraceMetrics
     uint64_t interruptions;
     uint64_t concurrentSlices;
     uint64_t checkpointInterruptions;
+    // P46. Zero unless the library is built with phase timers or diagnostic probes. First epoch after InitialMark / later
+    // epochs of the trace: dead objects, dead objects that the epoch marked, children that it queued for the trace.
+    uint64_t firstEpochDeaths;
+    uint64_t firstEpochMarked;
+    uint64_t firstEpochChildren;
+    uint64_t laterEpochDeaths;
+    uint64_t laterEpochMarked;
+    uint64_t laterEpochChildren;
+    uint64_t tracePauses;
 };
 
 // P26 (F2). What the last pause visited in the walks that used to follow the trace backlog. The counters count visited
@@ -544,6 +553,7 @@ public:
     bool IsTraceExhausted() const;
     LaxoriTracePhase GetTracePhase() const;
     LaxoriTraceMetrics GetTraceMetrics() const;
+    uint64_t WindowMetric(size_t index) const;
     LaxoriPauseWalkMetrics GetPauseWalkMetrics() const;
     LaxoriRcResult HoldTrace(bool hold);
     LaxoriRcResult ArmScanCheckpoint(Object* object);
@@ -1003,6 +1013,20 @@ private:
     LaxoriRcResult ProcessTraceScan(TraceScan* scan, bool finish, TraceBatch* targets = nullptr);
     LaxoriRcResult ScanTraceLocked(TraceScan* scan, bool finish, TraceBatch* targets = nullptr);
     LaxoriRcResult FinishDyingTraceObject(Object* object);
+    // P46 (item 13). True while the lazy decrements mark the objects that die and queue their children for the trace. A trace
+    // is on, and the epoch is not the first one after InitialMark: the decrements of that epoch come from the epoch before
+    // the snapshot, so the objects that die there were unreachable at the snapshot and the trace never needs them (Java LAXORI:
+    // rc.rs ProcessDecs, mark_dead_objects with previous_pause != InitialMark). The controls break the rule on purpose.
+    bool MarkDeadObjects() const
+    {
+#if defined(LAXORI_SIDE_METADATA_TEST_PLATFORM) && defined(LAXORI_MARKING_WINDOW_NONE_CONTROL)
+        return false;
+#elif defined(LAXORI_SIDE_METADATA_TEST_PLATFORM) && defined(LAXORI_MARKING_WINDOW_WIDE_CONTROL)
+        return m_marking.load(std::memory_order_acquire);
+#else
+        return m_marking.load(std::memory_order_acquire) && !m_first_window.load(std::memory_order_acquire);
+#endif
+    }
     LaxoriRcResult DrainTraceInsidePause();
     // The same on all workers. The calling thread is a packet of a pause stage; it opens the trace stage, makes the pending
     // trace packets runnable, helps, and closes the stage when the trace is done. Falls back to the serial drain.
@@ -1143,6 +1167,9 @@ private:
     std::atomic<LaxoriTracePhase> m_trace_phase;
     std::atomic<bool> m_marking;
     std::atomic<bool> m_hold_trace;
+    // P46. True from the end of InitialMark until the next pause starts: the lazy decrements of that epoch come from the epoch
+    // before the snapshot (MarkDeadObjects). It sits in the padding after the flags above and adds no bytes.
+    std::atomic<bool> m_first_window;
     std::atomic<uintptr_t> m_scan_checkpoint;
     std::atomic<bool> m_scan_checkpoint_active;
     std::atomic<uint64_t> m_trace_pending;
@@ -1257,6 +1284,18 @@ private:
     std::atomic<LaxoriRcPhase> m_phase;
     std::atomic<LaxoriRcResult> m_failure;
     std::atomic<uint64_t> m_metrics[18];
+#ifdef LAXORI_HAS_PHASE_TIMERS
+    // P46. Work that the lazy decrements do while a trace is on. Indexes 0-2: first epoch after InitialMark (dead objects,
+    // marked dead objects, queued children). 3-5: the same for later epochs. 6: pauses (RC and FinalMark) that start while a
+    // trace is on.
+    // They sit at the end of the class so that no other field moves, and they exist only in diagnostic builds.
+    std::atomic<uint64_t> m_window_metrics[7]{};
+    void CountWindow(size_t metric, uint64_t count)
+    {
+        m_window_metrics[metric + (m_first_window.load(std::memory_order_relaxed) ? 0 : 3)].fetch_add(
+            count, std::memory_order_relaxed);
+    }
+#endif // LAXORI_HAS_PHASE_TIMERS
 #ifdef LAXORI_SIDE_METADATA_TEST_PLATFORM
     std::atomic<uintptr_t> m_reader_target{0};
     std::atomic<Work*> m_reader_work{nullptr};

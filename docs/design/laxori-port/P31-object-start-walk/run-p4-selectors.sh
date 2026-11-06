@@ -16,7 +16,7 @@ if [[ ${#selectors[@]} -eq 0 ]]; then
         --mature-remset-whole --mature-remset-wrap --mature-remset-same-shape --mature-remset-boundaries --nursery
         --nursery-reader --root-batching --trace-batching --aux-retirement --object-planes --storage-diagnostics
         --lifetime --p8-policy --p8-storage --zero-rc-control --f1-trace --f2-pause --f8-lazy --f4b-scheduler
-        --f4-scheduler --f10-rc --item3 --f5-policy --trace --release-stage --object-start
+        --f4-scheduler --f10-rc --item3 --f5-policy --trace --marking-window --release-stage --object-start
     )
 fi
 status=0
