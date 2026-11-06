@@ -34,8 +34,10 @@ LAXORI_BLOCK_SHIFT         equ 15
 LAXORI_TEB_SELF            equ 30h
 
 ; Saves the vector state to [rsp] (the xsave frame). Kills rax and rdx.
+; Test control (the native barrier test builds this file with it and must see a failure): LAXORI_WB_CONTROL_NO_VECTOR_SAVE.
 LAXORI_SAVE_VECTOR_STATE macro
         local   SaveFx, SaveDone
+ifndef LAXORI_WB_CONTROL_NO_VECTOR_SAVE
         ; the header of the xsave area must be zero before xrstor sees it
         xor     eax, eax
         mov     qword ptr [rsp + LAXORI_XSAVE_HEADER_OFFSET + 0], rax
@@ -62,11 +64,13 @@ LAXORI_SAVE_VECTOR_STATE macro
 SaveFx:
         fxsave  [rsp]
 SaveDone:
+endif
         endm
 
 ; Restores the vector state from [rsp]. Kills rax and rdx.
 LAXORI_RESTORE_VECTOR_STATE macro
         local   RestoreFx, RestoreDone
+ifndef LAXORI_WB_CONTROL_NO_VECTOR_SAVE
         mov     rax, qword ptr [XsaveMaskSlot]
         test    rax, rax
         jz      RestoreFx
@@ -77,6 +81,7 @@ LAXORI_RESTORE_VECTOR_STATE macro
 RestoreFx:
         fxrstor [rsp]
 RestoreDone:
+endif
         endm
 
 ;
