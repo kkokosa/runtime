@@ -58,15 +58,30 @@ set(LAXORI_SOURCES
   laxori_worker_policy.h
   laxori_prefetch.h)
 
-# The Linux x64 barrier only. The Windows assembly of the barrier is not ported (see docs/design/laxori-port/DESIGN.md).
-set(LAXORI_WRITE_BARRIER_ASM amd64/laxori_writebarrier.S)
+if(CLR_CMAKE_TARGET_WIN32)
+  list(APPEND LAXORI_SOURCES ../gc/windows/Native.rc)
+  set(LAXORI_WRITE_BARRIER_ASM amd64/laxori_writebarrier.asm)
+else()
+  set(LAXORI_WRITE_BARRIER_ASM amd64/laxori_writebarrier.S)
+endif()
 add_library_clr(laxori_writebarrier OBJECT ${LAXORI_WRITE_BARRIER_ASM})
 target_include_directories(laxori_writebarrier PRIVATE
   ${ARCH_SOURCES_DIR}
   ../vm/${ARCH_SOURCES_DIR}
   ${CMAKE_CURRENT_BINARY_DIR}/../vm/wks)
+if(CLR_CMAKE_TARGET_WIN32)
+  add_dependencies(laxori_writebarrier asmconstants_inc)
+endif()
 
-set(LAXORI_LINK_LIBRARIES gc_pal minipal)
+if(CLR_CMAKE_HOST_WIN32)
+  set(LAXORI_LINK_LIBRARIES
+    ${STATIC_MT_CRT_LIB}
+    ${STATIC_MT_VCRT_LIB}
+    kernel32.lib
+    advapi32.lib
+    coreclrminipal)
+endif()
+list(APPEND LAXORI_LINK_LIBRARIES gc_pal minipal)
 list(APPEND LAXORI_LINK_LIBRARIES gc_vxsort)
 
 add_library_clr(clrlaxorigc SHARED ${LAXORI_SOURCES} $<TARGET_OBJECTS:laxori_writebarrier>)

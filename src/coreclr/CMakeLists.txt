@@ -81,8 +81,9 @@ OPTION(CLR_CMAKE_LAXORI_BUILD_BITMAP_VARIANT
   "Laxori: also build libclrlaxorigc-bitmap.so (ValidObject plane) from the same sources for comparison" ON)
 
 if(CLR_CMAKE_ENABLE_LAXORI_GC)
-  if(NOT CLR_CMAKE_TARGET_ARCH_AMD64 OR NOT CLR_CMAKE_TARGET_LINUX)
-    message(FATAL_ERROR "The selectable Laxori prototype requires standalone Linux AMD64 CoreCLR")
+  if(NOT CLR_CMAKE_TARGET_ARCH_AMD64 OR
+     (NOT CLR_CMAKE_TARGET_WIN32 AND NOT CLR_CMAKE_TARGET_LINUX))
+    message(FATAL_ERROR "The selectable Laxori prototype requires standalone Windows or Linux AMD64 CoreCLR")
   endif()
 endif()
 
