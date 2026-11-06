@@ -20,7 +20,7 @@ foreach ($c in $controls) {
     $out = & "$here\native-windows.ps1" @args2 2>&1 | Out-String
     $line = ($out -split "`n" | Where-Object { $_ -match 'CONTROL|BUILD FAILED' } | Select-Object -First 1)
     Write-Output ("{0}: {1}" -f $c, $line.Trim())
-    if ($line -notmatch 'detected') { $bad++ }
+    if ($line -notmatch 'detected' -or $line -match 'NOT detected') { $bad++ }
 }
 # P2.4: the walk variant must not write the ValidObject plane
 $out = & "$here\native-windows.ps1" -Program p2.4 -Control None -ExtraDefine 'LAXORI_WALK_WRITE_VALID_CONTROL' -Output "$Output-p24" 2>&1 | Out-String
