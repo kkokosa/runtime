@@ -13,7 +13,7 @@ the WSL2 Ubuntu used for all earlier work, what was found, and what was not veri
   on Linux either, one is detected only in most runs, see 5.2), the native barrier test passes (19 checks plus a vector-state control), `PrivateTests` passes
   (L1 and L2, 1/2/4/8/13 threads, `all 2 13` 20 times each: 70 of 70 runs), the six standard workloads and `losmany` give the right checksums
   with every collector, and a reduced crash hunt ran 108 runs without failure.
-* Five Windows defects were fixed, each in its own commit (section 4). No change of Linux behaviour: the Linux native programs, the Linux barrier test and a Linux
+* Six Windows defects were fixed, each in its own commit (section 4). No change of Linux behaviour: the Linux native programs, the Linux barrier test and a Linux
   syntax check of the changed files pass.
 * The big difference of Windows is **memory**: the large-object space gives memory back with `madvise(MADV_DONTNEED)` on Linux and keeps the range committed.
   Windows has no call with the same effect (zeros on the next use, no re-commit), so every large allocation commits and every release decommits (section 8).
@@ -217,11 +217,14 @@ busy system, none failed with a smaller cap at other times. So the starts below 
 | 16 GB / 29 GB | LXR | **0 of 3** | | | | | | |
 | 24 GB / 40 GB | Laxori | 1 of 1 | 61 | 452.5 | 521 | 520 | 31.8 | 156 s |
 
-* The failure of LXR (and of one Laxori run at 16 GB) is `allocation-pressure collection failed (engine failure 8, SchedulerFailure)`. A diagnostic build of LXR (not committed; `gc_lxr` is unchanged) shows that
-  it is a **30 s timeout of an InitialMark pause** (`CompletePause` result Timeout, `RunStwCycle`). The same failure happens with the serial selection (`LXRSelectParallelBlocks` maximal), so it is not the parallel selection.
-  LXR passes the same workload at 500, 1000, 2000 and 4000 MB live. The cause is **not established** [N]: a failed commit in a worker (commit limit) is consistent with the symptoms but I did not show it.
-  On WSL2 the same LXR runs worked at 8 GB (P49), so this is a Windows difference.
-* Laxori at 8 GB: median pause 225 ms on Windows against 235 ms measured on WSL2 for the previous head (STATUS.md, P33), the same size of work. The Laxori library has no per-pause kind record, so all pauses of the window are listed (each is long).
+* **The failure of LXR (and of one Laxori run at 16 GB) is understood and fixed in Laxori** (commit `56afaba0222`). It is `allocation-pressure collection failed (engine failure 8, SchedulerFailure)`: a **30 s timeout of the InitialMark pause**
+  (`CompletePause`, `Timeout = 30000` in `lxr_gc.h`). A temporary diagnostic build of LXR (not committed; `gc_lxr` is unchanged) printed the scheduler state at the timeout: the Release stage open, 13 of 13 workers executing, none parked.
+  A capture of all worker stacks (suspend, unwind, symbolize) shows the pause thread and every worker in `free()` -> `RtlFreeHeap` -> `RtlEnterCriticalSection`, called from `RetireSourceChunks` (the `delete chunk` of the copy log);
+  `RetireSources` took 38 s in one pause, 13 s and 2.4 s in others, all threads ending together. With the timeout raised to 600 s the same run passes (build phase 75 s).
+  Cause: `CopyLog::Chunk` was 16 KB plus 16 bytes. The Windows process heap serves only blocks up to 16368 bytes from its scalable low-fragmentation front end; a larger block goes to the back end (one lock, free-list walk), and 13 workers free tens of thousands of chunks in one pause.
+  The same chunk size in a temporary LXR build (1020 entries) makes the 8 GB run pass with no stage longer than 500 ms and a build phase of 52 s. Laxori at 12 GB live: old library 1 of 2 runs failed with failure 8, the fixed library 0 of 2 (small numbers). The tables above were measured **before** the fix.
+  Why Laxori passes more often: it copies fewer sources in the private tier, so it frees fewer chunks. The big-heap runs of the table were not repeated with the fixed library [N] (the host was not quiet).
+* A growth path observation [N]: with `ImmixInitialMB=4000` and `ImmixReserveMB=21600` (12 GB live) the build phase took about 490 s for the old and the fixed library, against 86 s at 16 GB with initial equal to reserve. I did not look into it (commit steps of the growth on Windows are a candidate).* Laxori at 8 GB: median pause 225 ms on Windows against 235 ms measured on WSL2 for the previous head (STATUS.md, P33), the same size of work. The Laxori library has no per-pause kind record, so all pauses of the window are listed (each is long).
 * The 16 GB run of the task needed about 25 GB RSS; Laxori used 23.5 GB, WKS 21.9 GB, SVR 28.2 GB working set.
 * Laxori in a 24 GB heap pauses 452 ms (median) and uses 31.8 GB working set; the live heap of 24 GB took 156 s to build.
 
@@ -260,7 +263,7 @@ have no hardware event source either (it could only sample by timer). Nothing wa
 
 * `src/coreclr/gc_lxr/side_metadata.h:573, 637, 672, 767, 842`: `_ASSERTE((checked.shift & 7) == byteShift)` gives C4389 in a Windows Debug build with `/WX` (same fix as Laxori commit `a732ade1865`).
 * `docs/design/lxr-port/P4/lxr-rc-validation.cpp:8413` (and other locals named `small`): `small` is a macro of `rpcndr.h`; `run-lxr-rc-vertical.ps1` stops with C2628 at the head of this branch.
-* LXR on Windows with a big live heap: 8 GB live / 14.5 GB cap and 16 GB / 29 GB fail 6 of 6 with a 30 s InitialMark timeout (SchedulerFailure), Laxori passes 5 of 6 (section 9). Cause not established; it may be in the engine code that Laxori shares.
+* src/coreclr/gc_lxr/lxr_reference_counting.cpp:637: CopyLog::Chunk::Capacity = 1024 (16 KB + 16 bytes) is above the 16368 byte limit of the Windows low-fragmentation heap. Repro: windows\bigheap-windows.py <out> 1 8000 14500 60 lxr (fails 3 of 3 on Windows with ngine failure 8); with Capacity = 1020 the same run passes (section 9). Same fix as Laxori commit 56afaba0222.
 * `gc_lxr` itself compiled with MSVC and ran all seven workloads right in this frame; no other defect was seen. The LXR native programs other than P4 were not run on Windows here.
 
 ## 14. Files (`docs/design/laxori-port/windows/`)
