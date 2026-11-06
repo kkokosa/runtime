@@ -10,6 +10,24 @@ using System.Text.Json;
 
 internal static class CompareDriver
 {
+    // DRV_PAUSES=1: collects the GC start/stop events of the runtime in the measured window and writes pauses.csv.
+    private sealed class PauseListener : System.Diagnostics.Tracing.EventListener
+    {
+        public readonly List<(int Id, DateTime Time)> Events = new();
+
+        protected override void OnEventSourceCreated(System.Diagnostics.Tracing.EventSource source)
+        {
+            if (source.Name == "Microsoft-Windows-DotNETRuntime")
+                EnableEvents(source, System.Diagnostics.Tracing.EventLevel.Informational, (System.Diagnostics.Tracing.EventKeywords)0x1);
+        }
+
+        protected override void OnEventWritten(System.Diagnostics.Tracing.EventWrittenEventArgs e)
+        {
+            if (e.EventId == 9 || e.EventId == 3)
+                lock (Events) Events.Add((e.EventId, e.TimeStamp));
+        }
+    }
+
     [UnmanagedFunctionPointer(CallingConvention.Cdecl)]
     private delegate ulong Metric(uint id);
 
@@ -74,6 +92,16 @@ internal static class CompareDriver
             {
                 metric = Marshal.GetDelegateForFunctionPointer<Metric>(export);
             }
+            if (NativeLibrary.TryGetExport(library, "GC_Laxori_BeginRequest", out IntPtr beginHook) &&
+                NativeLibrary.TryGetExport(library, "GC_Laxori_EndRequest", out IntPtr endHook) &&
+                Environment.GetEnvironmentVariable("DRV_NO_REQUEST_HOOKS") != "1")
+            {
+                unsafe
+                {
+                    GcBench.s_beginRequest = (delegate* unmanaged[Cdecl, SuppressGCTransition]<void>)beginHook;
+                    GcBench.s_endRequest = (delegate* unmanaged[Cdecl, SuppressGCTransition]<void*, void>)endHook;
+                }
+            }
         }
 
         MethodInfo run = typeof(GcBench).GetMethod("Run", BindingFlags.Static | BindingFlags.NonPublic)!;
@@ -84,10 +112,11 @@ internal static class CompareDriver
             return (long)run.Invoke(null, new object?[] { workload, count, ops, null, false })!;
         }
 
+        PauseListener? pauseListener = Environment.GetEnvironmentVariable("DRV_PAUSES") == "1" ? new PauseListener() : null;
         Stopwatch warmup = Stopwatch.StartNew();
         do
         {
-            Invoke(workload == "binarytrees" ? Math.Min(size, 14) : Math.Min(size, 4096), 20000);
+            Invoke(workload == "binarytrees" ? Math.Min(size, 14) : Math.Min(size, 4096), workload == "losmany" ? 300 : 20000);
         } while (warmup.Elapsed.TotalSeconds < 3);
         warmup.Stop();
 
@@ -122,11 +151,54 @@ internal static class CompareDriver
         double cpuBefore = process.TotalProcessorTime.TotalMilliseconds;
         string? mark = Environment.GetEnvironmentVariable("PROF_MARK"); if (mark is not null) File.WriteAllText(mark + ".start", "1");
         ulong m33a = metric is not null ? metric(33) : 0;
+        // Private tier (Laxori): metrics 700..716 (see RegionMetric in laxori_reference_counting.h) and 48 (objects promoted by pauses).
+        const int RegionCount = 44;   // 17 counters, then the thread-local collector diagnostics (LAXORITlTimers=1); the last one is the TSC kHz (absolute)
+        ulong[] regionBefore = new ulong[RegionCount];
+        bool hasRegion = metric is not null && metric(700) != UInt64.MaxValue;
+        ulong promotionsBefore = metric is not null ? metric(48) : 0;
+        if (hasRegion)
+        {
+            for (uint i = 0; i < RegionCount; i++) regionBefore[i] = metric!(700 + i);
+        }
+        DateTime utcStart = DateTime.UtcNow;
         long start = Now();
         long checksum = Invoke(size, operations);
         long end = Now();
+        DateTime utcEnd = DateTime.UtcNow;
+        if (pauseListener is not null)
+        {
+            System.Threading.Thread.Sleep(300);
+            var csv = new System.Text.StringBuilder("start_ms,duration_ms\n");
+            DateTime? begin = null;
+            lock (pauseListener.Events)
+            {
+                foreach (var ev in pauseListener.Events)
+                {
+                    if (ev.Id == 9) { begin = ev.Time; }
+                    else if (begin is not null)
+                    {
+                        if (begin.Value >= utcStart && ev.Time <= utcEnd.AddMilliseconds(50))
+                            csv.Append(((begin.Value - utcStart).TotalMilliseconds).ToString("F3", CultureInfo.InvariantCulture)).Append(',').Append((ev.Time - begin.Value).TotalMilliseconds.ToString("F3", CultureInfo.InvariantCulture)).Append('\n');
+                        begin = null;
+                    }
+                }
+            }
+            File.WriteAllText(Path.Combine(output, "pauses.csv"), csv.ToString());
+            pauseListener.Dispose();
+        }
         if (mark is not null) File.WriteAllText(mark + ".end", "1");
         if (metric is not null) Console.Error.WriteLine("fast_refills=" + (metric(33) - m33a));
+        long[] region = new long[RegionCount];
+        if (hasRegion)
+        {
+            for (uint i = 0; i < RegionCount; i++) region[i] = i == RegionCount - 1 ? (long)metric!(700 + i) : (long)(metric!(700 + i) - regionBefore[i]);
+            string[] names = { "acquired", "dissolvedPause", "dissolvedFull", "dissolvedEscape", "dissolvedExit", "localCollections", "localSkipped",
+                "markAborted", "notWorth", "survivorBytes", "reclaimedBytes", "escapeCalls", "escapedObjects", "escapedBytes", "foreign",
+                "acquireFailures", "bulkEscapes" };
+            Console.Error.WriteLine("laxori: " + string.Join(" ", Array.ConvertAll(names, n => n + "=" + region[Array.IndexOf(names, n)])));
+            if (region[17] != 0) Console.Error.WriteLine("laxori-tl: " + string.Join(" ", System.Linq.Enumerable.Select(System.Linq.Enumerable.Skip(region, 17), x => x.ToString())));
+        }
+        long promotions = metric is not null ? (long)(metric(48) - promotionsBefore) : 0;
         double cpuAfter = process.TotalProcessorTime.TotalMilliseconds;
 
         double pauseMsAfter = GC.GetTotalPauseDuration().TotalMilliseconds;
@@ -156,7 +228,21 @@ internal static class CompareDriver
             for (uint i = 0; i < 8; i++) causes[i] = (long)(metric(520 + i) - causeBefore[i]);
         }
         double allocatedMb = (GC.GetTotalAllocatedBytes(false) - allocatedBefore) / (1024.0 * 1024.0);
-
+        double peakCommitMb = 0, wsEndMb = 0, wsAfterGcMb = 0;
+        if (OperatingSystem.IsWindows())
+        {
+            process.Refresh();
+            peakCommitMb = process.PeakPagedMemorySize64 / (1024.0 * 1024.0);
+            wsEndMb = process.WorkingSet64 / (1024.0 * 1024.0);
+            if (Environment.GetEnvironmentVariable("DRV_WS_AFTER") == "1")
+            {
+                // The working set after a full collection and a short idle time (how much memory the collector gives back).
+                GC.Collect(2, GCCollectionMode.Forced, true, true);
+                System.Threading.Thread.Sleep(2000);
+                process.Refresh();
+                wsAfterGcMb = process.WorkingSet64 / (1024.0 * 1024.0);
+            }
+        }
         File.WriteAllText(Path.Combine(output, "result.json"), JsonSerializer.Serialize(new {
             workload,
             size,
@@ -172,9 +258,14 @@ internal static class CompareDriver
             gen2,
             lxr_copied_mb = lxrCopiedBytes / (1024.0 * 1024.0),
             peak_rss_mb = rssKb / 1024.0,
+            peak_commit_mb = peakCommitMb,
+            ws_end_mb = wsEndMb,
+            ws_after_gc_mb = wsAfterGcMb,
             total_collections = totalCollections,
             allocated_mb = allocatedMb,
             item4 = item4Delta,
+            region,
+            promotions,
             causes,
             timer_ns = timerDelta,
             scheduler = schedDelta

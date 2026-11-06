@@ -160,7 +160,11 @@ internal static class GcBench
         return e;
     }
 
-    private static long Requests(int entries, long count, long[]? latency, bool calibrate)
+    // Optional Laxori request hooks (GC_Laxori_BeginRequest / GC_Laxori_EndRequest). Null when the collector has none.
+    internal static unsafe delegate* unmanaged[Cdecl, SuppressGCTransition]<void> s_beginRequest;
+    internal static unsafe delegate* unmanaged[Cdecl, SuppressGCTransition]<void*, void> s_endRequest;
+
+    private static unsafe long Requests(int entries, long count, long[]? latency, bool calibrate)
     {
         Entry[] table = new Entry[entries];
         for (int i = 0; i < entries; i++)
@@ -176,6 +180,7 @@ internal static class GcBench
         for (long r = 0; r < count; r++)
         {
             long started = latency is not null ? Stopwatch.GetTimestamp() : 0;
+            if (s_beginRequest != null) s_beginRequest();
             Item? head = null;
             for (int i = 0; i < 24; i++)
             {
@@ -201,6 +206,7 @@ internal static class GcBench
                 int slot = Rnd(entries);
                 table[slot] = BuildEntry(slot);
             }
+            if (s_endRequest != null) s_endRequest(null);
             if (latency is not null)
             {
                 Record(latency, (long)((Stopwatch.GetTimestamp() - started) * (1e9 / Stopwatch.Frequency)));
@@ -399,8 +405,53 @@ internal static class GcBench
         return cs;
     }
 
+    private static int LargeSize() => (int)(64 * 1024 * Math.Pow(16.0, Rnd(1000) / 1000.0));
+
+    // Many live large objects (the losmany workload of LXR P44): "entries" arrays of 64 KiB to 1 MiB (log-uniform) stay live. Each operation
+    // replaces one of them (the old one dies) and allocates a short list of small objects, so the pauses come at a steady rate.
+    private static long LosMany(int entries, long count, bool calibrate)
+    {
+        byte[]?[] table = new byte[entries][];
+        for (int i = 0; i < entries; i++)
+        {
+            table[i] = new byte[LargeSize()];
+            table[i]![0] = (byte)i;
+        }
+        if (calibrate)
+        {
+            s_keep = table;
+            return 0;
+        }
+        long cs = 0;
+        for (long r = 0; r < count; r++)
+        {
+            Item? head = null;
+            for (int i = 0; i < 24; i++)
+            {
+                Item it = new() { V = i, Data = new byte[64] };
+                it.Data[0] = (byte)i;
+                it.Next = head;
+                head = it;
+            }
+            for (Item? it = head; it is not null; it = it.Next)
+            {
+                cs += it.V + it.Data![0];
+            }
+            int slot = Rnd(entries);
+            byte[] old = table[slot]!;
+            cs += old.Length + old[0];
+            byte[] a = new byte[LargeSize()];
+            a[0] = (byte)r;
+            a[a.Length - 1] = (byte)(r >> 8);
+            table[slot] = a;
+            cs += table[Rnd(entries)]!.Length;
+        }
+        return cs;
+    }
+
     private static long Run(string workload, int size, long ops, long[]? latency, bool calibrate) => workload switch
     {
+        "losmany" => LosMany(size, ops, calibrate),
         "losarrays" => LosArrays(size, ops, calibrate),
         "binarytrees" => BinaryTrees(size, calibrate),
         "requests" => Requests(size, ops, latency, calibrate),
