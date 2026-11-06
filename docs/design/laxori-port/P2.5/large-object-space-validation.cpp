@@ -13,6 +13,11 @@
 #include <thread>
 #include <vector>
 
+#ifdef _WIN32
+// Windows has no setenv/unsetenv. The engine reads these variables with getenv, which sees _putenv_s.
+static int setenv(const char* name, const char* value, int) { return _putenv_s(name, value); }
+static int unsetenv(const char* name) { return _putenv_s(name, ""); }
+#endif
 void LaxoriTestFailCommitAfter(int64_t calls);
 void LaxoriTestFailDecommitAfter(int64_t calls);
 

@@ -23,6 +23,12 @@
 #include <thread>
 #include <unordered_map>
 #include <vector>
+
+#ifdef small
+// rpcndr.h (included by windows.h) defines small as char; the test has variables with that name.
+#undef small
+#endif
+
 #if defined(__linux__)
 #include <sys/mman.h>
 #include <unistd.h>
