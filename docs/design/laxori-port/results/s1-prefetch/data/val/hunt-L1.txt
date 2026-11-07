@@ -1,0 +1,42 @@
+0 OK requests [13/3] 5435744392
+1 OK binarytrees [13/3] 14985972
+2 OK listsuffix [13/3] 4980910575
+3 OK mixedmedium [13/3] 2159428632
+4 OK losarrays [13/3] 2784231642
+5 OK private [13/3]
+DONE ok=6 bad=0
+6 OK requests [4/2] 5435744392
+7 OK binarytrees [4/2] 14985972
+8 OK listsuffix [4/2] 4980910575
+9 OK mixedmedium [4/2] 2159428632
+10 OK losarrays [4/2] 2784231642
+11 OK private [4/2]
+DONE ok=6 bad=0
+12 OK requests [1/1] 5435744392
+13 OK binarytrees [1/1] 14985972
+14 OK listsuffix [1/1] 4980910575
+15 OK mixedmedium [1/1] 2159428632
+16 OK losarrays [1/1] 2784231642
+17 OK private [1/1]
+DONE ok=6 bad=0
+18 OK requests [13/3] 5435744392
+19 OK binarytrees [13/3] 14985972
+20 OK listsuffix [13/3] 4980910575
+21 OK mixedmedium [13/3] 2159428632
+22 OK losarrays [13/3] 2784231642
+23 OK private [13/3]
+DONE ok=6 bad=0
+24 OK requests [4/2] 5435744392
+25 OK binarytrees [4/2] 14985972
+26 OK listsuffix [4/2] 4980910575
+27 OK mixedmedium [4/2] 2159428632
+28 OK losarrays [4/2] 2784231642
+29 OK private [4/2]
+DONE ok=6 bad=0
+30 OK requests [1/1] 5435744392
+31 OK binarytrees [1/1] 14985972
+32 OK listsuffix [1/1] 4980910575
+33 OK mixedmedium [1/1] 2159428632
+34 OK losarrays [1/1] 2784231642
+35 OK private [1/1]
+DONE ok=6 bad=0

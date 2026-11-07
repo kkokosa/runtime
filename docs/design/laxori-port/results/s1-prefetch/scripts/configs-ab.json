@@ -1,0 +1,4 @@
+{
+  "base": {"so": "/root/s1/lib/base.so", "env": {}},
+  "s1":   {"so": "/root/s1/lib/s1.so",   "env": {}}
+}

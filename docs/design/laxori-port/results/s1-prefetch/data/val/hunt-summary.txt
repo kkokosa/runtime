@@ -1,0 +1,3 @@
+L2: ok=54 fail=0 of 54
+L1: ok=36 fail=0 of 36
+trace: ok=30 fail=0 of 30

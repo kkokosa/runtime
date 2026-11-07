@@ -1,0 +1,26 @@
+== p2.1
+PASS: Linux x64 side-metadata validation
+Output: /root/s1/val/native-all/p2.1
+== p2.2
+PASS: Linux x64 Immix block validation
+Output: /root/s1/val/native-all/p2.2
+== p2.3
+PASS: Linux x64 reference-count validation
+Output: /root/s1/val/native-all/p2.3
+== p2.4
+PASS: Linux x64 Immix allocation validation
+Output: /root/s1/val/native-all/p2.4
+== p2.5
+PASS: Linux x64 large object space validation
+== p3.1
+PASS: 652/652 P3.1 validation checks
+== p3.2
+PASS: 395/395 P3.2 pause checks
+== p3.3
+PASS: 357/357 P3.3 validation checks
+== p3.4
+PASS: 70/70 P3.4 validation checks
+== p4-release
+PASS: 105881/105881 integrated P4 checks
+flip_overlaps=0 flip_blocked=0
+native failed=0
