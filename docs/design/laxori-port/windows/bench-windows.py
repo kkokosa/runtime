@@ -44,6 +44,8 @@ def config(name, workload):
         lib = "clrlxrgc-copylogfix.dll"   # LXR + CopyLog::Chunk fix (lxr-copylog-fix.patch), reported as LXR+copylog-fix
     elif name == "laxori":
         lib = "clrlaxorigc.dll"
+    elif name == "laxori-s1":
+        lib = "clrlaxorigc-s1.dll"   # Laxori with S1 (24a2706732c)
     elif name == "laxori-l1":
         lib, extra = "clrlaxorigc.dll", {"DOTNET_LAXORIEscapedInPlace": "0"}
     elif name == "laxori-np":
