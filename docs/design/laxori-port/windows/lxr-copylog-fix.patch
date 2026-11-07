@@ -1,0 +1,13 @@
+diff --git a/src/coreclr/gc_lxr/lxr_reference_counting.cpp b/src/coreclr/gc_lxr/lxr_reference_counting.cpp
+index ce71e87e54a..4cab258a21e 100644
+--- a/src/coreclr/gc_lxr/lxr_reference_counting.cpp
++++ b/src/coreclr/gc_lxr/lxr_reference_counting.cpp
+@@ -634,7 +634,7 @@ struct alignas(64) LxrReferenceCounting::CopyLog
+ {
+     struct Chunk
+     {
+-        static constexpr size_t Capacity = 1024;
++        static constexpr size_t Capacity = 1020;
+         struct Entry
+         {
+             uintptr_t start;

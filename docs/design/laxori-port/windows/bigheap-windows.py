@@ -23,7 +23,7 @@ def env_for(name, cap):
         return {"DOTNET_gcServer": "0"}
     if name == "svr":
         return {"DOTNET_gcServer": "1"}
-    lib, prefix = ("clrlaxorigc.dll", "LAXORI") if name == "laxori" else ("clrlxrgc.dll", "LXR")
+    lib, prefix = {"laxori": ("clrlaxorigc.dll", "LAXORI"), "lxr-fix": ("clrlxrgc-copylogfix.dll", "LXR")}.get(name, ("clrlxrgc.dll", "LXR"))
     return {"DOTNET_gcServer": "1", "DOTNET_GCPath": os.path.join(FRAME, lib),
             f"DOTNET_{prefix}ImmixInitialMB": str(cap), f"DOTNET_{prefix}ImmixReserveMB": str(cap),
             f"DOTNET_{prefix}NativePlaneLimitMB": "200000", f"DOTNET_{prefix}TraceThreshold": "2"}

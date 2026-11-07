@@ -10,7 +10,7 @@ import glob, json, os, random, statistics, sys
 
 LINUX_MAP = {"lxr-walk": "lxr", "laxori-count-c": "laxori"}
 WORK = ["requests", "binarytrees", "listsuffix", "mixedmedium", "losarrays", "mediumarrays", "losmany"]
-COLL = ["wks", "svr", "lxr", "laxori", "satori"]
+COLL = ["wks", "svr", "satori", "lxr", "lxr-fix", "laxori"]
 
 
 def load_windows(path):

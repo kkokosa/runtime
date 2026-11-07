@@ -16,7 +16,7 @@ The shared benchmark lock lives in WSL2 (/tmp/lxr-bench.lock) because WSL2 and W
 so a block is never disturbed by a timed WSL2 run of another session. --nolock runs without the lock (correctness runs).
 (wsl.exe needs --exec: with "--" the command goes through a shell that eats the backslashes of the Windows paths.)
 Every run is checked against the known checksum. Prints the medians and, for every pair A:B, the paired difference (A - B) / B."""
-import json, os, random, statistics, subprocess, sys
+import json, os, random, statistics, subprocess, sys, time
 
 FRAME = os.environ.get("FRAME", r"C:\lx-run\frame")
 DRIVER = os.environ.get("DRIVER", r"C:\lx-run\drv2\out\CompareDriver.dll")
@@ -40,6 +40,8 @@ def config(name, workload):
     extra = {}
     if name == "lxr":
         lib = "clrlxrgc.dll"
+    elif name == "lxr-fix":
+        lib = "clrlxrgc-copylogfix.dll"   # LXR + CopyLog::Chunk fix (lxr-copylog-fix.patch), reported as LXR+copylog-fix
     elif name == "laxori":
         lib = "clrlaxorigc.dll"
     elif name == "laxori-l1":
@@ -101,6 +103,11 @@ def main():
     if "--block" in argv:
         i = argv.index("--block")
         block = int(argv[i + 1])
+        del argv[i:i + 2]
+    sleep_s = 8.0
+    if "--sleep" in argv:
+        i = argv.index("--sleep")
+        sleep_s = float(argv[i + 1])
         del argv[i:i + 2]
     if "--nolock" in argv:
         argv.remove("--nolock")
