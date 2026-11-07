@@ -7334,12 +7334,39 @@ LaxoriRcResult LaxoriReferenceCounting::ProcessIncrementWork(Work* work, size_t 
 LaxoriRcResult LaxoriReferenceCounting::ProcessChildIncrements(ReferenceBatch* children, size_t worker)
 {
     uintptr_t slots[BufferCapacity];
+    // The header line and the count byte of the object in the slot of an entry. A prefetch of a wrong address changes nothing.
+    auto prefetchTarget = [&](uintptr_t slot)
+    {
+        uintptr_t object = slot == 0 ? 0 : *reinterpret_cast<const uintptr_t*>(slot);
+        if (object != 0)
+        {
+            LaxoriPrefetch::Read(reinterpret_cast<const void*>(object));
+            uintptr_t start = Start(reinterpret_cast<Object*>(object));
+            if (IsImmix(start))
+            {
+                uint32_t shift;
+                LaxoriPrefetch::Read(const_cast<const uint8_t*>(m_rc_metadata.LocateByte(start, &shift)));
+            }
+        }
+    };
     while (children->count != 0)
     {
         size_t count = children->count;
         bool trace = children->trace;
         memcpy(slots, children->references, count * sizeof(uintptr_t));
         children->count = 0;
+        // The first entries have no earlier iteration to prefetch for them.
+        for (size_t first = 0; first < LaxoriPrefetch::SlotStep && first < count; first++)
+        {
+            if (slots[first] != 0)
+            {
+                LaxoriPrefetch::Read(reinterpret_cast<const void*>(slots[first]));
+            }
+            if (first < LaxoriPrefetch::Step)
+            {
+                prefetchTarget(slots[first]);
+            }
+        }
         for (size_t index = 0; index < count; index++)
         {
             Object** slot = reinterpret_cast<Object**>(slots[index]);
@@ -7364,7 +7391,11 @@ LaxoriRcResult LaxoriReferenceCounting::ProcessChildIncrements(ReferenceBatch* c
             {
                 *slot = object;
             }
-            LaxoriPrefetch::Ahead(slots, count, index, true);
+            LaxoriPrefetch::SlotLineAhead(slots, count, index);
+            if (index + LaxoriPrefetch::Step < count)
+            {
+                prefetchTarget(slots[index + LaxoriPrefetch::Step]);
+            }
         }
         CountWorker(worker, IncrementEntries, count);
     }
