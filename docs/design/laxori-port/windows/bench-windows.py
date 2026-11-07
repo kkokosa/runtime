@@ -123,6 +123,7 @@ def main():
         inner = [PYTHON, os.path.abspath(__file__), "--worker", plan_path, outdir]
         cmd = inner if not lock else ["wsl.exe", "-d", WSL_DISTRO, "--exec", "flock", LOCK, "/mnt/c/Windows/System32/cmd.exe", "/c"] + inner
         subprocess.run(cmd, check=False)
+        time.sleep(sleep_s)   # lets other sessions take the lock between two blocks
     rows = {}
     for line in open(os.path.join(outdir, "runs.jsonl")):
         rec = json.loads(line)
