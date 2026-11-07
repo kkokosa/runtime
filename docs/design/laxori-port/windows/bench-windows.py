@@ -104,6 +104,11 @@ def main():
         i = argv.index("--block")
         block = int(argv[i + 1])
         del argv[i:i + 2]
+    first_rep = 0
+    if "--from" in argv:
+        i = argv.index("--from")
+        first_rep = int(argv[i + 1])
+        del argv[i:i + 2]
     sleep_s = 8.0
     if "--sleep" in argv:
         i = argv.index("--sleep")
@@ -115,7 +120,7 @@ def main():
     outdir, reps, configs, workloads = argv[0], int(argv[1]), argv[2].split(","), argv[3].split(",")
     pairs = [p.split(":") for p in argv[4].split(",")] if len(argv) > 4 else []
     os.makedirs(outdir, exist_ok=True)
-    units = [[(rep, w, c) for c in configs] for rep in range(reps) for w in workloads]
+    units = [[(rep, w, c) for c in configs] for rep in range(first_rep, reps) for w in workloads]
     for i in range(0, len(units), block):
         plan = [t for u in units[i:i + block] for t in u]
         plan_path = os.path.join(outdir, f"plan-{i}.json")
