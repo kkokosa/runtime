@@ -69,6 +69,21 @@ namespace LaxoriPrefetch
             Read(reinterpret_cast<const void*>(object));
         }
     }
+
+    // Two-stage prefetch of the loop over the slots of the child increments (ProcessChildIncrements). While the loop works on entry i,
+    // the line of the slot of entry i + SlotStep is prefetched (the address is known: nothing is loaded), and the slot of entry
+    // i + Step is loaded to prefetch its target. That slot line was prefetched SlotStep - Step entries earlier, so the load does not wait
+    // for memory. Ahead loads the slot of entry i + Step without an earlier prefetch of its line.
+    constexpr size_t SlotStep = 16;
+
+    inline void SlotLineAhead(const uintptr_t* slots, size_t count, size_t index)
+    {
+        size_t ahead = index + SlotStep;
+        if (ahead < count && slots[ahead] != 0)
+        {
+            Read(reinterpret_cast<const void*>(slots[ahead]));
+        }
+    }
 }
 
 #endif // LAXORI_PREFETCH_H

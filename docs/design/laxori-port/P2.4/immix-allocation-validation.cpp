@@ -2017,6 +2017,25 @@ namespace
         Expect("f10 a packet of 8 entries or less prefetches nothing", run(objects, LaxoriPrefetch::Step, false, 0).empty() &&
             run(objects, 3, false, 0).empty());
         Expect("f10 a packet of 9 entries prefetches the ninth", run(objects, 9, false, 0) == expected(9));
+        // The line of the slot of entry i + 16: the address of the slot, none past the end, none for a null slot.
+        std::vector<uintptr_t> lineSlots = slots;
+        lineSlots[20] = 0;
+        s_prefetched.clear();
+        for (size_t i = 0; i < Count; i++)
+        {
+            LaxoriPrefetch::SlotLineAhead(lineSlots.data(), Count, i);
+        }
+        std::vector<const void*> expectedLines;
+        for (size_t i = LaxoriPrefetch::SlotStep; i < Count; i++)
+        {
+            if (lineSlots[i] != 0)
+            {
+                expectedLines.push_back(reinterpret_cast<const void*>(lineSlots[i]));
+            }
+        }
+        Expect("f10 slot line prefetch step is 16", LaxoriPrefetch::SlotStep == 16);
+        Expect("f10 slot line prefetch: the slot of entry i + 16, none past the end, none for a null slot",
+            s_prefetched == expectedLines);
         LaxoriPrefetch::HookRef() = nullptr;
     }
 
