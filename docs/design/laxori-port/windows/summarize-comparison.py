@@ -10,7 +10,7 @@ import glob, json, os, random, statistics, sys
 
 LINUX_MAP = {"lxr-walk": "lxr", "laxori-count-c": "laxori"}
 WORK = ["requests", "binarytrees", "listsuffix", "mixedmedium", "losarrays", "mediumarrays", "losmany"]
-COLL = ["wks", "svr", "satori", "lxr", "lxr-fix", "laxori"]
+COLL = ["wks", "svr", "satori", "lxr", "lxr-fix", "laxori", "laxori-s1"]
 
 
 def load_windows(path):
@@ -122,7 +122,7 @@ def windows_vs_linux(win, lin):
 def main():
     win = load_windows(sys.argv[1])
     medians(win, "Windows")
-    for a, b in (("laxori", "lxr"), ("laxori", "wks"), ("lxr", "wks"), ("laxori", "svr"), ("laxori", "satori")):
+    for a, b in (("laxori-s1", "laxori"), ("laxori-s1", "lxr"), ("laxori-s1", "wks"), ("laxori-s1", "svr"), ("laxori-s1", "satori"), ("laxori", "lxr")):
         paired(win, a, b, "Windows")
     if len(sys.argv) > 2:
         lin = load_linux(sys.argv[2])
