@@ -9,12 +9,22 @@
 // Every check prints PASS: <name> or FAIL: <name>. Exit code 0 = all passed.
 
 #include "laxori_write_barrier.h"
+#include "laxori_platform.h"
 
 #include <atomic>
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
+#ifdef _WIN32
+#include <windows.h>
+// The helper is called with the Windows convention (rcx, rdx) from laxori-barrier-test-win.asm, which also fills xmm0-xmm15 before
+// the call and compares them after it. The test slow paths below are called by asm stubs that clobber all vector registers.
+extern "C" uint64_t TestCallHelper(void* fn, void* dst, void* ref);
+extern "C" void TestLogPath(void** slot);
+extern "C" void TestEscapePath(void** slot, void* reference);
+#else
 #include <sys/mman.h>
+#endif
 
 static int g_failures = 0;
 static void Check(bool ok, const char* name)
@@ -79,6 +89,21 @@ static void SetOwner(void* region, bool value)
     }
 }
 
+#ifdef _WIN32
+extern "C" void TestLogPathC(void** slot)
+{
+    g_logCalls++;
+    g_lastLogSlot = slot;
+    SetUnlogged(slot, false);
+}
+
+extern "C" void TestEscapePathC(void** slot, void* reference)
+{
+    g_escapeCalls++;
+    g_lastEscapeSlot = slot;
+    g_lastEscapeRef = reference;
+}
+#else
 extern "C" void TestLogPath(void** slot)
 {
     g_logCalls++;
@@ -94,12 +119,16 @@ extern "C" void TestEscapePath(void** slot, void* reference)
     g_lastEscapeRef = reference;
     asm volatile("pxor %%xmm6, %%xmm6" ::: "xmm6");
 }
+#endif
 
 typedef void (*Helper)(void**, void*);
 
 // Calls the helper with a pattern in xmm6; returns 1 when xmm6 is the same after the call.
 static uint64_t CallHelper(Helper fn, void** dst, void* ref)
 {
+#ifdef _WIN32
+    return TestCallHelper(reinterpret_cast<void*>(fn), dst, ref);
+#else
     uint64_t pattern = 0x1122334455667788ull;
     uint64_t out;
     asm volatile(
@@ -114,6 +143,7 @@ static uint64_t CallHelper(Helper fn, void** dst, void* ref)
         : [pat] "r"(pattern), [dst] "r"(dst), [ref] "r"(ref), [fn] "r"(fn)
         : "rax", "rcx", "rdx", "rsi", "rdi", "r8", "r9", "r10", "r11", "xmm6", "memory", "cc");
     return out == pattern ? 1 : 0;
+#endif
 }
 
 static void Reset()
@@ -127,12 +157,16 @@ static void Reset()
 
 int main()
 {
+#ifdef _WIN32
+    g_heap = static_cast<uint8_t*>(_aligned_malloc(HeapBytes, HeapBytes));
+#else
     g_heap = static_cast<uint8_t*>(aligned_alloc(HeapBytes, HeapBytes));
+#endif
     g_metadata = static_cast<uint8_t*>(calloc(HeapBytes / 64 + 16, 1));
     g_bits = static_cast<uint8_t*>(calloc(HeapBytes / 64 + 16, 1));
     g_owner = static_cast<uint64_t*>(calloc(HeapBytes / BlockBytes + 1, sizeof(uint64_t)));
     memset(g_heap, 0, HeapBytes);
-    asm volatile("mov %%fs:0, %0" : "=r"(g_tag));
+    g_tag = LaxoriCurrentThreadTag();
 
     LaxoriWriteBarrierSetGlobals(
         Biased(g_metadata), reinterpret_cast<uintptr_t>(g_heap), HeapBytes, reinterpret_cast<void*>(&TestLogPath),
@@ -142,7 +176,11 @@ int main()
     LaxoriWriteBarrierGetBlockInfo(&info);
     uint8_t* original = static_cast<uint8_t*>(info.checked_assign_ref);
     size_t size = info.checked_assign_ref_size;
+#ifdef _WIN32
+    uint8_t* page = static_cast<uint8_t*>(VirtualAlloc(nullptr, 8192, MEM_RESERVE | MEM_COMMIT, PAGE_EXECUTE_READWRITE));
+#else
     uint8_t* page = static_cast<uint8_t*>(mmap(nullptr, 8192, PROT_READ | PROT_WRITE | PROT_EXEC, MAP_PRIVATE | MAP_ANONYMOUS, -1, 0));
+#endif
     memcpy(page, original, size);
     for (LaxoriWriteBarrierPatchable* p = info.patchable; p->slot != nullptr; p++)
     {

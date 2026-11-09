@@ -10,6 +10,7 @@
 #include "gcscan.h"
 #include "gcref.h"
 #include "laxori_write_barrier.h"
+#include "laxori_platform.h"
 
 #include <algorithm>
 #include <vector>
@@ -23,9 +24,7 @@ namespace
 
     inline uintptr_t CurrentThreadTag()
     {
-        uintptr_t tag;
-        __asm__ volatile("mov %%fs:0, %0" : "=r"(tag));
-        return tag;
+        return LaxoriCurrentThreadTag();
     }
 
     inline size_t LocalSize(Object* object)
@@ -127,8 +126,8 @@ struct TlAcc
 enum { C_Total, C_Esc, C_StackMark, C_Sync, C_Prop, C_Plan, C_StackUpd, C_ObjUpd, C_Compact, C_Failed };
 enum { N_StackScans, N_Roots, N_RootsIn, N_EscObjs, N_EscBytes, N_SyncObjs, N_PropObjs, N_PlanObjs, N_MovedBytes, N_UpdObjs };
 thread_local TlAcc* t_acc = nullptr;
-inline uint64_t TlNow() { return t_acc != nullptr ? __builtin_ia32_rdtsc() : 0; }
-inline void TlAdd(int cyc, uint64_t since) { if (t_acc != nullptr) { t_acc->cyc[cyc] += __builtin_ia32_rdtsc() - since; } }
+inline uint64_t TlNow() { return t_acc != nullptr ? LaxoriReadTimestampCounter() : 0; }
+inline void TlAdd(int cyc, uint64_t since) { if (t_acc != nullptr) { t_acc->cyc[cyc] += LaxoriReadTimestampCounter() - since; } }
 inline void TlCount(int n, uint64_t amount = 1) { if (t_acc != nullptr) { t_acc->cnt[n] += amount; } }
 
 struct LaxoriGcHeap::LocalGcContext
@@ -187,7 +186,7 @@ Object* LaxoriGcHeap::NextMarked(uintptr_t from, uintptr_t limit) const
             index = ((index >> 6) + 1) << 6;
             continue;
         }
-        index += static_cast<size_t>(__builtin_ctzll(word));
+        index += LaxoriCountTrailingZeros64(word);
         if (index >= end)
         {
             return nullptr;
@@ -394,7 +393,7 @@ extern "C" void LaxoriEscapeSlowPath(Object** slot, Object* reference)
 void LaxoriGcHeap::EscapeCheck(Object** destination, Object* reference)
 {
     uintptr_t offset = reinterpret_cast<uintptr_t>(reference) - m_arena;
-    if (offset >= m_arena_bytes || __atomic_load_n(&m_region_owner[offset >> ImmixBlockGeometry::BlockLogBytes], __ATOMIC_ACQUIRE) !=
+    if (offset >= m_arena_bytes || LaxoriLoadAcquire(&m_region_owner[offset >> ImmixBlockGeometry::BlockLogBytes]) !=
         CurrentThreadTag())
     {
         return;
@@ -405,7 +404,7 @@ void LaxoriGcHeap::EscapeCheck(Object** destination, Object* reference)
         GCToEEInterface::DisablePreemptiveGC();
     }
     // A pause may have dissolved the region while the thread was preemptive: look again.
-    if (__atomic_load_n(&m_region_owner[offset >> ImmixBlockGeometry::BlockLogBytes], __ATOMIC_ACQUIRE) == CurrentThreadTag())
+    if (LaxoriLoadAcquire(&m_region_owner[offset >> ImmixBlockGeometry::BlockLogBytes]) == CurrentThreadTag())
     {
         uintptr_t dst = reinterpret_cast<uintptr_t>(destination);
         uintptr_t src = reinterpret_cast<uintptr_t>(reference);
@@ -429,7 +428,7 @@ void LaxoriGcHeap::EscapeObject(Object* object)
     }
     uintptr_t offset = reinterpret_cast<uintptr_t>(object) - heap->m_arena;
     if (offset >= heap->m_arena_bytes ||
-        __atomic_load_n(&heap->m_region_owner[offset >> ImmixBlockGeometry::BlockLogBytes], __ATOMIC_ACQUIRE) !=
+        LaxoriLoadAcquire(&heap->m_region_owner[offset >> ImmixBlockGeometry::BlockLogBytes]) !=
             CurrentThreadTag())
     {
         return;
@@ -439,7 +438,7 @@ void LaxoriGcHeap::EscapeObject(Object* object)
     {
         GCToEEInterface::DisablePreemptiveGC();
     }
-    if (__atomic_load_n(&heap->m_region_owner[offset >> ImmixBlockGeometry::BlockLogBytes], __ATOMIC_ACQUIRE) ==
+    if (LaxoriLoadAcquire(&heap->m_region_owner[offset >> ImmixBlockGeometry::BlockLogBytes]) ==
         CurrentThreadTag())
     {
         heap->EscapeInCurrentRegion(nullptr, object);
@@ -522,11 +521,11 @@ void LaxoriGcHeap::OpenGap(gc_alloc_context* context, LaxoriRcMutator* mutator, 
     const LaxoriPrivateGap gap = region.gaps[gapIndex];
     if (!region.freshGaps && m_test_control != 4)
     {
-        uint64_t zeroStart = m_tl_timers ? __builtin_ia32_rdtsc() : 0;
+        uint64_t zeroStart = m_tl_timers ? LaxoriReadTimestampCounter() : 0;
         memset(reinterpret_cast<void*>(gap.start), 0, gap.end - gap.start);
         if (m_tl_timers)
         {
-            m_engine.CountRegionMetric(LaxoriReferenceCounting::TlGapZeroCyc, __builtin_ia32_rdtsc() - zeroStart);
+            m_engine.CountRegionMetric(LaxoriReferenceCounting::TlGapZeroCyc, LaxoriReadTimestampCounter() - zeroStart);
             m_engine.CountRegionMetric(LaxoriReferenceCounting::TlGapZeroBytes, gap.end - gap.start);
         }
     }
@@ -773,7 +772,7 @@ bool LaxoriGcHeap::LocalMark(LaxoriPrivateRegion& region)
             index = ((index >> 6) + 1) << 6;
             continue;
         }
-        index += static_cast<size_t>(__builtin_ctzll(word));
+        index += LaxoriCountTrailingZeros64(word);
         if (index >= end)
         {
             break;
@@ -1032,7 +1031,7 @@ bool LaxoriGcHeap::LocalCollect(LaxoriRcMutator* mutator)
     bool result = LocalCollectCore(mutator);
     if (t_acc != nullptr)
     {
-        acc.cyc[C_Total] = __builtin_ia32_rdtsc() - start;
+        acc.cyc[C_Total] = LaxoriReadTimestampCounter() - start;
         if (!result)
         {
             acc.cyc[C_Failed] = acc.cyc[C_Total];
@@ -1235,7 +1234,7 @@ uint64_t LaxoriGcHeap::TscKHz() const
 {
     // TSC cycles per millisecond since the start of the tier (minipal_hires_ticks is in the unit of minipal_hires_tick_frequency).
     int64_t ticks = static_cast<int64_t>(minipal_hires_ticks()) - m_tsc_ns_start;
-    uint64_t cycles = __builtin_ia32_rdtsc() - m_tsc_start;
+    uint64_t cycles = LaxoriReadTimestampCounter() - m_tsc_start;
     uint64_t frequency = static_cast<uint64_t>(minipal_hires_tick_frequency());
     return ticks > 0 ? static_cast<uint64_t>((static_cast<double>(cycles) / static_cast<double>(ticks)) * static_cast<double>(frequency) / 1000.0) : 0;
 }
@@ -1246,7 +1245,7 @@ bool LaxoriGcHeap::InitializePrivateTier(size_t regionKB, bool enabled, bool col
     m_verify_private = getenv("DOTNET_LAXORIVerifyPrivate") != nullptr;
     m_tl_timers = getenv("DOTNET_LAXORITlTimers") != nullptr;
     m_sync_walk = getenv("DOTNET_LAXORISyncWalk") != nullptr;
-    m_tsc_start = __builtin_ia32_rdtsc();
+    m_tsc_start = LaxoriReadTimestampCounter();
     m_tsc_ns_start = static_cast<int64_t>(minipal_hires_ticks());
     {
         const char* control = getenv("DOTNET_LAXORITestControl");

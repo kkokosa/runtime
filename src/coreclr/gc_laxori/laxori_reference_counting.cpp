@@ -6,6 +6,7 @@
 #include "gcref.h"
 #include "laxori_reference_counting.h"
 #include "laxori_prefetch.h"
+#include "laxori_platform.h"
 
 #include <new>
 #include <algorithm>
@@ -645,7 +646,12 @@ struct alignas(64) LaxoriReferenceCounting::CopyLog
 {
     struct Chunk
     {
-        static constexpr size_t Capacity = 1024;
+        // The chunk is allocated with new and freed with delete by every worker, one chunk for each 1000 copied objects. On
+        // Windows the process heap serves only blocks up to 16368 bytes from its scalable low-fragmentation front end. A larger
+        // block goes to the back end, which takes a global lock and walks its free lists: with 13 workers and tens of
+        // thousands of chunks in one pause the delete loop of RetireSourceChunks took 38 s. 1020 entries keep the chunk
+        // inside the front end. The assert keeps it so.
+        static constexpr size_t Capacity = 1020;
         struct Entry
         {
             uintptr_t start;
@@ -656,6 +662,7 @@ struct alignas(64) LaxoriReferenceCounting::CopyLog
         size_t count = 0;
         Chunk* next = nullptr;
     };
+    static_assert(sizeof(Chunk) <= 16368, "a copy log chunk must stay in the low-fragmentation heap on Windows");
 
     Chunk* head = nullptr;
     std::atomic_flag lock = ATOMIC_FLAG_INIT;
@@ -1660,7 +1667,7 @@ LaxoriRcResult LaxoriReferenceCounting::AcquireRegion(LaxoriRcMutator* mutator, 
     size_t first = (start - reinterpret_cast<uintptr_t>(m_arena)) >> ImmixBlockGeometry::BlockLogBytes;
     for (size_t block = 0; block < blocks; block++)
     {
-        __atomic_store_n(&m_region_owner[first + block], static_cast<uint64_t>(mutator->tag), __ATOMIC_RELEASE);
+        LaxoriStoreRelease(&m_region_owner[first + block], static_cast<uint64_t>(mutator->tag));
     }
     CountRegionMetric(RegionsAcquired);
     *taken = true;
@@ -1679,10 +1686,10 @@ LaxoriRcResult LaxoriReferenceCounting::DissolveRegion(LaxoriRcMutator* mutator,
         return LaxoriRcResult::Success;
     }
     size_t first = (region.start - reinterpret_cast<uintptr_t>(m_arena)) >> ImmixBlockGeometry::BlockLogBytes;
-    uint64_t dissolveStart = __builtin_ia32_rdtsc();
+    uint64_t dissolveStart = LaxoriReadTimestampCounter();
     for (size_t block = 0; block < region.blocks; block++)
     {
-        __atomic_store_n(&m_region_owner[first + block], static_cast<uint64_t>(0), __ATOMIC_RELEASE);
+        LaxoriStoreRelease(&m_region_owner[first + block], static_cast<uint64_t>(0));
     }
     LaxoriRcResult closed = CloseRegionSpan(mutator, parsableEnd);
     if (closed == LaxoriRcResult::Success)
@@ -1691,7 +1698,7 @@ LaxoriRcResult LaxoriReferenceCounting::DissolveRegion(LaxoriRcMutator* mutator,
     }
     free(region.gaps);
     region = LaxoriPrivateRegion();
-    CountRegionMetric(TlDissolveCyc, __builtin_ia32_rdtsc() - dissolveStart);
+    CountRegionMetric(TlDissolveCyc, LaxoriReadTimestampCounter() - dissolveStart);
     CountRegionMetric(TlDissolveCnt);
     return closed;
 }
@@ -2770,9 +2777,9 @@ LaxoriRcResult LaxoriReferenceCounting::FlushMutators()
             {
                 // Laxori. A pause dissolves the private region: its objects are young objects like all others.
                 CountRegionMetric(RegionsDissolvedAtPause);
-                uint64_t dissolveStart = __builtin_ia32_rdtsc();
+                uint64_t dissolveStart = LaxoriReadTimestampCounter();
                 closed = DissolveRegion(&mutator, mutator.region.parseEnd);
-                CountRegionMetric(TlPauseDissolveCyc, __builtin_ia32_rdtsc() - dissolveStart);
+                CountRegionMetric(TlPauseDissolveCyc, LaxoriReadTimestampCounter() - dissolveStart);
             }
             if (closed != LaxoriRcResult::Success)
             {

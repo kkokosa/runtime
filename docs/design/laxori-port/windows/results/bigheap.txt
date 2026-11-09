@@ -1,0 +1,19 @@
+bigheap16 laxori-0 wall=60193 cpu=467469 ws=23450 setup=85308
+bigheap16 laxori-1 wall=60010 cpu=468875 ws=23567 setup=87440
+bigheap16 laxori-2 FAILED
+bigheap16 lxr-0 FAILED
+bigheap16 lxr-1 FAILED
+bigheap16 lxr-2 FAILED
+bigheap16 svr-0 wall=60014 cpu=143469 ws=27072 setup=15043
+bigheap16 svr-1 wall=60004 cpu=132297 ws=28537 setup=15055
+bigheap16 svr-2 wall=60004 cpu=134969 ws=28151 setup=15503
+bigheap16 wks-0 wall=60017 cpu=60000 ws=21929 setup=28521
+bigheap16 wks-1 wall=60031 cpu=60141 ws=21972 setup=28465
+bigheap16 wks-2 wall=60003 cpu=60000 ws=21936 setup=28668
+bigheap8 laxori-0 wall=60002 cpu=412125 ws=14587 setup=33642
+bigheap8 laxori-1 wall=60135 cpu=414484 ws=14851 setup=33612
+bigheap8 laxori-2 wall=60005 cpu=416172 ws=14463 setup=34439
+bigheap8 lxr-0 FAILED
+bigheap8 lxr-1 FAILED
+bigheap8 lxr-2 FAILED
+bigheap24 laxori-0 wall=60783 cpu=519766 ws=31789 setup=156117

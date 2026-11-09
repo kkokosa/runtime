@@ -5,6 +5,7 @@
 #include "gcenv.h"
 #include "laxori_gc.h"
 #include "laxori_write_barrier.h"
+#include "laxori_platform.h"
 #include "laxori_worker_policy.h"
 #include "gcscan.h"
 #include "gcref.h"
@@ -626,9 +627,7 @@ LaxoriRcMutator* LaxoriGcHeap::FindOrAttach(gc_alloc_context* context, bool barr
     }
     if (mutator->Tag() == 0)
     {
-        uintptr_t tag;
-        __asm__ volatile("mov %%fs:0, %0" : "=r"(tag));
-        mutator->SetTag(tag);
+        mutator->SetTag(LaxoriCurrentThreadTag());
     }
     context->gc_reserved_1 = mutator;
     return mutator;
