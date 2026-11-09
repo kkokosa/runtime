@@ -1,0 +1,27 @@
+diff --git a/docs/design/lxr-port/P4/lxr-rc-validation.cpp b/docs/design/lxr-port/P4/lxr-rc-validation.cpp
+index a5902884b0e..53ef598f175 100644
+--- a/docs/design/lxr-port/P4/lxr-rc-validation.cpp
++++ b/docs/design/lxr-port/P4/lxr-rc-validation.cpp
+@@ -23,6 +23,9 @@
+ #include <thread>
+ #include <unordered_map>
+ #include <vector>
++#ifdef small
++#undef small
++#endif
+ #if defined(__linux__)
+ #include <sys/mman.h>
+ #include <unistd.h>
+diff --git a/docs/design/lxr-port/P4/run-lxr-rc-vertical.ps1 b/docs/design/lxr-port/P4/run-lxr-rc-vertical.ps1
+index 2274738c17b..b2eff886747 100644
+--- a/docs/design/lxr-port/P4/run-lxr-rc-vertical.ps1
++++ b/docs/design/lxr-port/P4/run-lxr-rc-vertical.ps1
+@@ -87,7 +87,7 @@ $controlFlag = switch ($Control) {
+ }
+ $executable = Join-Path $OutputDirectory 'lxr-rc-validation.exe'
+ $compile = @(
+-    'cl.exe /nologo /std:c++17 /EHsc /W4 /WX /wd4100 /wd4324 /wd4458',
++    'cl.exe /nologo /std:c++17 /EHsc /W4 /WX /wd4100 /wd4324 /wd4458 /wd4127 /wd4201 /wd4146 /wd4244 /wd4267 /wd4456 /wd4457 /wd4459 /wd4701 /wd4702 /wd4706 /wd4996 /wd4310 /wd4200 /wd4334 /wd4703',
+     $configurationFlags,
+     $controlFlag,
+     '/DBUILD_AS_STANDALONE /DTARGET_WINDOWS /DHOST_WINDOWS /DWIN32',

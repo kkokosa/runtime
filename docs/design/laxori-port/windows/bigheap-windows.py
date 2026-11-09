@@ -9,7 +9,7 @@ Configs: laxori, lxr, wks, svr (laxori and lxr: DOTNET_gcServer=1, fixed heap ca
 Sizes are DECIMAL MB. Every run (a build of the live heap, then <seconds> of churn) runs under the shared benchmark lock of WSL2.
 Prints, for every config: the number of pauses, long pauses (>= LONG_MS, default 30), the median and maximum of the long pauses,
 the median of all pauses, wall and CPU of the window, the peak working set, and the setup time."""
-import json, os, statistics, subprocess, sys
+import json, os, statistics, subprocess, sys, time
 
 FRAME = os.environ.get("FRAME", r"C:\lx-run\frame")
 DRIVER = os.environ.get("SCALE_DRV", r"C:\lx-run\drv-scale\out\ScalingDriver.dll")
@@ -23,7 +23,10 @@ def env_for(name, cap):
         return {"DOTNET_gcServer": "0"}
     if name == "svr":
         return {"DOTNET_gcServer": "1"}
-    lib, prefix = {"laxori": ("clrlaxorigc.dll", "LAXORI"), "lxr-fix": ("clrlxrgc-copylogfix.dll", "LXR")}.get(name, ("clrlxrgc.dll", "LXR"))
+    if name.endswith(".dll"):   # any library of the frame, e.g. clrlxrgc-7e4d.dll
+        lib, prefix = name, ("LAXORI" if "laxori" in name else "LXR")
+    else:
+        lib, prefix = {"laxori": ("clrlaxorigc.dll", "LAXORI"), "lxr-fix": ("clrlxrgc-copylogfix.dll", "LXR")}.get(name, ("clrlxrgc.dll", "LXR"))
     return {"DOTNET_gcServer": "1", "DOTNET_GCPath": os.path.join(FRAME, lib),
             f"DOTNET_{prefix}ImmixInitialMB": str(cap), f"DOTNET_{prefix}ImmixReserveMB": str(cap),
             f"DOTNET_{prefix}NativePlaneLimitMB": "200000", f"DOTNET_{prefix}TraceThreshold": "2"}
@@ -59,6 +62,7 @@ def main():
                 subprocess.run(inner)
             else:
                 subprocess.run(["wsl.exe", "-d", "Ubuntu-22.04", "--exec", "flock", LOCK, "/mnt/c/Windows/System32/cmd.exe", "/c"] + inner)
+            time.sleep(8)   # lets other sessions take the lock
             pc, rj = os.path.join(rundir, "pauses.csv"), os.path.join(rundir, "result.json")
             if not (os.path.exists(pc) and os.path.exists(rj)):
                 print(rep, c, "FAILED", flush=True)
