@@ -1,0 +1,7 @@
+new-default-a :: start Mon 11/09/2026 20:10:30.83 gc=clrlxrgc-new.dll tagb=540 tlgb=2  :: exit 0 Mon 11/09/2026 20:12:51.69 
+old-r6000-a :: start Mon 11/09/2026 20:13:46.35 gc=clrlxrgc-7e4d.dll tagb=540 tlgb=2  :: exit 0 Mon 11/09/2026 20:17:35.60 
+new-r6000-a :: start Mon 11/09/2026 20:17:43.93 gc=clrlxrgc-new.dll tagb=540 tlgb=2  :: exit 0 Mon 11/09/2026 20:19:27.60 
+old-r6000-b :: start Mon 11/09/2026 20:19:35.89 gc=clrlxrgc-7e4d.dll tagb=540 tlgb=2  :: exit 0 Mon 11/09/2026 20:21:23.38 
+new-default-b :: start Mon 11/09/2026 20:21:31.64 gc=clrlxrgc-new.dll tagb=540 tlgb=2  :: exit 0 Mon 11/09/2026 20:25:50.66 
+new-r6000-b :: start Mon 11/09/2026 20:25:58.94 gc=clrlxrgc-new.dll tagb=540 tlgb=2  :: exit 0 Mon 11/09/2026 20:27:44.00 
+WINDONE

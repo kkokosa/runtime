@@ -1,0 +1,13 @@
+1 listsuffix old 1373 3754 191 6 202 ok
+1 listsuffix oldbig 1619 4330 222 5 295 ok
+1 binarytrees oldbig 1085 2256 98 22 266 ok
+1 binarytrees old 1138 3663 163 38 205 ok
+1 mixedmedium oldbig 809 1646 108 16 410 ok
+1 mixedmedium old 1491 2645 215 215 193 ok
+1 requests old 421 581 35 9 170 ok
+1 requests oldbig 383 526 34 9 208 ok
+1 losarrays oldbig 1231 2690 474 49 142 ok
+1 losarrays old 1157 2476 457 49 105 ok
+1 mediumarrays old 0 0 0 None 0 failed
+1 mediumarrays oldbig 1135 2171 204 18 574 ok
+EXP1DONE

@@ -2500,6 +2500,76 @@ namespace
         Check(LxrHeapSizer::DefaultNurseryCap(uint64_t{1} << 30) == 64 * MB, "the cap is a sixteenth of physical memory");
         Check(LxrHeapSizer::DefaultNurseryCap(uint64_t{256} << 20) == 16 * MB && LxrHeapSizer::DefaultNurseryCap(0) == 16 * MB,
             "a small or unknown memory limit gets the smallest cap");
+
+        constexpr size_t GB = size_t{1} << 30;
+        constexpr size_t AddressMB = LxrSideMetadataLayout::AddressLimit >> 20;
+        auto reserves = [&](uint64_t memory, size_t addressMB, size_t hardMB, bool immixDefault, size_t immix,
+            bool largeDefault, size_t large, size_t* immixOut, size_t* largeOut)
+        {
+            *immixOut = immix;
+            *largeOut = large;
+            LxrDefaultLimits::ReservesMB(memory, addressMB, hardMB, immixDefault, immixOut, largeDefault, largeOut);
+        };
+        size_t immixMB;
+        size_t largeMB;
+        reserves(uint64_t{64} << 30, AddressMB, 0, true, 128, true, 256, &immixMB, &largeMB);
+        Check(immixMB == 65536 && largeMB == 65536, "each default reserve is the memory limit");
+        reserves(uint64_t{2} << 30, AddressMB, 0, true, 128, true, 256, &immixMB, &largeMB);
+        Check(immixMB == 2048 && largeMB == 2048, "a container limit of 2 GB gives reserves of 2 GB");
+        reserves(uint64_t{300} << 20, AddressMB, 0, true, 128, true, 256, &immixMB, &largeMB);
+        Check(immixMB == 300 && largeMB == 300, "a small memory limit gives a reserve of that size");
+        reserves(0, AddressMB, 0, true, 128, true, 256, &immixMB, &largeMB);
+        Check(immixMB == 128 && largeMB == 256, "an unknown memory limit keeps the old default reserves");
+        reserves(uint64_t{4} << 40, AddressMB, 0, true, 128, true, 256, &immixMB, &largeMB);
+        Check(immixMB == LxrDefaultLimits::MaximumImmixReserveMB && largeMB == LxrDefaultLimits::MaximumLargeReserveMB,
+            "a very large machine gets the largest default reserves");
+        reserves(uint64_t{64} << 30, 8192, 0, true, 128, true, 256, &immixMB, &largeMB);
+        Check(immixMB + largeMB == 8192 && largeMB == 4096, "the default reserves fit the address limit that the host gave");
+        reserves(uint64_t{64} << 30, AddressMB, 0, false, 1000, true, 256, &immixMB, &largeMB);
+        Check(immixMB == 1000 && largeMB == 65536, "an explicit Immix reserve leaves the LOS default alone");
+        reserves(uint64_t{64} << 30, AddressMB, 0, true, 128, false, 1600, &immixMB, &largeMB);
+        Check(immixMB == 65536 && largeMB == 1600, "an explicit LOS reserve leaves the Immix default alone");
+        reserves(uint64_t{64} << 30, AddressMB, 0, false, 400, false, 256, &immixMB, &largeMB);
+        Check(immixMB == 400 && largeMB == 256, "two explicit reserves are kept");
+        reserves(uint64_t{64} << 30, 1000, 0, false, 600, true, 256, &immixMB, &largeMB);
+        Check(immixMB == 600 && largeMB == 400, "the LOS default is made to fit the address limit next to an explicit Immix reserve");
+        reserves(uint64_t{64} << 30, AddressMB, 4096, true, 128, true, 256, &immixMB, &largeMB);
+        Check(immixMB == 2048 && largeMB == 2048, "with a hard limit the two default reserves are its halves");
+        reserves(uint64_t{64} << 30, AddressMB, 4096, true, 128, false, 1000, &immixMB, &largeMB);
+        Check(immixMB == 3096 && largeMB == 1000, "with a hard limit the Immix reserve is the rest of it");
+        reserves(uint64_t{64} << 30, AddressMB, 4096, false, 500, true, 256, &immixMB, &largeMB);
+        Check(immixMB == 500 && largeMB == 3596, "with a hard limit the LOS reserve is the rest of it");
+        reserves(uint64_t{64} << 30, AddressMB, 300, true, 128, true, 256, &immixMB, &largeMB);
+        Check(immixMB == 128 && largeMB == 256, "a hard limit below the old default reservation keeps the old reserves");
+        Check(LxrDefaultLimits::NativePlaneLimitMB(128, 256) == 4096,
+            "the old reservation keeps the old native plane limit");
+        Check(LxrDefaultLimits::NativePlaneLimitMB(65280, 256) == (65280 + 256) * 45 / 10,
+            "the native plane limit is 4.5 times the reservation");
+        Check(LxrDefaultLimits::NativePlaneLimitMB(SIZE_MAX >> 21, SIZE_MAX >> 21) >= LxrDefaultLimits::MinimumNativePlaneLimitMB,
+            "the native plane limit does not overflow");
+
+        // With the default reserve the sizing keeps the old ceiling while the live size is small, and grows with it.
+        Check(LxrHeapSizer::PolicyReserveBytes(60 * GB, 0) == 128 * MB &&
+            LxrHeapSizer::PolicyReserveBytes(60 * GB, 48 * MB) == 128 * MB,
+            "a live size up to 48 MB keeps the old policy reserve of 128 MB");
+        Check(LxrHeapSizer::PolicyReserveBytes(60 * GB, 100 * MB) == 200 * MB &&
+            LxrHeapSizer::PolicyReserveBytes(60 * GB, 2 * GB) == 4 * GB,
+            "the policy reserve is twice the live size above that");
+        Check(LxrHeapSizer::PolicyReserveBytes(128 * MB, 2 * GB) == 128 * MB &&
+            LxrHeapSizer::PolicyReserveBytes(SIZE_MAX, SIZE_MAX) == SIZE_MAX,
+            "the policy reserve never exceeds the reservation and does not overflow");
+        LxrHeapSizer big;
+        LxrHeapSizingConfiguration bigConfiguration;
+        bigConfiguration.nurseryCapBytes = 96 * MB;
+        big.Configure(bigConfiguration, 8 * MB);
+        Check(big.TargetCapacity(8 * MB, 20 * MB, LxrHeapSizer::PolicyReserveBytes(60 * GB, 20 * MB)) == 36 * MB,
+            "a small live size gets the same target as with the old reserve");
+        size_t target = 0;
+        for (int step = 0; step < 6; step++)
+        {
+            target = big.TargetCapacity(target, 2 * GB, LxrHeapSizer::PolicyReserveBytes(60 * GB, 2 * GB));
+        }
+        Check(target == 2 * GB + 96 * MB, "a live size of 2 GB gets a capacity of live size plus nursery, not 96 MB");
     }
 
     void ValidateImmixCapacityRequest()

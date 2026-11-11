@@ -4,6 +4,7 @@
 #include "common.h"
 #include "gcenv.h"
 #include "lxr_gc.h"
+#include "lxr_default_limits.h"
 #include "lxr_write_barrier.h"
 #include "lxr_worker_policy.h"
 #include "gcscan.h"
@@ -15,6 +16,7 @@
 #include <new>
 #ifndef TARGET_WINDOWS
 #include <time.h>
+#include <unistd.h>
 #endif // !TARGET_WINDOWS
 
 // Entry of the assembly write barrier slow path (defined below).
@@ -136,6 +138,25 @@ namespace
         }
         *value = parsed != 0;
         return true;
+    }
+
+    // Zeroed memory whose pages are taken only when they are written. The card tables cover the whole reservation, and the
+    // default reservation is the memory limit of the process, so a zeroing new[] would touch every page at start-up.
+    uint8_t* AllocateLazyZeroed(size_t bytes)
+    {
+        size_t page = GCToOSInterface::GetPageSize();
+        size_t size = (bytes + page - 1) & ~(page - 1);
+        void* memory = GCToOSInterface::VirtualReserve(size, page, VirtualReserveFlags::None);
+        if (memory == nullptr)
+        {
+            return nullptr;
+        }
+        if (!GCToOSInterface::VirtualCommit(memory, size))
+        {
+            GCToOSInterface::VirtualRelease(memory, size);
+            return nullptr;
+        }
+        return static_cast<uint8_t*>(memory);
     }
 }
 
@@ -319,13 +340,14 @@ HRESULT LxrGcHeap::Initialize()
     configuration.forwardingShift = m_header_bits.bit_shift;
     size_t immixInitial = 8;
     size_t largeInitial = 16;
-    size_t immixReserve = 128;
+    size_t immixReserve = LxrDefaultLimits::LegacyImmixReserveMB;
     size_t largeReserve = 256;
     bool legacy = false;
     size_t youngMB = SIZE_MAX >> 20;
     size_t nurseryRatio = SIZE_MAX;
     size_t managedLimitMB = 0;
-    size_t nativePlaneLimitMB = 4096;
+    size_t nativePlaneLimitMB = LxrDefaultLimits::MinimumNativePlaneLimitMB;
+    bool nativePlaneLimitSpecified = false;
     bool noRecycling = false;
     bool noMutatorRecycling = false;
     bool overshoot = true;
@@ -348,7 +370,7 @@ HRESULT LxrGcHeap::Initialize()
         !ReadSetting("LXRLOSReserveMB", &largeReserve, 10,
             LxrSideMetadataLayout::AddressLimit >> 20, &largeReserveSpecified) ||
         !ReadSetting("LXRManagedHeapHardLimitMB", &managedLimitMB, 10, LxrSideMetadataLayout::AddressLimit >> 20) ||
-        !ReadSetting("LXRNativePlaneLimitMB", &nativePlaneLimitMB, 10, SIZE_MAX >> 20) ||
+        !ReadSetting("LXRNativePlaneLimitMB", &nativePlaneLimitMB, 10, SIZE_MAX >> 20, &nativePlaneLimitSpecified) ||
         !ReadSetting("LXRTraceThreshold", &m_policy_configuration.traceThreshold, 10, 100) ||
         !ReadSetting("LXRRCStopPercent", &m_policy_configuration.rcStopPercent, 10, 100) ||
         !ReadSetting("LXRMaxSurvivalMB", &m_policy_configuration.maxSurvivalMB, 10, SIZE_MAX >> 20) ||
@@ -438,6 +460,34 @@ HRESULT LxrGcHeap::Initialize()
         immixReserve = immixInitial;
         largeReserve = largeInitial;
     }
+    m_immix_reserve_defaulted = !legacy && !immixReserveSpecified;
+    m_large_reserve_defaulted = !legacy && !largeReserveSpecified;
+    m_hard_limit_explicit = managedLimitMB != 0;
+    if (m_immix_reserve_defaulted || m_large_reserve_defaulted)
+    {
+        size_t addressLimitMB = LxrSideMetadataLayout::AddressLimit >> 20;
+        if (m_reserved_limit != 0 && (m_reserved_limit >> 20) < addressLimitMB)
+        {
+            addressLimitMB = m_reserved_limit >> 20;
+        }
+        LxrDefaultLimits::ReservesMB(
+            GCToOSInterface::GetPhysicalMemoryLimit(), addressLimitMB, managedLimitMB,
+            m_immix_reserve_defaulted, &immixReserve, m_large_reserve_defaulted, &largeReserve);
+        // An initial capacity above the default reserve (LXRImmixInitialMB, LXRLOSInitialMB) raises the reserve to it.
+        if (m_immix_reserve_defaulted && immixReserve < immixInitial)
+        {
+            immixReserve = immixInitial;
+        }
+        if (m_large_reserve_defaulted && largeReserve < largeInitial)
+        {
+            largeReserve = largeInitial;
+        }
+    }
+    m_native_limit_defaulted = !nativePlaneLimitSpecified;
+    if (m_native_limit_defaulted)
+    {
+        nativePlaneLimitMB = LxrDefaultLimits::NativePlaneLimitMB(immixReserve, largeReserve);
+    }
     if (immixInitial == 0 || largeInitial == 0 || immixReserve < immixInitial ||
         largeReserve < largeInitial ||
         immixReserve > (LxrSideMetadataLayout::AddressLimit >> 20) - largeReserve ||
@@ -473,8 +523,17 @@ HRESULT LxrGcHeap::Initialize()
     m_policy_configuration.youngLimitBytes = youngMB == (SIZE_MAX >> 20) ? SIZE_MAX : youngMB << 20;
     if (nurseryRatio != SIZE_MAX)
     {
+        // The ratio is taken of the old default size while the reserves are the default, so that the setting keeps its
+        // meaning when the default reserves follow the memory limit.
+        size_t ratioBase = m_hard_limit;
+        if (managedLimitMB == 0 && (m_immix_reserve_defaulted || m_large_reserve_defaulted))
+        {
+            ratioBase = (m_immix_reserve_defaulted ? LxrDefaultLimits::LegacyImmixReserveMB : immixReserve) +
+                (m_large_reserve_defaulted ? LxrDefaultLimits::LegacyLargeReserveMB : largeReserve);
+            ratioBase <<= 20;
+        }
         m_policy_configuration.nurseryBlocks =
-            m_hard_limit / ImmixBlockGeometry::BlockBytes / (nurseryRatio + 1);
+            ratioBase / ImmixBlockGeometry::BlockBytes / (nurseryRatio + 1);
         if (m_policy_configuration.nurseryBlocks == 0)
         {
             Unsupported("LXRNurseryRatio leaves no nursery block.");
@@ -497,14 +556,15 @@ HRESULT LxrGcHeap::Initialize()
         Unsupported("LXR could not reserve its owned heap, metadata or worker resources.");
         return E_OUTOFMEMORY;
     }
+    m_engine.SetBorrowCeiling(PolicyReserveBytes());
     if (m_engine.GetNativePlaneCommittedBytes() > m_native_plane_limit)
     {
         m_engine.Shutdown();
         Unsupported("LXR initial native planes exceed LXRNativePlaneLimitMB.");
         return E_OUTOFMEMORY;
     }
-    m_cards = new (std::nothrow) uint8_t[m_engine.GetReservationBytes() / 2048 + 1]{};
-    m_bundles = new (std::nothrow) uint8_t[m_engine.GetReservationBytes() / (2 * 1024 * 1024) + 1]{};
+    m_cards = AllocateLazyZeroed(m_engine.GetReservationBytes() / 2048 + 1);
+    m_bundles = AllocateLazyZeroed(m_engine.GetReservationBytes() / (2 * 1024 * 1024) + 1);
     if (m_cards == nullptr || m_bundles == nullptr)
     {
         m_engine.Shutdown();
@@ -660,6 +720,10 @@ Object* LxrGcHeap::Alloc(gc_alloc_context* context, size_t size, uint32_t flags)
     }
     if (mutator == nullptr)
     {
+        if (!m_shutdown.load())
+        {
+            ReportOutOfMemory(size, LxrRcResult::CapacityExceeded);
+        }
         return nullptr;
     }
     Object* object = nullptr;
@@ -667,6 +731,7 @@ Object* LxrGcHeap::Alloc(gc_alloc_context* context, size_t size, uint32_t flags)
     // the pause needs no per-object flag to know that the object stays.
     bool pinned = (flags & GC_ALLOC_PINNED_OBJECT_HEAP) != 0;
     LxrRcResult result = m_engine.Allocate(mutator, size, &object, pinned);
+    LxrRcResult growth = LxrRcResult::AllocationFailure;
     if (result == LxrRcResult::AllocationFailure && !m_shutdown.load())
     {
         // The lazy sweep after the last pause makes promoted blocks Reusable. A collection is needed only if the
@@ -691,7 +756,8 @@ Object* LxrGcHeap::Alloc(gc_alloc_context* context, size_t size, uint32_t flags)
     }
     if (result == LxrRcResult::AllocationFailure && !m_shutdown.load())
     {
-        LxrRcResult grown = TryGrow(size >= LxrLargeObjectSpace::MinimumObjectBytes, size);
+        growth = TryGrow(size >= LxrLargeObjectSpace::MinimumObjectBytes, size);
+        LxrRcResult grown = growth;
         if (grown == LxrRcResult::Success)
         {
             m_engine.ResetAllocationCursors();
@@ -724,6 +790,10 @@ Object* LxrGcHeap::Alloc(gc_alloc_context* context, size_t size, uint32_t flags)
     }
     if (result == LxrRcResult::AllocationFailure)
     {
+        if (!m_shutdown.load())
+        {
+            ReportOutOfMemory(size, growth);
+        }
         return nullptr;
     }
     if (result != LxrRcResult::Success)
@@ -779,7 +849,121 @@ bool LxrGcHeap::CanAdmitRange(size_t, size_t, size_t nativeBytes, void* context)
 {
     // The engine reports all native planes. The collector keeps no per-object table of its own since P17 S7.
     LxrGcHeap* heap = static_cast<LxrGcHeap*>(context);
-    return nativeBytes <= heap->m_native_plane_limit;
+    if (nativeBytes <= heap->m_native_plane_limit)
+    {
+        return true;
+    }
+    heap->m_native_refused_bytes.store(nativeBytes, std::memory_order_relaxed);
+    return false;
+}
+
+// Prints one line to stderr that names the limit that stopped an allocation. It runs when Alloc returns null, which the
+// runtime turns into OutOfMemoryException. The line is printed once per process: many threads can fail at the same
+// time, and a program can catch the exception and allocate again. The text is built in a buffer on the stack and
+// written with one system call, so the method allocates no memory (managed or native) and cannot fail in the same
+// state that it reports. The values are read without a lock, so they can be a little old.
+void LxrGcHeap::ReportOutOfMemory(size_t size, LxrRcResult growth)
+{
+    if (m_out_of_memory_reported.exchange(true, std::memory_order_acq_rel))
+    {
+        return;
+    }
+    constexpr size_t MB = size_t{1} << 20;
+    size_t reservation = m_engine.GetReservationBytes();
+    size_t immixReserve = m_heap_configuration.immixReservationBytes;
+    size_t largeReserve = m_heap_configuration.largeObjectReservationBytes;
+    size_t admitted = m_engine.GetAdmittedBytes();
+    size_t immix = m_engine.GetImmixCapacityBytes();
+    size_t large = admitted > immix ? admitted - immix : 0;
+    bool largeRequest = size >= LxrLargeObjectSpace::MinimumObjectBytes;
+    size_t block = ImmixBlockGeometry::BlockBytes;
+    char text[640];
+    int length;
+    if (growth == LxrRcResult::CapacityExceeded)
+    {
+        length = snprintf(text, sizeof(text),
+            "LXR: out of memory. More than %zu threads allocate at the same time. This limit is fixed.\n",
+            MaximumMutators);
+    }
+    else if (growth == LxrRcResult::OutOfMemory && m_native_refused_bytes.load(std::memory_order_relaxed) != 0)
+    {
+        length = snprintf(text, sizeof(text),
+            "LXR: out of memory. The side metadata (native planes) would use %zu MB, and LXRNativePlaneLimitMB is %zu MB%s "
+            "(%zu MB are committed now; Immix capacity %zu MB of %zu MB, LOS %zu MB of %zu MB). "
+            "Raise DOTNET_LXRNativePlaneLimitMB (decimal MB).\n",
+            m_native_refused_bytes.load(std::memory_order_relaxed) / MB, m_native_plane_limit / MB,
+            m_native_limit_defaulted ? " (default, derived from the reservation)" : "",
+            m_engine.GetNativePlaneCommittedBytes() / MB, immix / MB, immixReserve / MB, large / MB, largeReserve / MB);
+    }
+    else if (growth == LxrRcResult::OutOfMemory)
+    {
+        length = snprintf(text, sizeof(text),
+            "LXR: out of memory. The operating system did not commit memory for the heap (Immix capacity %zu MB of %zu MB, "
+            "LOS %zu MB of %zu MB). Check the memory limit of the machine or the container.\n",
+            immix / MB, immixReserve / MB, large / MB, largeReserve / MB);
+    }
+    else if (m_hard_limit < reservation && m_hard_limit - (m_hard_limit < admitted ? m_hard_limit : admitted) <
+        (largeRequest ? size : block))
+    {
+        length = snprintf(text, sizeof(text),
+            "LXR: out of memory. The heap reached LXRManagedHeapHardLimitMB=%zu MB (%zu MB admitted). "
+            "Raise DOTNET_LXRManagedHeapHardLimitMB (decimal MB).\n",
+            m_hard_limit / MB, admitted / MB);
+    }
+    else if (largeRequest && largeReserve - (large < largeReserve ? large : largeReserve) < size)
+    {
+        length = snprintf(text, sizeof(text),
+            "LXR: out of memory. The large-object space is full at its reserve: %zu MB used of LXRLOSReserveMB=%zu MB%s "
+            "(the request is %zu bytes). Raise DOTNET_LXRLOSReserveMB (decimal MB; also DOTNET_LXRNativePlaneLimitMB if you set it).\n",
+            large / MB, largeReserve / MB,
+            !m_large_reserve_defaulted ? ""
+                : m_hard_limit_explicit ? (m_hard_limit > ((LxrDefaultLimits::LegacyImmixReserveMB + LxrDefaultLimits::LegacyLargeReserveMB) << 20) ? " (default: derived from LXRManagedHeapHardLimitMB)" : " (default)")
+                : " (default: the memory limit of the process)",
+            size);
+    }
+    else if (!largeRequest && immixReserve - (immix < immixReserve ? immix : immixReserve) < block)
+    {
+        length = snprintf(text, sizeof(text),
+            "LXR: out of memory. The Immix heap is full at its reserve: %zu MB used of LXRImmixReserveMB=%zu MB%s. "
+            "Raise DOTNET_LXRImmixReserveMB (decimal MB; also DOTNET_LXRNativePlaneLimitMB if you set it).\n",
+            immix / MB, immixReserve / MB,
+            !m_immix_reserve_defaulted ? ""
+                : m_hard_limit_explicit ? (m_hard_limit > ((LxrDefaultLimits::LegacyImmixReserveMB + LxrDefaultLimits::LegacyLargeReserveMB) << 20) ? " (default: derived from LXRManagedHeapHardLimitMB)" : " (default)")
+                : " (default: the memory limit of the process)");
+    }
+    else
+    {
+        length = snprintf(text, sizeof(text),
+            "LXR: out of memory. No free space for a request of %zu bytes (Immix capacity %zu MB of %zu MB, LOS %zu MB of %zu MB). "
+            "The heap can be too fragmented; raise DOTNET_LXRImmixReserveMB or DOTNET_LXRLOSReserveMB (decimal MB).\n",
+            size, immix / MB, immixReserve / MB, large / MB, largeReserve / MB);
+    }
+    if (length <= 0)
+    {
+        return;
+    }
+    size_t count = static_cast<size_t>(length) < sizeof(text) ? static_cast<size_t>(length) : sizeof(text) - 1;
+#ifdef TARGET_WINDOWS
+    HANDLE error = GetStdHandle(STD_ERROR_HANDLE);
+    DWORD written;
+    if (error != nullptr && error != INVALID_HANDLE_VALUE)
+    {
+        WriteFile(error, text, static_cast<DWORD>(count), &written, nullptr);
+    }
+#else
+    ssize_t written = write(STDERR_FILENO, text, count);
+    (void)written;
+#endif // TARGET_WINDOWS
+}
+
+// The Immix reservation that the sizer and the to-space borrowing take as their ceiling (see
+// LxrHeapSizer::PolicyReserveBytes). An explicit LXRImmixReserveMB is used as it is.
+size_t LxrGcHeap::PolicyReserveBytes() const
+{
+    size_t reservation = m_engine.GetImmixReservationBytes();
+    return m_immix_reserve_defaulted
+        ? LxrHeapSizer::PolicyReserveBytes(reservation, m_mature_live_bytes.load(std::memory_order_relaxed))
+        : reservation;
 }
 
 LxrRcResult LxrGcHeap::TryGrow(bool large, size_t size)
@@ -1315,6 +1499,7 @@ LxrRcResult LxrGcHeap::FinishLazy(LxrReferenceCounting* engine, void* context)
         size_t occupied = engine->GetImmixOccupiedBytes();
         size_t young = engine->GetYoungAllocationBytes();
         heap->m_mature_live_bytes.store(occupied > young ? occupied - young : 0, std::memory_order_relaxed);
+        engine->SetBorrowCeiling(heap->PolicyReserveBytes());
     }
     if (!heap->m_policy.FinishLazySweep(
             heap->m_current_pause_kind, engine->GetAdmittedBytes() / LxrLargeObjectSpace::PageBytes, mature,
@@ -1354,7 +1539,7 @@ LxrRcResult LxrGcHeap::CollectForPressure(bool emergency, bool user, bool heapFu
             // The nursery is as large as the free capacity, so a small capacity means many collections. Let the heap
             // sizer raise the capacity in this pause (lxr_heap_sizing.h).
             target = m_sizer.TargetCapacity(
-                capacity, m_mature_live_bytes.load(std::memory_order_relaxed), m_engine.GetImmixReservationBytes());
+                capacity, m_mature_live_bytes.load(std::memory_order_relaxed), PolicyReserveBytes());
             if (target > capacity && m_engine.RequestImmixCapacity(target) == LxrRcResult::Success)
             {
                 m_sizing_growths.fetch_add(1, std::memory_order_relaxed);
@@ -2262,7 +2447,7 @@ uint32_t LxrGcHeap::GetMemoryLoad()
 void LxrGcHeap::PublishMemoryInfo()
 {
     uint64_t physical = GCToOSInterface::GetPhysicalMemoryLimit();
-    uint64_t available = m_hard_limit;
+    uint64_t available = physical != 0 && physical < m_hard_limit ? physical : m_hard_limit;
     bool concurrent = m_current_pause_kind == LxrPauseKind::FinalMark && !m_forced_blocking;
     uint64_t values[MemoryFields]{
         available, physical / 10 * 9, physical / 100 * m_last_memory_load.load(),

@@ -971,8 +971,10 @@ LxrRcResult LxrReferenceCounting::InitializeBuffers(size_t slots)
     m_root_capacity[1] = m_configuration.maximumRoots;
     if (m_configuration.largeObjectBytes != 0)
     {
-        m_dead_large = new (std::nothrow) uintptr_t[
-            m_configuration.largeObjectBytes / LxrLargeObjectSpace::PageBytes]{};
+        // One entry for each page of the reservation. calloc gives zero pages that the system backs on first write, so a
+        // large LOS reservation does not touch memory at start-up.
+        m_dead_large = static_cast<uintptr_t*>(calloc(
+            m_configuration.largeObjectBytes / LxrLargeObjectSpace::PageBytes, sizeof(uintptr_t)));
     }
     if (m_configuration.immixBytes != 0)
     {
@@ -1388,7 +1390,7 @@ void LxrReferenceCounting::Shutdown()
     m_allocated_block_storage.Shutdown();
     delete[] m_roots[0];
     delete[] m_roots[1];
-    delete[] m_dead_large;
+    free(m_dead_large);
     delete[] m_mature_candidates;
     delete[] m_block_flags;
     delete[] m_zero_state;
@@ -8501,8 +8503,15 @@ LxrRcResult LxrReferenceCounting::BorrowSuspended()
     size_t current = GetImmixCapacityBytes();
     size_t block = ImmixBlockGeometry::BlockBytes;
     size_t missing = ((request - free) * LxrLargeObjectSpace::PageBytes + block - 1) & ~(block - 1);
-    // The hard limit equals the whole reservation here (see m_overshoot), so the room is what is left of it.
-    size_t room = m_configuration.immixBytes - current;
+    // The hard limit equals the whole reservation here (see m_overshoot), so the room is what is left of it, up to the
+    // borrow ceiling of the collector.
+    size_t borrowReserve = m_configuration.immixBytes;
+    size_t ceiling = m_borrow_ceiling.load(std::memory_order_relaxed);
+    if (ceiling < borrowReserve)
+    {
+        borrowReserve = ceiling;
+    }
+    size_t room = borrowReserve > current ? borrowReserve - current : 0;
     size_t limitRoom = m_configuration.hardLimitBytes - GetAdmittedBytes();
 #if defined(LXR_SIDE_METADATA_TEST_PLATFORM) && defined(LXR_S5B_IGNORE_HARD_LIMIT_CONTROL)
     limitRoom = room;

@@ -38,6 +38,9 @@ blocks and at most one block was free.
 | `DOTNET_LXRHeapSizing` | `true` | `false` restores growth only on allocation failure |
 | `DOTNET_LXRNurseryCapMB` | from physical memory, at most 96 | largest nursery budget; a value not above the initial capacity stops the growth |
 | `DOTNET_LXRImmixInitialMB` | 8 | initial capacity and first budget |
+| `DOTNET_LXRImmixReserveMB` | memory limit of the process (at least 128, at most 262144) | decimal MB; the growth ceiling of the Immix heap |
+| `DOTNET_LXRLOSReserveMB` | memory limit of the process (at least 256, at most 262144) | decimal MB; the growth ceiling of the large-object space |
+| `DOTNET_LXRNativePlaneLimitMB` | 4.5 x (Immix reserve + LOS reserve), at least 4096 | decimal MB; limit on the committed side metadata |
 | `DOTNET_LXRPolicyTrace` | `false` | print one `LXRPOLICY` line to stderr for each collection |
 
 Metrics (`GC_LxrPrototype_GetMetric`): 520..527 count collections by `LxrCollectionCause`; 528 budget, 529 sizing growth
@@ -65,7 +68,11 @@ requests, 530 live estimate, 531 nursery cap, 532 floor, 533 capacity.
 
 ## Limits
 
-* The default Immix reservation (128 MB) is still the ceiling of the managed heap.
+* The Immix and the LOS reservation are each the memory limit of the process (until 2026-11, a fixed 128 MB and 256 MB; with `LXRManagedHeapHardLimitMB` they are its halves). The
+  sizing ceiling and the to-space borrowing use the old 128 MB while the live size is small, and twice the live size
+  above 64 MB of live data; an explicit `LXRImmixReserveMB` is used as it is. See
+  `docs/design/lxr-port/results/default-limits/README.md`.
 * The native planes need several bytes per admitted byte (a 400 MB limit admitted about 97 MB of Immix in the test).
-  `LXRNativePlaneLimitMB` stops the growth silently and the collector then keeps the smaller heap.
+  `LXRNativePlaneLimitMB` stops the growth silently and the collector then keeps the smaller heap. Its default is now
+  4.5 times the reservation (at least 4096 MB).
 * No shrinking: a program that had a large live set keeps its capacity.

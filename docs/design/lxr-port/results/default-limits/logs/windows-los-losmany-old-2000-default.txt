@@ -1,0 +1,14 @@
+Unhandled exception. System.Reflection.TargetInvocationException: Exception has been thrown by the target of an invocation.
+ ---> System.OutOfMemoryException: Exception of type 'System.OutOfMemoryException' was thrown.
+   at GcBench.LosMany(Int32 entries, Int64 count, Boolean calibrate) in C:\lx-run\dl\drvlm\GcBench.cs:line 411
+   at GcBench.Run(String workload, Int32 size, Int64 ops, Int64[] latency, Boolean calibrate) in C:\lx-run\dl\drvlm\GcBench.cs:line 448
+   at InvokeStub_GcBench.Run(Object, Object, IntPtr*)
+   at System.Reflection.IntrinsicInvokeHelper.Invoke(InvokeState& state, InvokerStrategy& strategy, InvokeFunc_RefArgs& invokeFunc, MethodBase method, RuntimeType[] argumentTypes, Object obj, IntPtr* args, Boolean backwardsCompat)
+   at System.Reflection.MethodBaseInvoker.InvokeWithSharedThunk(Object obj, IntPtr* args)
+   at System.Reflection.MethodBaseInvoker.InvokeWithManyArgs(Object obj, BindingFlags invokeAttr, Binder binder, Object[] parameters, CultureInfo culture)
+   --- End of inner exception stack trace ---
+   at System.Reflection.MethodBaseInvoker.InvokeWithManyArgs(Object obj, BindingFlags invokeAttr, Binder binder, Object[] parameters, CultureInfo culture)
+   at System.Reflection.RuntimeMethodInfo.Invoke(Object obj, BindingFlags invokeAttr, Binder binder, Object[] parameters, CultureInfo culture)
+   at System.Reflection.MethodBase.Invoke(Object obj, Object[] parameters)
+   at CompareDriver.<Main>g__Invoke|7_0(Int32 count, Int64 ops, <>c__DisplayClass7_0&) in C:\lx-run\dl\drvlm\CompareDriver.cs:line 84
+   at CompareDriver.Main(String[] args) in C:\lx-run\dl\drvlm\CompareDriver.cs:line 90

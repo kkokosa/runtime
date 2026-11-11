@@ -1,0 +1,2 @@
+set DOTNET_LXRImmixReserveMB=6000
+set DOTNET_LXRNativePlaneLimitMB=60000

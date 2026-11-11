@@ -7,7 +7,7 @@
 #include <algorithm>
 #include <cstddef>
 #include <cstdint>
-
+#include "lxr_default_limits.h"
 // Port-specific. The Java LXR runs in the fixed heap that -Xms/-Xmx give, so its heap-full trigger makes the whole free
 // heap the nursery. The .NET host has no such setting, so the collector must choose the Immix capacity. The capacity is
 // what the heap-full trigger compares with, so it sets the number of collections.
@@ -22,7 +22,8 @@
 //    blocks), not predicted from block counts.
 // The target never lowers the capacity and never exceeds a share of the reservation. The rest of the reservation is
 // the room that a pause borrows for its to-space (P17 S5b). A failed allocation can still grow the heap beyond the
-// ceiling (LxrGcHeap::TryGrow).
+// ceiling (LxrGcHeap::TryGrow). With the default reservation (lxr_default_limits.h) the reservation is the memory limit
+// of the process, and the sizing takes PolicyReserveBytes() instead: the old 128 MiB while the live size is small.
 struct LxrHeapSizingConfiguration
 {
     bool enabled = true;
@@ -41,6 +42,9 @@ public:
     // The standard collector keeps its gen0 budget below a share of physical memory (gen0size * heaps <= physical / 6).
     // The nursery here is one budget for the process, and the heap needs room for live data, so the share is smaller.
     static constexpr size_t PhysicalMemoryDivisor = 16;
+    // The heap of a program needs about twice its live data (measured: a reserve of 1.4 times the live size fails in a
+    // long run), so the default reserve grows to this multiple of the live size.
+    static constexpr size_t LiveReserveFactor = 2;
 
     static size_t DefaultNurseryCap(uint64_t physicalBytes)
     {
@@ -50,6 +54,18 @@ public:
             return DefaultNurseryCapBytes;
         }
         return share > MinimumNurseryCapBytes ? static_cast<size_t>(share) : MinimumNurseryCapBytes;
+    }
+
+    // The Immix reservation that the sizing and the to-space borrowing use as their ceiling. With the default reserve
+    // (a large address range) it is the old default reserve while the live size is small, and grows with the live size,
+    // so that a small program keeps its heap size and its pauses and a large one can still grow. An explicit setting
+    // is used as it is.
+    static size_t PolicyReserveBytes(size_t reservationBytes, size_t liveBytes)
+    {
+        size_t floor = LxrDefaultLimits::LegacyImmixReserveMB << 20;
+        size_t wanted = liveBytes > SIZE_MAX / LiveReserveFactor ? SIZE_MAX : liveBytes * LiveReserveFactor;
+        wanted = wanted > floor ? wanted : floor;
+        return wanted < reservationBytes ? wanted : reservationBytes;
     }
 
     void Configure(const LxrHeapSizingConfiguration& configuration, size_t initialCapacityBytes)

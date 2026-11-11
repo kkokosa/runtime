@@ -1,0 +1,10 @@
+listsuffix old policy_lines=37 max_capK=131072 max_liveK=32238 heapFull=30
+listsuffix new policy_lines=39 max_capK=131072 max_liveK=34661 heapFull=31
+requests old policy_lines=99 max_capK=112256 max_liveK=7065 heapFull=91
+requests new policy_lines=98 max_capK=113664 max_liveK=7206 heapFull=90
+losarrays old policy_lines=178 max_capK=98304 max_liveK=46 heapFull=175
+losarrays new policy_lines=296 max_capK=98304 max_liveK=47 heapFull=292
+binarytrees old policy_lines=109 max_capK=128768 max_liveK=75941 heapFull=97
+binarytrees new policy_lines=74 max_capK=124000 max_liveK=26181 heapFull=58
+mixedmedium old policy_lines=342 max_capK=131072 max_liveK=67620 heapFull=129
+mixedmedium new policy_lines=327 max_capK=132256 max_liveK=67444 heapFull=134

@@ -1,0 +1,13 @@
+Startup working set of a small program (CompareDriver requests 64 2000), one run each, WSL2 (31 GB), Linux x64. Peak RSS in MB.
+old = 7e4d693af24. new = this change. "new, zeroed cards" is an intermediate build (not kept) in which the card tables were still
+allocated with a zeroing new[]; the final build allocates them with VirtualReserve and VirtualCommit (zero pages, used on write).
+
+reserve setting         old       new, zeroed cards   new (final)
+default                 153.4     172.5               157.1
+128                     153.3     153.3               153.2
+8000                    158.3     158.2               154.2
+60000                   190.0     189.9               160.4
+250000                  305.9     306.0               183.6
+
+The default of the new builds on this host is a reserve of 31812 MB (32068 MB physical memory minus the 256 MB LOS reserve).
+For 8000 to 250000 the native plane limit was set to 2000000 in these runs.

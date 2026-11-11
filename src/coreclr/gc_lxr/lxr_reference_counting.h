@@ -625,6 +625,9 @@ public:
     // pages the pause may copy (RequestBorrow). If fewer Immix pages are free, the pause admits the missing blocks
     // from the reservation, and it gives the free tail of the capacity back before the epoch flips.
     bool IsOvershootEnabled() const { return m_overshoot; }
+    // The most that a pause borrows as to-space is up to this ceiling (never above the Immix reservation). The collector
+    // sets it from its sizing rule; the default is the reservation.
+    void SetBorrowCeiling(size_t bytes) { m_borrow_ceiling.store(bytes, std::memory_order_relaxed); }
     void RequestBorrow(size_t copyPages) { m_borrow_request_pages = copyPages; }
     // Bytes of the capacity above the part that is kept (the initial capacity and regular growth).
     size_t GetBorrowedBytes() const;
@@ -1109,6 +1112,7 @@ private:
     // P17 S5b. The capacity that is never given back: the initial capacity and every regular growth. The part above it
     // is borrowed for a pause. Only a pause changes these values.
     bool m_overshoot = false;
+    std::atomic<size_t> m_borrow_ceiling{SIZE_MAX};
     size_t m_immix_floor = 0;
     size_t m_borrow_request_pages = 0;
     std::atomic<uint64_t> m_overshoot_metrics[OvershootMetricCount]{};

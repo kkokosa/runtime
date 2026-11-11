@@ -229,6 +229,8 @@ private:
     void RetireAllocationSpan(gc_alloc_context* context, bool subtractUnused);
     void RegisterFinalizable(Object* object, uint32_t flags);
     LxrRcResult TryGrow(bool large, size_t size);
+    void ReportOutOfMemory(size_t size, LxrRcResult growth);
+    size_t PolicyReserveBytes() const;
     LxrRcResult CollectForPressure(bool emergency, bool user, bool heapFull = false);
     LxrRcResult UpdatePolicyHints();
     LxrCollectionCause GetCollectionCause(bool heapFull) const;
@@ -250,6 +252,16 @@ private:
     bool m_wait_for_lazy = false;
     size_t m_native_plane_limit = 0;
     size_t m_hard_limit = 0;
+    // Set when the Immix reserve and the native plane limit come from the default rule (lxr_default_limits.h) and not
+    // from a setting. The out-of-memory message says so.
+    bool m_immix_reserve_defaulted = false;
+    bool m_large_reserve_defaulted = false;
+    bool m_hard_limit_explicit = false;
+    bool m_native_limit_defaulted = false;
+    // The out-of-memory message is printed once per process. m_native_refused_bytes is the size of the native planes that
+    // CanAdmitRange refused last (0 if it never refused).
+    std::atomic<bool> m_out_of_memory_reported{false};
+    std::atomic<size_t> m_native_refused_bytes{0};
     std::atomic<LxrCollectionCause> m_collection_cause{LxrCollectionCause::None};
     // Heap sizing (lxr_heap_sizing.h). The sizer is used with the collection lock held. The live estimate is written by
     // FinishLazy, on a worker thread.
