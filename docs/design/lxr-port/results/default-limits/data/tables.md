@@ -143,3 +143,47 @@ runs 40, not ok 0:
 runs 60, not ok 0: 
 
 ## losmany at the new default (10 runs, medians): wall 1137.5 ms, CPU 2818.3 ms, pause 222.8 ms, collections 67, peak RSS 184.2 MB; old and prev: 10 of 10 fail
+
+## Commit-on-demand fix: new (d67c equivalent, 42d36e175e5) against fix (05c792703fd), no setting, 10 pairs
+
+| workload | metric | new median | fix median | fix - new (paired median, 95% interval) |
+|---|---|---|---|---|
+| listsuffix | wall ms | 1207.4 | 1197.3 | -19.3 [-102.2, +23.4] |
+| listsuffix | CPU ms | 3161.5 | 3172.8 | -37.7 [-154.0, +65.1] |
+| listsuffix | pause ms | 159.4 | 157.3 | -4.0 [-7.9, +0.9] |
+| listsuffix | collections | 6.0 | 6.0 | +0.0 [+0.0, +0.0] |
+| listsuffix | peak RSS MB | 204.0 | 197.1 | -7.0 [-8.2, -3.1] |
+| losarrays | wall ms | 1096.7 | 1091.9 | -4.7 [-65.1, +33.9] |
+| losarrays | CPU ms | 2446.5 | 2400.6 | -13.4 [-164.2, +22.0] |
+| losarrays | pause ms | 433.2 | 435.5 | +2.9 [-6.0, +14.2] |
+| losarrays | collections | 49.0 | 49.0 | +0.0 [+0.0, +0.0] |
+| losarrays | peak RSS MB | 108.6 | 104.7 | -4.1 [-4.2, -3.8] |
+| losmany | wall ms | 1048.2 | 1037.0 | -13.7 [-48.8, +30.3] |
+| losmany | CPU ms | 2662.9 | 2616.9 | -49.7 [-107.3, +16.7] |
+| losmany | pause ms | 197.4 | 197.1 | -0.6 [-10.1, +6.9] |
+| losmany | collections | 67.0 | 67.0 | +0.0 [+0.0, +0.0] |
+| losmany | peak RSS MB | 184.1 | 180.1 | -3.9 [-4.2, -3.8] |
+| mixedmedium | wall ms | 1333.0 | 1347.0 | +11.2 [-40.2, +49.5] |
+| mixedmedium | CPU ms | 2303.5 | 2317.2 | +23.0 [-64.2, +68.8] |
+| mixedmedium | pause ms | 197.6 | 196.6 | +1.6 [-12.6, +11.0] |
+| mixedmedium | collections | 219.5 | 217.0 | -2.5 [-9.0, +2.5] |
+| mixedmedium | peak RSS MB | 197.2 | 193.4 | -3.8 [-4.4, -3.3] |
+| requests | wall ms | 360.7 | 365.7 | +13.7 [+0.2, +19.5] |
+| requests | CPU ms | 477.9 | 486.1 | +13.0 [+1.1, +28.7] |
+| requests | pause ms | 28.7 | 29.0 | +0.6 [-0.2, +2.1] |
+| requests | collections | 9.0 | 9.0 | +0.0 [+0.0, +0.0] |
+| requests | peak RSS MB | 173.8 | 169.8 | -3.9 [-4.7, -3.7] |
+
+runs 100, not ok 0: 
+
+## requests only, 20 more pairs
+
+| workload | metric | new median | fix median | fix - new (paired median, 95% interval) |
+|---|---|---|---|---|
+| requests | wall ms | 352.6 | 353.7 | +3.1 [-3.8, +15.3] |
+| requests | CPU ms | 466.5 | 472.8 | +4.6 [-3.1, +16.2] |
+| requests | pause ms | 28.7 | 28.8 | -0.1 [-1.0, +0.6] |
+| requests | collections | 9.0 | 9.0 | +0.0 [+0.0, +0.0] |
+| requests | peak RSS MB | 173.7 | 169.7 | -4.0 [-4.1, -3.7] |
+
+runs 40, not ok 0: 

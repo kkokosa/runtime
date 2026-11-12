@@ -616,6 +616,8 @@ public:
     size_t GetImmixOccupiedBytes() const;
     LxrRcResult GetGrowthResult() const;
     size_t GetImmixReservationBytes() const;
+    bool GrowDeadLarge();
+    bool GrowBlockTables(size_t immixBytes);
     size_t GetImmixCapacityBytes() const;
     size_t GetYoungAllocationBytes() const;
     size_t GetCleanNurseryBlocks() const;
@@ -1093,6 +1095,15 @@ private:
     LxrVirtualArray<std::atomic<uint8_t>> m_allocated_block_storage;
     // The blocks that mutators took since the last pause (see ImmixAllocationManager::AcquireNotes).
     uint32_t* m_allocated_list = nullptr;
+    // The per-block tables below (m_allocated_list, m_block_flags, m_zero_state, m_evacuation_sources, m_mature_candidates)
+    // are reserved for the whole Immix reservation and committed for the admitted blocks only (GrowBlockTables). The
+    // commit charge of Windows counts committed pages that nothing has written. Their addresses never change.
+    LxrVirtualArray<uint32_t> m_allocated_list_storage;
+    LxrVirtualArray<std::atomic<uint8_t>> m_block_flags_storage;
+    LxrVirtualArray<std::atomic<uint8_t>> m_zero_state_storage;
+    LxrVirtualArray<std::atomic<uint8_t>> m_evacuation_sources_storage;
+    LxrVirtualArray<std::atomic<uint8_t>> m_mature_candidates_storage;
+    std::atomic<size_t> m_block_table_blocks{0};
     std::atomic<size_t> m_allocated_count{0};
     std::atomic<size_t> m_immix_capacity{0};
 #ifdef LXR_SIDE_METADATA_TEST_PLATFORM
@@ -1261,7 +1272,11 @@ private:
     LxrWordArray m_retained_roots;
     LxrWordArray m_released_roots;
     size_t m_current_roots;
+    // The dead large objects of a pause. One entry for each admitted LOS page at most; the storage is reserved for the whole
+    // LOS reservation and committed as the LOS grows (see GrowDeadLarge).
+    LxrVirtualArray<uintptr_t> m_dead_large_storage;
     uintptr_t* m_dead_large;
+    std::atomic<size_t> m_dead_large_capacity{0};
     std::atomic<uint8_t>* m_mature_candidates;
     std::atomic<size_t> m_dead_large_count;
     std::atomic<size_t> m_producer_bank;

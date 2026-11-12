@@ -2230,11 +2230,12 @@ namespace
     void ValidateGrowthFailure()
     {
         // Three object planes (S7 removed the two trace tables), four payload streams, fifteen metadata planes (fourteen
-        // without the ValidObject plane of the default variant), then the managed heap.
+        // without the ValidObject plane of the default variant), the managed heap, then the per-block tables of the engine
+        // (candidates, flags, allocated list).
 #ifdef LXR_OBJECT_START_WALK
-        constexpr int64_t CommitCalls = 22;
+        constexpr int64_t CommitCalls = 25;
 #else
-        constexpr int64_t CommitCalls = 23;
+        constexpr int64_t CommitCalls = 26;
 #endif // LXR_OBJECT_START_WALK
         for (int64_t after = 0; after <= CommitCalls; after++)
         {

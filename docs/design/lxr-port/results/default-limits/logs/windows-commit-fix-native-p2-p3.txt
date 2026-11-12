@@ -1,0 +1,10 @@
+[p2.1] exit=0 :: 1096/1096 side metadata checks passed
+[p2.2] exit=0 :: 2215/2215 immix block checks passed
+[p2.3] exit=0 :: 37/37 reference count cases passed (1882 checks)
+[p2.4] exit=0 :: 277861/277861 immix allocation checks passed
+[p2.5] exit=0 :: 209070/209070 large object space checks passed
+[p3.1] exit=0 :: PASS: 652/652 P3.1 validation checks
+[p3.2] exit=0 :: PASS: 395/395 P3.2 pause checks
+[p3.3] exit=0 :: PASS: 357/357 P3.3 validation checks
+[p3.4] exit=0 :: PASS: 70/70 P3.4 validation checks
+lxr native failed=0

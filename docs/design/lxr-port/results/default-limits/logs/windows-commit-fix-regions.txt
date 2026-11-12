@@ -1,0 +1,167 @@
+== regions old-7e4d-job700
+private_mb=134.5 ws_mb=46.1
+committed private regions: 130.9 MB in 101 regions
+  0x2123e7d0000 24.0 MB
+  0x212267d0000 24.0 MB
+  0x21200000000 24.0 MB
+  0x212567d0000 24.0 MB
+  0x212255a8000 16.0 MB
+  0x2126e7d0000 8.0 MB
+  0x212867d0000 1.8 MB
+  0x21225451000 1.0 MB
+  0x212265c6000 1.0 MB
+  0x212266d0000 1.0 MB
+  0x212238b0000 1.0 MB
+  0x21288d30000 0.6 MB
+  0x4f13b3b3e000 0.5 MB
+  0xe1093b3e000 0.5 MB
+exit=0 limit=700MB
+== regions old-r128/256
+private_mb=134.4 ws_mb=46.2
+committed private regions: 130.8 MB in 99 regions
+  0x1cd00000000 24.0 MB
+  0x1cd52980000 24.0 MB
+  0x1cd3a980000 24.0 MB
+  0x1cd18000000 24.0 MB
+  0x1cd3985c000 16.0 MB
+  0x1cd6a980000 8.0 MB
+  0x1cd82980000 2.0 MB
+  0x1cd3a875000 1.0 MB
+  0x1cd396c0000 1.0 MB
+  0x1cd39590000 1.0 MB
+  0x1cd37ad0000 1.0 MB
+  0x4f118b94c000 0.5 MB
+  0xe0e6b94c000 0.5 MB
+  0x4c0735ca6000 0.2 MB
+== regions old-7e4d
+private_mb=134.2 ws_mb=46.0
+committed private regions: 130.6 MB in 99 regions
+  0x1ac80000000 24.0 MB
+  0x1ac98000000 24.0 MB
+  0x1accf9a0000 24.0 MB
+  0x1ace79a0000 24.0 MB
+  0x1acce785000 16.0 MB
+  0x1acb0000000 8.0 MB
+  0x1acff9a0000 2.0 MB
+  0x1acce65f000 1.0 MB
+  0x1accf79a000 1.0 MB
+  0x1accf8a0000 1.0 MB
+  0x1acccb70000 1.0 MB
+  0xe0d65c00000 0.5 MB
+  0x4f1085c00000 0.5 MB
+  0x1acc9dd0000 0.3 MB
+== regions fix-job700
+private_mb=133.2 ws_mb=44.4
+committed private regions: 129.3 MB in 118 regions
+  0x2f3678c0000 24.0 MB
+  0x2f3bf0c0000 24.0 MB
+  0x2f4168c0000 24.0 MB
+  0x2f3100c0000 24.0 MB
+  0x2f30ed34000 16.0 MB
+  0x2f46e0c0000 8.0 MB
+  0x2f30fd4e000 1.0 MB
+  0x2f30fe56000 1.0 MB
+  0x2f30d0d0000 1.0 MB
+  0x2f4c58c0000 1.0 MB
+  0x2f4c7e12000 0.5 MB
+  0x4f1ac4ce6000 0.5 MB
+  0xe17a4ce6000 0.5 MB
+  0x2f4c7dd0000 0.3 MB
+exit=0 limit=700MB
+== regions fix
+private_mb=133.6 ws_mb=44.7
+committed private regions: 129.6 MB in 119 regions
+  0x23a287c0000 24.0 MB
+  0x25a21fc0000 24.0 MB
+  0x27a1b7c0000 24.0 MB
+  0x29a14fc0000 24.0 MB
+  0x23a1e4ab000 16.0 MB
+  0x2ba0e7c0000 8.0 MB
+  0x23a1e323000 1.0 MB
+  0x23a1f6cc000 1.0 MB
+  0x23a1c820000 1.0 MB
+  0x23a00000000 1.0 MB
+  0x4f197059e000 0.5 MB
+  0xe165059e000 0.5 MB
+  0x23a0e334000 0.3 MB
+  0x23a0e2b0000 0.3 MB
+== regions d67c
+private_mb=597.5 ws_mb=52.4
+committed private regions: 592.8 MB in 114 regions
+  0x1ed89044000 128.0 MB
+  0x1ed9105d000 127.9 MB
+  0x1ed80000000 127.9 MB
+  0x1ed99150000 64.0 MB
+  0x1edfff60000 24.0 MB
+  0x20df9760000 24.0 MB
+  0x22df2f60000 24.0 MB
+  0x24dec760000 24.0 MB
+  0x1edfeb2d000 16.0 MB
+  0x26de5f60000 8.0 MB
+  0x1ed8862b000 8.0 MB
+  0x1ed87ffc000 2.0 MB
+  0x1ed88e38000 2.0 MB
+  0x1ed88411000 2.0 MB
+== regions d67c-r128/256
+private_mb=134.3 ws_mb=45.9
+committed private regions: 130.6 MB in 101 regions
+  0x1fcb6cc0000 24.0 MB
+  0x1fc9ecc0000 24.0 MB
+  0x1fccecc0000 24.0 MB
+  0x1fce6cc0000 24.0 MB
+  0x1fc9da90000 16.0 MB
+  0x1fc80000000 8.0 MB
+  0x1fcfecc0000 2.0 MB
+  0x1fc9ebbe000 1.0 MB
+  0x1fc9eaa1000 1.0 MB
+  0x1fc9d920000 1.0 MB
+  0x1fc9bd60000 1.0 MB
+  0xe0fe4400000 0.5 MB
+  0x4f1304400000 0.5 MB
+  0x1e07f2200000 0.2 MB
+== regions d67c-job700
+private_mb=138.6 ws_mb=44.6
+committed private regions: 134.6 MB in 111 regions
+  0x16680000000 24.0 MB
+  0x166e3740000 24.0 MB
+  0x16792740000 24.0 MB
+  0x1673af40000 24.0 MB
+  0x166e262c000 16.0 MB
+  0x167e9f40000 8.0 MB
+  0x16841744000 2.0 MB
+  0x16841958000 1.4 MB
+  0x166e243b000 1.4 MB
+  0x166e0bec000 1.0 MB
+  0x166e22cd000 1.0 MB
+  0x166e3640000 1.0 MB
+  0x166e05c0000 1.0 MB
+  0x16841ac0000 0.7 MB
+exit=0 limit=700MB
+== regions fix-r128/256
+private_mb=133.1 ws_mb=44.7
+committed private regions: 129.6 MB in 110 regions
+  0x1dc51590000 24.0 MB
+  0x1dc18000000 24.0 MB
+  0x1dc39590000 24.0 MB
+  0x1dc00000000 24.0 MB
+  0x1dc38259000 16.0 MB
+  0x1dc69590000 8.0 MB
+  0x1dc39371000 1.0 MB
+  0x1dc39488000 1.0 MB
+  0x1dc36570000 1.0 MB
+  0x1dc39270000 0.9 MB
+  0x1dc838b0000 0.8 MB
+  0x4f12038ac000 0.5 MB
+  0xe0ee38ac000 0.5 MB
+  0x1e0771c56000 0.3 MB
+| case | private (commit) MB median [min-max] | working set MB median [min-max] | runs |
+|---|---|---|---|
+| old-7e4d | 134.2 [134.2-134.2] | 46 [46-46] | 1 |
+| d67c | 597.5 [597.5-597.5] | 52.4 [52.4-52.4] | 1 |
+| fix | 133.6 [133.6-133.6] | 44.7 [44.7-44.7] | 1 |
+| old-7e4d-job700 | 134.5 [134.5-134.5] | 46.1 [46.1-46.1] | 1 |
+| d67c-job700 | 138.6 [138.6-138.6] | 44.6 [44.6-44.6] | 1 |
+| fix-job700 | 133.2 [133.2-133.2] | 44.4 [44.4-44.4] | 1 |
+| d67c-r128/256 | 134.3 [134.3-134.3] | 45.9 [45.9-45.9] | 1 |
+| fix-r128/256 | 133.1 [133.1-133.1] | 44.7 [44.7-44.7] | 1 |
+| old-r128/256 | 134.4 [134.4-134.4] | 46.2 [46.2-46.2] | 1 |

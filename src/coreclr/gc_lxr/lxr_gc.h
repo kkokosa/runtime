@@ -174,6 +174,8 @@ private:
     static void Resume(bool finished, void* context);
     static void RetireAllocationContext(gc_alloc_context* context, void* heap);
     static bool CanAdmitRange(size_t firstSlot, size_t slotCount, size_t nativeBytes, void* heap);
+    static bool AdmitCards(size_t firstSlot, size_t slotCount, bool initialize, void* heap);
+    bool CommitCards(size_t firstSlot, size_t slotCount);
     static LxrRcResult CaptureRoots(LxrReferenceCounting* engine, void* context);
     static LxrRcResult FinishTrace(LxrReferenceCounting* engine, void* context);
     static LxrRcResult FinishEpoch(LxrReferenceCounting* engine, void* context);
@@ -280,6 +282,9 @@ private:
     ObjectHeaderBitsParameters m_header_bits{};
     FrozenSegment m_frozen[MaximumFrozenSegments];
     std::atomic<uint32_t> m_frozen_readers;
+    // The card table covers the reservation. It is reserved as a whole and committed for the admitted ranges only (see
+    // CommitCards): Windows counts committed pages that nothing has written against the commit limit.
+    LxrVirtualArray<uint8_t> m_card_storage;
     uint8_t* m_cards;
     uint8_t* m_bundles;
     CLRCriticalSection m_collection_lock;

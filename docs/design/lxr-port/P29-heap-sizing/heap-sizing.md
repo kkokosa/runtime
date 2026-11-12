@@ -76,3 +76,4 @@ requests, 530 live estimate, 531 nursery cap, 532 floor, 533 capacity.
   `LXRNativePlaneLimitMB` stops the growth silently and the collector then keeps the smaller heap. Its default is now
   4.5 times the reservation (at least 4096 MB).
 * No shrinking: a program that had a large live set keeps its capacity.
+* The tables that scale with a reserve (card table, per-block tables, LOS page map, free tree and dead list) are committed for the admitted part only, so the start-up commit charge on Windows does not depend on the reserve (results/default-limits/README.md section 12).

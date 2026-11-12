@@ -838,6 +838,10 @@ LxrRcResult LxrReferenceCounting::Initialize(
     {
         return Fail(LxrRcResult::MetadataFailure);
     }
+    if (m_configuration.largeObjectBytes != 0 && !GrowDeadLarge())
+    {
+        return Fail(LxrRcResult::OutOfMemory);
+    }
     if (m_overshoot)
     {
         m_allocation.EnablePlacementQuiescent(m_immix_floor / ImmixBlockGeometry::BlockBytes);
@@ -971,40 +975,36 @@ LxrRcResult LxrReferenceCounting::InitializeBuffers(size_t slots)
     m_root_capacity[1] = m_configuration.maximumRoots;
     if (m_configuration.largeObjectBytes != 0)
     {
-        // One entry for each page of the reservation. calloc gives zero pages that the system backs on first write, so a
-        // large LOS reservation does not touch memory at start-up.
-        m_dead_large = static_cast<uintptr_t*>(calloc(
-            m_configuration.largeObjectBytes / LxrLargeObjectSpace::PageBytes, sizeof(uintptr_t)));
-    }
-    if (m_configuration.immixBytes != 0)
-    {
-        m_mature_candidates = new (std::nothrow) std::atomic<uint8_t>[
-            m_configuration.immixBytes / ImmixBlockGeometry::BlockBytes]{};
-        m_block_flags = new (std::nothrow) std::atomic<uint8_t>[
-            m_configuration.immixBytes / ImmixBlockGeometry::BlockBytes]{};
-        if (m_configuration.prezero && !m_observer)
-        {
-            m_zero_state = new (std::nothrow) std::atomic<uint8_t>[
-                m_configuration.immixBytes / ImmixBlockGeometry::BlockBytes]{};
-            if (m_zero_state == nullptr)
-            {
-                return Fail(LxrRcResult::OutOfMemory);
-            }
-        }
-        // Not initialized: the entries are written before they are read, and the pages stay untouched until used.
-        m_allocated_list = new (std::nothrow) uint32_t[m_configuration.immixBytes / ImmixBlockGeometry::BlockBytes];
-        if (m_allocated_list == nullptr || m_block_flags == nullptr)
+        // Address space for one entry for each page of the reservation; GrowDeadLarge commits the entries of the admitted pages.
+        if (!m_dead_large_storage.Reserve(m_configuration.largeObjectBytes / LxrLargeObjectSpace::PageBytes))
         {
             return Fail(LxrRcResult::OutOfMemory);
         }
-        if (m_configuration.evacuateMature)
+        m_dead_large = m_dead_large_storage.Get();
+    }
+    if (m_configuration.immixBytes != 0)
+    {
+        // Address space for one entry for each block of the reservation. Committed memory is zero, and the entries of
+        // m_allocated_list are written before they are read. GrowBlockTables commits the admitted blocks.
+        size_t blocks = m_configuration.immixBytes / ImmixBlockGeometry::BlockBytes;
+        bool reserved = m_mature_candidates_storage.Reserve(blocks) && m_block_flags_storage.Reserve(blocks) &&
+            m_allocated_list_storage.Reserve(blocks);
+        m_mature_candidates = m_mature_candidates_storage.Get();
+        m_block_flags = m_block_flags_storage.Get();
+        m_allocated_list = m_allocated_list_storage.Get();
+        if (reserved && m_configuration.prezero && !m_observer)
         {
-            m_evacuation_sources = new (std::nothrow) std::atomic<uint8_t>[
-                m_configuration.immixBytes / ImmixBlockGeometry::BlockBytes]{};
-            if (m_evacuation_sources == nullptr)
-            {
-                return Fail(LxrRcResult::OutOfMemory);
-            }
+            reserved = m_zero_state_storage.Reserve(blocks);
+            m_zero_state = m_zero_state_storage.Get();
+        }
+        if (reserved && m_configuration.evacuateMature)
+        {
+            reserved = m_evacuation_sources_storage.Reserve(blocks);
+            m_evacuation_sources = m_evacuation_sources_storage.Get();
+        }
+        if (!reserved || !GrowBlockTables(m_initial_immix))
+        {
+            return Fail(LxrRcResult::OutOfMemory);
         }
     }
     if (m_mutators == nullptr || m_mutator_chunks == nullptr ||
@@ -1381,7 +1381,7 @@ void LxrReferenceCounting::Shutdown()
     DeleteReleaseChunks();
     delete[] m_copy_logs;
     delete[] m_worker_counters;
-    delete[] m_evacuation_sources;
+    m_evacuation_sources_storage.Shutdown();
     delete[] m_mutator_chunks;
 #ifdef LXR_SIDE_METADATA_TEST_PLATFORM
     m_extent_storage.Shutdown();
@@ -1390,11 +1390,13 @@ void LxrReferenceCounting::Shutdown()
     m_allocated_block_storage.Shutdown();
     delete[] m_roots[0];
     delete[] m_roots[1];
-    free(m_dead_large);
-    delete[] m_mature_candidates;
-    delete[] m_block_flags;
-    delete[] m_zero_state;
-    delete[] m_allocated_list;
+    m_dead_large_storage.Shutdown();
+    m_dead_large_capacity.store(0, std::memory_order_relaxed);
+    m_mature_candidates_storage.Shutdown();
+    m_block_flags_storage.Shutdown();
+    m_zero_state_storage.Shutdown();
+    m_allocated_list_storage.Shutdown();
+    m_block_table_blocks.store(0, std::memory_order_relaxed);
     delete[] m_trace_locks;
     delete[] m_scan_buckets;
     m_banks = nullptr;
@@ -3300,7 +3302,8 @@ bool LxrReferenceCounting::IsPinnedObject(Object* object) const
     return false;
 #else
     uintptr_t start = Start(object);
-    if (m_block_flags == nullptr || !IsImmix(start))
+    if (m_block_flags == nullptr || !IsImmix(start) ||
+        (start - GetReservationStart()) / ImmixBlockGeometry::BlockBytes >= m_block_table_blocks.load(std::memory_order_acquire))
     {
         return false;
     }
@@ -3326,6 +3329,7 @@ bool LxrReferenceCounting::IsPinnedForPause(Object* object) const
 bool LxrReferenceCounting::IsPinnedBlock(uintptr_t address) const
 {
     return m_block_flags != nullptr && IsImmix(address) &&
+        (address - GetReservationStart()) / ImmixBlockGeometry::BlockBytes < m_block_table_blocks.load(std::memory_order_acquire) &&
         (m_block_flags[(address - GetReservationStart()) / ImmixBlockGeometry::BlockBytes].load(
             std::memory_order_acquire) & ImmixAllocationManager::PinnedBlockFlag) != 0;
 }
@@ -3750,6 +3754,7 @@ bool LxrReferenceCounting::IsMatureCandidate(uintptr_t address)
     if (m_evacuation_sources == nullptr ||
         (GetTracePhase() == LxrTracePhase::Inactive && m_pause_kind == LxrPauseKind::RefCount) ||
         !IsImmix(address) ||
+        (address - GetReservationStart()) / ImmixBlockGeometry::BlockBytes >= m_block_table_blocks.load(std::memory_order_acquire) ||
         m_evacuation_sources[(address - GetReservationStart()) / ImmixBlockGeometry::BlockBytes].load(
             std::memory_order_acquire) == 0)
     {
@@ -5636,7 +5641,7 @@ SideMetadataResult LxrReferenceCounting::Death(uintptr_t start, void* context)
         return result;
     }
     size_t index = engine->m_dead_large_count.fetch_add(1, std::memory_order_relaxed);
-    if (index >= engine->m_configuration.largeObjectBytes / LxrLargeObjectSpace::PageBytes)
+    if (index >= engine->m_dead_large_capacity.load(std::memory_order_relaxed))
     {
         engine->Fail(LxrRcResult::CapacityExceeded);
         return SideMetadataResult::InconsistentState;
@@ -8005,6 +8010,44 @@ size_t LxrReferenceCounting::GetCommittedBytes() const
     return m_immix_capacity.load(std::memory_order_acquire) + m_large.GetCommittedBytes();
 }
 
+// Commits the per-block tables for the first immixBytes of the Immix reservation (a table never shrinks).
+bool LxrReferenceCounting::GrowBlockTables(size_t immixBytes)
+{
+    size_t blocks = immixBytes / ImmixBlockGeometry::BlockBytes;
+    size_t committed = m_block_table_blocks.load(std::memory_order_relaxed);
+    if (blocks <= committed)
+    {
+        return true;
+    }
+    if (!m_mature_candidates_storage.Commit(committed, blocks - committed, false) ||
+        !m_block_flags_storage.Commit(committed, blocks - committed, false) ||
+        !m_allocated_list_storage.Commit(committed, blocks - committed, false) ||
+        (m_zero_state != nullptr && !m_zero_state_storage.Commit(committed, blocks - committed, false)) ||
+        (m_evacuation_sources != nullptr && !m_evacuation_sources_storage.Commit(committed, blocks - committed, false)))
+    {
+        return false;
+    }
+    m_block_table_blocks.store(blocks, std::memory_order_release);
+    return true;
+}
+
+// Commits the entries of the dead large-object list for the admitted LOS pages (a large object takes at least one page).
+bool LxrReferenceCounting::GrowDeadLarge()
+{
+    size_t pages = m_large.GetAdmittedBytes() / LxrLargeObjectSpace::PageBytes;
+    size_t committed = m_dead_large_capacity.load(std::memory_order_relaxed);
+    if (pages <= committed)
+    {
+        return true;
+    }
+    if (!m_dead_large_storage.Commit(committed, pages - committed, false))
+    {
+        return false;
+    }
+    m_dead_large_capacity.store(pages, std::memory_order_release);
+    return true;
+}
+
 size_t LxrReferenceCounting::GetImmixReservationBytes() const
 {
     return m_configuration.immixBytes;
@@ -8423,7 +8466,7 @@ LxrRcResult LxrReferenceCounting::AdmitSuspended(
     }
     if (large)
     {
-        if (m_large.GrowQuiescent(next) != LxrLargeObjectResult::Success)
+        if (m_large.GrowQuiescent(next) != LxrLargeObjectResult::Success || !GrowDeadLarge())
         {
             return LxrRcResult::OutOfMemory;
         }
@@ -8431,6 +8474,10 @@ LxrRcResult LxrReferenceCounting::AdmitSuspended(
     else
     {
         if (!GCToOSInterface::VirtualCommit(reinterpret_cast<void*>(start), increment))
+        {
+            return LxrRcResult::OutOfMemory;
+        }
+        if (!GrowBlockTables(next))
         {
             return LxrRcResult::OutOfMemory;
         }
@@ -9977,7 +10024,7 @@ LxrRcResult LxrReferenceCounting::SweepCycleRange(size_t first, size_t limit)
         {
             size = GetLargeObjectSize(start);
             size_t dead = m_dead_large_count.fetch_add(1, std::memory_order_relaxed);
-            if (dead >= m_configuration.largeObjectBytes / LxrLargeObjectSpace::PageBytes)
+            if (dead >= m_dead_large_capacity.load(std::memory_order_relaxed))
             {
                 status = Fail(LxrRcResult::CapacityExceeded);
                 break;

@@ -348,6 +348,40 @@ void LxrLargeObjectSpace::SetFreeLeaf(size_t page, size_t pageCount)
     }
 }
 
+// Makes the tree cover at least the given number of pages. The leaves keep their values and the inner nodes are
+// recomputed. The old tree is freed after the new one is complete.
+bool LxrLargeObjectSpace::ResizeFreeTree(size_t pages)
+{
+    if (pages <= m_tree_leaves)
+    {
+        return true;
+    }
+    size_t leaves = m_tree_leaves == 0 ? 1 : m_tree_leaves;
+    while (leaves < pages)
+    {
+        leaves <<= 1;
+    }
+    uint32_t* tree = static_cast<uint32_t*>(calloc(2 * leaves, sizeof(uint32_t)));
+    if (tree == nullptr)
+    {
+        return false;
+    }
+    if (m_free_tree != nullptr)
+    {
+        memcpy(tree + leaves, m_free_tree + m_tree_leaves, m_tree_leaves * sizeof(uint32_t));
+    }
+    for (size_t node = leaves - 1; node >= 1; node--)
+    {
+        uint32_t left = tree[2 * node];
+        uint32_t right = tree[2 * node + 1];
+        tree[node] = left > right ? left : right;
+    }
+    free(m_free_tree);
+    m_free_tree = tree;
+    m_tree_leaves = leaves;
+    return true;
+}
+
 size_t LxrLargeObjectSpace::FindFirstFit(size_t pageCount) const
 {
     if (m_free_tree == nullptr || pageCount == 0 || pageCount > m_free_tree[1])
@@ -533,7 +567,7 @@ bool LxrLargeObjectSpace::FindSpan(uintptr_t address, SpanSnapshot* snapshot, Sp
         return false;
     }
     uintptr_t start = GetReservationStart();
-    if (address < start || address - start >= m_reservation_bytes)
+    if (address < start || address - start >= m_admitted_bytes.load(std::memory_order_acquire))
     {
         return false;
     }
@@ -621,29 +655,32 @@ LxrLargeObjectResult LxrLargeObjectSpace::Initialize(
     }
 
     size_t reservationPages = reservationBytes / PageBytes;
-    size_t leaves = 1;
-    while (leaves < reservationPages)
-    {
-        leaves <<= 1;
-    }
     if (reservationPages > UINT32_MAX)
     {
         return LxrLargeObjectResult::UnsupportedAddressSpace;
     }
-    // The tables are zero pages that the system backs when they are first written, so a large reservation costs address
-    // space and not memory.
+    // The page map is reserved for the whole reservation and committed for the admitted pages only; the free tree is
+    // allocated for the admitted pages. A table the size of the reservation would raise the commit charge at start-up
+    // on Windows, which counts committed pages that nothing has written.
+    size_t admittedPages = admittedBytes / PageBytes;
+    size_t leaves = 1;
+    while (leaves < admittedPages)
+    {
+        leaves <<= 1;
+    }
     uint32_t* tree = static_cast<uint32_t*>(calloc(2 * leaves, sizeof(uint32_t)));
-    std::atomic<uintptr_t>* map = static_cast<std::atomic<uintptr_t>*>(calloc(reservationPages, sizeof(uintptr_t)));
     auto freeTables = [&]()
     {
         free(tree);
-        free(map);
+        m_page_map_storage.Shutdown();
     };
-    if (tree == nullptr || map == nullptr)
+    if (tree == nullptr || !m_page_map_storage.Reserve(reservationPages) ||
+        !m_page_map_storage.Commit(0, admittedPages, false))
     {
         freeTables();
         return LxrLargeObjectResult::OutOfMemory;
     }
+    std::atomic<uintptr_t>* map = m_page_map_storage.Get();
 
     bool ownsReservation = suppliedReservation == nullptr;
     void* reservation = ownsReservation
@@ -719,6 +756,14 @@ LxrLargeObjectResult LxrLargeObjectSpace::GrowQuiescent(size_t admittedBytes)
         !m_metadata->IsDataRangeOwned(GetReservationStart(), admittedBytes))
     {
         return LxrLargeObjectResult::InvalidArgument;
+    }
+    if (!ResizeFreeTree(admittedBytes / PageBytes))
+    {
+        return LxrLargeObjectResult::OutOfMemory;
+    }
+    if (!m_page_map_storage.Commit(previous / PageBytes, (admittedBytes - previous) / PageBytes, false))
+    {
+        return LxrLargeObjectResult::CommitFailed;
     }
     if (!CommitAdmittedPages(GetReservationStart() + previous, admittedBytes - previous))
     {
@@ -836,7 +881,7 @@ void LxrLargeObjectSpace::Shutdown()
         m_span_chunks = next;
     }
     free(m_free_tree);
-    free(m_page_map);
+    m_page_map_storage.Shutdown();
     m_free_tree = nullptr;
     m_page_map = nullptr;
     m_tree_leaves = 0;

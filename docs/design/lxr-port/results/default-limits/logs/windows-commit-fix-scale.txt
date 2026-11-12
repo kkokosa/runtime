@@ -1,0 +1,6 @@
+d67c reserves 8000/8000 MB : private_mb=190.6 ws_mb=45.9
+d67c reserves 60000/60000 MB : private_mb=569.2 ws_mb=51.7
+d67c reserves 250000/250000 MB : private_mb=1930.3 ws_mb=75.0
+fix reserves 8000/8000 MB : private_mb=132.9 ws_mb=44.4
+fix reserves 60000/60000 MB : private_mb=132.9 ws_mb=44.5
+fix reserves 250000/250000 MB : private_mb=133.5 ws_mb=44.7

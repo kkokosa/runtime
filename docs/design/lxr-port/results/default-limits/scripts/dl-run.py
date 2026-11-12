@@ -18,6 +18,7 @@ CONFIGS = {
     "old": ("libclrlxrgc-old.so", {}),
     "new": ("libclrlxrgc-new.so", {}),
     "prev": ("libclrlxrgc-prev.so", {}),
+    "fix": ("libclrlxrgc-fix.so", {}),
     "newbig": ("libclrlxrgc-new.so", {"DOTNET_LXRImmixReserveMB": "60000", "DOTNET_LXRNativePlaneLimitMB": "250000"}),
     "oldbig": ("libclrlxrgc-old.so", {"DOTNET_LXRImmixReserveMB": "60000", "DOTNET_LXRNativePlaneLimitMB": "250000"}),
     "newlos256": ("libclrlxrgc-new.so", {"DOTNET_LXRLOSReserveMB": "256"}),

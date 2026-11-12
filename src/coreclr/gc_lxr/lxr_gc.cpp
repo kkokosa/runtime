@@ -550,6 +550,7 @@ HRESULT LxrGcHeap::Initialize()
         m_enumeration.get_loader_allocator_object_slot, true, FinishTrace, this, IsImmortal, FinishEpoch,
         nullptr, FinishLazy, CanAdmitRange,
     };
+    model.admitRange = AdmitCards;
     model.finishRelocation = FinishRelocation;
     if (m_engine.Initialize(configuration, runtime, &model) != LxrRcResult::Success)
     {
@@ -563,9 +564,19 @@ HRESULT LxrGcHeap::Initialize()
         Unsupported("LXR initial native planes exceed LXRNativePlaneLimitMB.");
         return E_OUTOFMEMORY;
     }
-    m_cards = AllocateLazyZeroed(m_engine.GetReservationBytes() / 2048 + 1);
+    size_t immixCapacity = m_engine.GetImmixCapacityBytes();
+    size_t immixReservation = m_engine.GetImmixReservationBytes();
+    size_t largeAdmitted = m_engine.GetAdmittedBytes() - immixCapacity;
+    if (!m_card_storage.Reserve(m_engine.GetReservationBytes() / 2048 + 1) ||
+        !CommitCards(0, immixCapacity / sizeof(uintptr_t)) ||
+        !CommitCards(immixReservation / sizeof(uintptr_t), largeAdmitted / sizeof(uintptr_t)))
+    {
+        m_engine.Shutdown();
+        return E_OUTOFMEMORY;
+    }
+    m_cards = m_card_storage.Get();
     m_bundles = AllocateLazyZeroed(m_engine.GetReservationBytes() / (2 * 1024 * 1024) + 1);
-    if (m_cards == nullptr || m_bundles == nullptr)
+    if (m_bundles == nullptr)
     {
         m_engine.Shutdown();
         return E_OUTOFMEMORY;
@@ -964,6 +975,24 @@ size_t LxrGcHeap::PolicyReserveBytes() const
     return m_immix_reserve_defaulted
         ? LxrHeapSizer::PolicyReserveBytes(reservation, m_mature_live_bytes.load(std::memory_order_relaxed))
         : reservation;
+}
+
+bool LxrGcHeap::AdmitCards(size_t firstSlot, size_t slotCount, bool, void* context)
+{
+    return static_cast<LxrGcHeap*>(context)->CommitCards(firstSlot, slotCount);
+}
+
+// Commits the card table for a range of the reservation, given as slots (8 bytes) from the start of the reservation. One
+// card covers 2048 bytes. The page-aligned edges can overlap with a neighbouring range that is committed already.
+bool LxrGcHeap::CommitCards(size_t firstSlot, size_t slotCount)
+{
+    if (slotCount == 0)
+    {
+        return true;
+    }
+    size_t firstCard = firstSlot * sizeof(uintptr_t) >> 11;
+    size_t lastCard = ((firstSlot + slotCount) * sizeof(uintptr_t) + 2047) >> 11;
+    return m_card_storage.Commit(firstCard, lastCard - firstCard, false);
 }
 
 LxrRcResult LxrGcHeap::TryGrow(bool large, size_t size)

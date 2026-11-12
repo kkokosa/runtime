@@ -1,0 +1,7 @@
+clrlxrgc-fix.dll requests: checksum 27134172608 OK, wall 327 ms, collections 9, peak RSS 168 MB
+clrlxrgc-fix.dll losmany: checksum 42674603309 OK, wall 10,044 ms, collections 66, peak RSS 1,175 MB
+clrlxrgc-fix.dll mediumarrays: checksum 7032863679 OK, wall 1,138 ms, collections 89, peak RSS 252 MB
+clrlxrgc-fix.dll losarrays: checksum 13936826922 OK, wall 4,953 ms, collections 49, peak RSS 326 MB
+clrlxrgc-fix.dll binarytrees: checksum 68332294 OK, wall 903 ms, collections 32, peak RSS 183 MB
+clrlxrgc-fix.dll listsuffix: checksum 159636632672 OK, wall 1,200 ms, collections 7, peak RSS 199 MB
+clrlxrgc-fix.dll mixedmedium: checksum 40586599707 OK, wall 1,227 ms, collections 205, peak RSS 193 MB

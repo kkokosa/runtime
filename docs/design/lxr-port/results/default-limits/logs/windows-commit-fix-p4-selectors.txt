@@ -1,0 +1,48 @@
+[default] PASS: 105881/105881 integrated P4 checks
+[--pause-trace] PASS: 259424/259424 pause trace checks
+[--lazy-sweep] PASS: 3098/3098 parallel lazy sweep checks
+[--d2-spans] PASS: 2268/2268 D2 bump-allocation checks
+[--prezero] PASS: 129/129 pre-zeroing checks
+[--fresh-block-race] PASS: 10/10 fresh block race checks
+[--s7-pins] PASS: 4099/4099 S7 pin checks
+[--s6-registry] PASS: 241/241 S6 registry checks
+[--s5b-overshoot] PASS: 422/422 S5b overshoot checks
+[--s4-sweep] PASS: 16631/16631 S4 sweep checks
+[--s3-bookkeeping] PASS: 1325/1325 S3 bookkeeping checks
+[--lazy-large-release] PASS: 13/13 lazy large-object release checks
+[--inline-metadata] PASS: 465/465 inline metadata accessor checks
+[--log-storage] PASS: 2109/2109 log storage checks
+[--mature] PASS: 692/692 mature movement checks
+[--mature-remset] PASS: 58/58 mature remset checks
+[--mature-reader] PASS: 17/17 mature reader checks
+[--mature-retained-owner] PASS: 18/18 retained mature owner checks
+[--mature-released-candidate] PASS: 67/67 released candidate incarnation checks
+[--mature-headroom] PASS: 67/67 nursery headroom checks
+[--mature-completed-scan] PASS: 12/12 completed mature descriptor checks
+[--mature-remset-whole] PASS: 58/58 whole-block remset lifetime checks
+[--mature-remset-wrap] PASS: 1078/1078 byte-wrap remset lifetime checks
+[--mature-remset-same-shape] PASS: 1079/1079 same-shape remset checks
+[--mature-remset-boundaries] PASS: 4315/4315 remset current-owner boundary checks
+[--nursery] PASS: 165/165 moving nursery checks
+[--nursery-reader] PASS: 17/17 moving reader checks
+[--root-batching] PASS: 3095/3095 root batching checks
+[--trace-batching] PASS: 206016/206016 trace batching checks
+[--aux-retirement] PASS: 8209/8209 auxiliary retirement checks
+[--object-planes] PASS: 16/16 object plane checks
+[--storage-diagnostics] PASS: 29/29 storage accounting checks
+[--lifetime] PASS: 15/15 lifetime probe checks
+[--p8-policy] PASS: 97/97 policy checks
+[--p8-storage] PASS: 1473/1473 fast-span and growth checks
+[--f1-trace] PASS: 79789/79789 F1 trace packet checks
+[--f2-pause] PASS: 2488/2488 F2 pause walk checks
+[--f8-lazy] PASS: 115758/115758 F8 lazy decrement checks
+[--f4b-scheduler] PASS: 4044/4044 F4b scheduler and trace loop checks
+[--f4-scheduler] PASS: 3547/3547 F4 scheduler and recursion checks
+[--f10-rc] PASS: 72/72 F10 count width checks
+[--item3] PASS: 564/564 item 3 increment path checks
+[--f5-policy] PASS: 16272/16272 F5 emergency accounting checks
+[--trace] PASS: 8372/8372 trace engine checks
+[--marking-window] PASS: 39/39 marking window checks
+[--release-stage] PASS: 4955/4955 release stage checks
+[--object-start] PASS: 4279/4279 object start checks
+[--select-parallel] PASS: 462/462 parallel selection checks

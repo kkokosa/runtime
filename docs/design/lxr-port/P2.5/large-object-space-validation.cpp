@@ -457,6 +457,27 @@ namespace
         Check(
             space.ValidateStructure(&active, &freePages) == LxrLargeObjectResult::Success && active == 2 && freePages == 0,
             "growth structure");
+        // The free tree and the page map are sized for the admitted pages. Growing across several leaf counts of the tree
+        // keeps the free spans, finds the first fit in the new pages, and finds spans that lie beyond the old size.
+        // After the first growth the rest of the space is allocated, so the whole new range is one free tail.
+        Check(
+            metadata.CommitDataRange(start + 4 * Mebibyte, 12 * Mebibyte) == SideMetadataResult::Success,
+            "growth commit of the rest of the metadata");
+        Check(space.GrowQuiescent(5 * Mebibyte) == LxrLargeObjectResult::Success, "growth to 5 MiB");
+        Check(space.GrowQuiescent(16 * Mebibyte) == LxrLargeObjectResult::Success, "growth to 16 MiB");
+        Check(space.GetAdmittedBytes() == 16 * Mebibyte, "admitted bytes after the last growth");
+        LxrLargeObjectAllocation middle;
+        Check(space.Allocate(6 * Mebibyte, 8, 0, Owner, &middle) == LxrLargeObjectResult::Success, "growth allocation across old sizes");
+        Check(middle.page_start == start + 4 * Mebibyte, "growth first fit by address in the grown pages");
+        LxrLargeObjectAllocation found;
+        Check(
+            space.GetAllocation(middle.object, &found) == LxrLargeObjectResult::Success && found.owner == Owner,
+            "lookup of an allocation in grown pages");
+        LxrLargeObjectAllocation tail;
+        Check(space.Allocate(5 * Mebibyte, 8, 0, Owner, &tail) == LxrLargeObjectResult::Success, "growth tail allocation");
+        Check(
+            space.ValidateStructure(&active, &freePages) == LxrLargeObjectResult::Success && active == 4 && freePages == 1 * Mebibyte / Page,
+            "structure after repeated growth");
         space.Shutdown();
     }
 

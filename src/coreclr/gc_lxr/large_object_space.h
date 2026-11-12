@@ -5,6 +5,7 @@
 #define LARGE_OBJECT_SPACE_H
 
 #include "immix_block.h"
+#include "lxr_virtual_array.h"
 
 #include <atomic>
 
@@ -264,14 +265,19 @@ private:
     Span* m_quarantined_spans;
     Span* m_span_pool;
     SpanChunk* m_span_chunks;
-    // One entry per page of the reservation. An entry is null, or the Span of an active allocation (the same Span in
-    // every page of it), or, in the last page of a free span, a tag (FreeTag) with the first page of that free span.
+    // One entry per page of the reservation, in address space that is committed up to the admitted pages (the commit charge
+    // of Windows counts committed pages that nothing has written, so a table the size of the reservation would cost
+    // memory at start-up). An entry is null, or the Span of an active allocation (the same Span in every page of it), or,
+    // in the last page of a free span, a tag (FreeTag) with the first page of that free span.
+    LxrVirtualArray<std::atomic<uintptr_t>> m_page_map_storage;
     std::atomic<uintptr_t>* m_page_map;
     // The free spans by address: a segment tree over the pages. The leaf of the first page of a free span holds the page
     // count of the span, the other leaves are zero, and an inner node holds the maximum of its children. The first fit by
-    // address is a descent of the tree.
+    // address is a descent of the tree. The tree covers the admitted pages (the leaf count is the next power of two) and is
+    // rebuilt when the admitted size grows beyond it; the calls that use it hold the lock.
     uint32_t* m_free_tree;
     size_t m_tree_leaves;
+    bool ResizeFreeTree(size_t pages);
     // Allocations between TryCarve and PublishSpan or AbandonAllocation, and releases between BeginSpanRelease and the
     // return of the pages. The phase changes and Shutdown wait until the first count is zero; an allocation that finds
     // no free span waits until the second count is zero.

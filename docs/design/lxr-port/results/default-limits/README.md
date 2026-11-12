@@ -1,6 +1,6 @@
 # LXR default heap limits and the out-of-limit message
 
-Branch `kkokosa-lxr-default-limits-oom-message`, base `kkokosa-lxr-gc-review` 7e4d693af24. Nothing is pushed. **Update:** the LOS reserve default was raised in a third commit; sections 1 to 10 describe the first two commits (Immix reserve), and the rule that is valid now is in section 11 (it replaces the lines that say "minus the LOS reserve").
+Branch `kkokosa-lxr-default-limits-oom-message`, base `kkokosa-lxr-gc-review` 7e4d693af24. Nothing is pushed by this file's author. **Update 1:** the LOS reserve default was raised in a third commit (section 11). **Update 2 (Windows finding):** the Windows session found that the default reserves raised the start-up commit charge from 135 MB to 598 MB; a fourth commit fixes it (section 12). Sections 1 to 10 describe the first two commits; the rule that is valid now is in section 11 (it replaces the lines that say "minus the LOS reserve"), and the commit behaviour is in section 12.
 This file uses plain words. A claim that was not verified is marked **[N]**. A build or test is called "passed" only if it was run (section 8 lists what was run).
 Background: `docs/design/lxr-port/results/gcperfsim-oom/README.md` (branch `kkokosa-gcperfsim-oom-investigation`).
 
@@ -53,7 +53,7 @@ growth ceiling (TryGrow, RequestGrowth) = the real reserve
 * **Hard limit.** LXR does not support `GCHeapHardLimit*` (`Initialize` returns `E_NOTIMPL` if one is set), so there is no standard hard limit to respect. The LXR hard limit is `LXRManagedHeapHardLimitMB`. If it is set and the reserve is not, the reserve is `hard limit - LOS reserve` (when that is above 128 MB), so that the reservation equals the hard limit as before; the engine never admits more than the hard limit. A hard limit below 384 MB keeps the old reserve of 128 MB (old behaviour).
 * **Container.** The limit comes from `GetPhysicalMemoryLimit()`. Tested with a cgroup v2 limit of 1200 MB on Linux: the reserve was 944 MB (1200 - 256), see section 5.
 * **Address space.** Windows accepted an explicit reserve of 150000 MB and of 1000000 MB (1 TB) at start (section 5.3), so a reserve (not a commit) does not fail at init there. No retry on init failure was added: **[N]** for a host that limits address space (`ulimit -v`, strict overcommit with a limit); the runtime itself reserves a very large range, so such a host is not usable for CoreCLR anyway.
-* **Per-reservation tables.** The card table (reservation / 2048 bytes) and the bundle table were zeroing `new[]`, which touched every page. They are now allocated with `VirtualReserve` + `VirtualCommit` (zero pages, taken on first write). The four per-block byte arrays of the engine are still zeroing `new[]` (about 0.13 MB per GB of reserve). The default reserve is capped at 256 GiB for that reason.
+* **Per-reservation tables.** The card table (reservation / 2048 bytes) and the bundle table were zeroing `new[]`, which touched every page. They are now allocated with `VirtualReserve` + `VirtualCommit` (zero pages, taken on first write). The four per-block byte arrays of the engine are still zeroing `new[]` (about 0.13 MB per GB of reserve). The default reserve is capped at 256 GiB for that reason. **This holds for Linux only: on Windows these tables were committed in full (section 12); they are committed on demand since the fourth commit.**
 
 ## 4. Numbers: old default against new default
 
@@ -215,7 +215,7 @@ The user decided to raise the LOS reserve default in the same way as the Immix r
 
 * The LOS reserve is used by the engine only as a growth ceiling (`RequestGrowth`, `GrowSuspended`, `FitAdmission` through the native limit) and for the size of the tables: `LxrLargeObjectSpace::Initialize` (free-page tree and page map, `calloc`, zero pages), the dead-large-object list (`m_dead_large`, one entry per page of the reservation). No sizing or trigger rule reads it. The LOS grows by doubling from its admitted size, as before. **The policy needs no decoupling for the LOS.**
 * Two things did depend on the sum of the reserves, and were changed so that the default behaves as before: (a) `LXRNurseryRatio` took a share of `m_hard_limit` (the sum); with default reserves it now takes the old sum (128 + 256 MB), as in the old build; (b) `PublishMemoryInfo` reports `min(hard limit, physical memory limit)` as the available memory (the sum of two reserves would be twice the memory).
-* `m_dead_large` was a zeroing `new[]`: 8 bytes for each 4 KB page of the reservation, which is 64 MB touched at start-up for a 32 GB reserve. It is now `calloc`/`free` (zero pages, taken on first write). The LOS free tree and page map were already `calloc`.
+* `m_dead_large` was a zeroing `new[]`: 8 bytes for each 4 KB page of the reservation, which is 64 MB touched at start-up for a 32 GB reserve. It was changed to `calloc`/`free` in this commit (zero pages, taken on first write: Linux only; on Windows `calloc` commits the block, see section 12, where it became commit on demand). The LOS free tree and page map were `calloc` before.
 
 ### 11.3 Results (Linux, same method as section 4: old, prev, new in one lock grant, shuffled, 10 pairs; `data/tables.md`, raw runs in `data/ab3-*.jsonl`, `data/ab4-runs.jsonl`)
 
@@ -261,3 +261,69 @@ With the standard explicit settings (mediumarrays `200/400`; losmany `LOSInitial
 * A host that limits address space (`ulimit -v`) with the two reserves (up to twice the memory): no retry exists. The Windows test of section 5.3 reserved 146 GB and 1 TB; two default reserves of 64 GB each were not run on Windows as defaults, only one explicit Immix reserve **[N]**.
 * The hard-limit rule for limits above 384 MB: only the pure function is tested (P4); no run with `LXRManagedHeapHardLimitMB` above 384 MB **[N]**.
 * Windows: start-up working set, job-object limit, native suites, PrivateTests, full 540 run.
+
+## 12. Start-up commit charge on Windows: found by the Windows session, fixed by committing on demand
+
+### 12.1 The finding
+
+The Windows session (`docs/design/laxori-port/windows/results/lxr-d67c-windows.md`, branch `kkokosa-laxori-windows-bringup`) checked d67c0073c25 (the squash of the first three commits). Native suites, P4 48/48, PrivateTests 100/100, Jan's command with no setting (540 GB in 150 s), and the 1 GB and 700 MB job limits all passed. One finding: **on Windows the default reserves raise the start-up commit charge (private bytes) from 135 MB (7e4d) to 598 MB on a 64 GB host**, about 6.7 MB for each GB of default reserve. Working set was fine (+6.4 MB). Windows counts committed pages that nothing has written against the commit limit (75 GB on that VM) and against a job-object memory limit. On Linux the same memory is mapped lazily and costs nothing. The same session saw no CPU increase of `losarrays` on Windows: **-0.1% [-5.8, +9.5]** (8 pairs), where the Linux A/B of section 11.3 shows +2.6%.
+
+### 12.2 Cause
+
+A `VirtualQuery` walk of the committed private regions (`scripts/CommitProbe.cs`, `logs/windows-commit-fix-regions.txt`) of d67c at the default shows three regions of 128 MB and one of 64 MB, and none of them in the old DLL:
+
+| region | what | size at two 64 GB reserves |
+|---|---|---|
+| 3 x 128 MB | LOS free-page tree (`calloc`, 2 x pages x 4 bytes), LOS page map (`calloc`, 8 bytes for each 4 KB page), dead large-object list (8 bytes for each page) | 3 x 128 MB |
+| 64 MB | card table (1 byte for each 2048 bytes of both reservations) | 64 MB |
+| about 16 MB | per-block tables of the Immix reservation (candidates, flags, zero state, evacuation sources: 1 byte each; allocated list: 4 bytes; for each 32 KB block) | 5 + 8 MB, committed and, for four of them, zeroed (touched), which is also the +6.4 MB working set |
+
+In section 3 and 11.2 I wrote that these tables are lazy. That is true on Linux (`calloc` and `new[]` of a large size map zero pages that are taken on the first write), and false on Windows, where the heap commits the whole block. **I did not measure the commit charge on Windows before; the Windows session did.**
+
+### 12.3 Fix (commit 05c792703fd)
+
+Every table that scales with a reserve is now reserved as address space for the whole reservation and committed for the admitted part only. The addresses never change, so lock-free readers are not affected. `LxrVirtualArray` (the container of the native planes) is used for all of them; `Commit` does not write to the new pages (they are zero).
+
+* LOS page map: committed for the admitted pages when the space is created and in `GrowQuiescent`. `FindSpan` returns false for an address beyond the admitted pages (it had no span before either).
+* LOS free tree: sized for the admitted pages (leaf count = next power of two) and rebuilt (leaves copied, inner nodes recomputed) when the space grows beyond its leaf count; all its callers hold the LOS lock. The memory is proportional to the admitted size (up to twice as large), not to the reserve.
+* Dead large-object list: committed for the admitted LOS pages (`GrowDeadLarge`, called after the LOS has grown). The overflow check (`CapacityExceeded`) uses the committed count.
+* Immix per-block tables: committed for the admitted blocks (`GrowBlockTables`, called at start and in `AdmitSuspended` before the capacity is published). The three lookups that take an arbitrary address (`IsPinnedObject`, `IsPinnedBlock`, `IsMatureCandidate`) check the committed block count before they read a table; the other users index by a block that is in the heap.
+* Card table: committed for the admitted ranges of both spaces, at start and through the `admitRange` callback of the object model. The bundle table (64 KB at two 64 GB reserves) stays as it was.
+* Linux behaviour is the same except that these tables are now committed by `mprotect` as the heap grows (the start-up working set is 3 to 4 MB lower, section 12.4).
+
+### 12.4 Results
+
+**Start-up commit charge and working set on Windows** (`scripts/commit-ab.ps1`, trivial program after `GC.Collect()`, 7 runs each, interleaved, medians; `logs/windows-commit-fix-start-up.txt`). The libraries: `old` = 7e4d693af24, `d67c` = the Immix and LOS default build, `fix` = commit 05c792703fd.
+
+| case | commit charge MB | working set MB |
+|---|---|---|
+| old, default | 134.4 | 46.2 |
+| d67c, default (64 GB host) | **598.0** | 52.7 |
+| **fix, default** | **133.0** | **44.5** |
+| old, job limit 700 MB | 134.4 | 46.1 |
+| d67c, job limit 700 MB | 138.3 | 44.5 |
+| **fix, job limit 700 MB** | **132.9** | 44.5 |
+| old, reserves 128 / 256 explicit | 134.5 | 46.2 |
+| d67c, reserves 128 / 256 explicit | 134.5 | 46.0 |
+| **fix, reserves 128 / 256 explicit** | **132.8** | 44.4 |
+
+The goal (about the same commit charge as the old DLL) is met: 133 MB against 134 MB, at the default and at the explicit old reserves. The fix is also below the old DLL because the old reserves' tables were committed in full. Scaling (`logs/windows-commit-fix-scale.txt`, both reserves set to the same value): d67c 190.6 / 569.2 / 1930.3 MB at 8000 / 60000 / 250000 MB; **fix 132.9 / 132.9 / 133.5 MB**. Working set at 250000 MB: d67c 75.0 MB, fix 44.7 MB.
+
+**Windows workloads with the fix, no setting** (`scripts/win-std.ps1`, one run each, `logs/windows-commit-fix-workloads.txt`): requests, losmany, mediumarrays, losarrays, binarytrees, listsuffix and mixedmedium all pass with the right checksum (losmany: 10.0 s, 66 collections, peak RSS 1175 MB; requests 327 ms, 9 collections). losmany grows the LOS from 16 MB to 1.3 GB, so the free tree is rebuilt several times.
+
+**Windows native suites** (MSVC, a temporary checkout of 05c792703fd plus the local Windows fixes of the Windows session: `#undef small` in P4, extra `/wd` flags, a `setenv` shim in the P2.5 test; none of them committed): p2.1 1096/1096, p2.2 2215/2215, p2.3 37 cases (1882 checks), p2.4 277861/277861, p2.5 209070/209070, p3.1 652/652, p3.2 395/395, p3.3 357/357, p3.4 70/70; P4 default 105881/105881 and 48 of 48 selectors (including `--mature-released-candidate` 67/67, `--p8-policy` 97/97, `--p8-storage` 1473/1473). `logs/windows-commit-fix-native-p2-p3.txt`, `logs/windows-commit-fix-p4-selectors.txt`. PrivateTests were not run on Windows by me **[N]** (the Windows session ran 100 runs on d67c).
+
+**Linux** (final libraries of 05c792703fd, both variants): native suites P2.1 to P2.5, P3.1 to P3.4 and P4 with all selectors pass (`--p8-policy` 97/97; `--p8-storage` 1465/1465 default, 1473/1473 on Windows; `--mature-released-candidate` 67/67). The line `FAIL: injected zero-RC old target rejected before overwrite` is the deliberate control print, as before. PrivateTests `all 2 13` x20 per variant: 0 failures, no LXR fatal, no OutOfMemoryException. The 24 checksums (six workloads, both variants, no setting and standard settings) and `losmany` (explicit, native limit default, no setting, both variants) are right. `logs/linux-commit-fix-validate.log`. P2.5 has 21 new checks (growth across several leaf counts of the free tree; the old commit-failure check still gets `CommitFailed`). P4 `--p8-storage` enumerates the commit calls of a growth, so its constant went from 22/23 to 25/26 (three more commits for the per-block tables).
+
+**Linux performance, d67c-equivalent against fix** (10 pairs, five workloads, no setting; 20 more pairs of `requests`; `data/tables.md`, `data/ab5-runs.jsonl`, `data/ab6-runs.jsonl`): collection counts are the same in every pair; wall, CPU and pause times are inside the intervals (losarrays wall -4.7 ms [-65, +34]; losmany -13.7 [-49, +30]; mixedmedium +11 [-40, +50]; listsuffix -19 [-102, +23]). `requests` was +13.7 ms [+0.2, +19.5] in the first 10 pairs and +3.1 ms [-3.8, +15.3] in 20 more pairs, so I treat it as noise **[N]**. Peak RSS is 4 MB lower for every workload (the tables are no longer touched at start-up).
+
+### 12.5 What went wrong during this work
+
+* The first "fix" measurement on Windows was invalid: the drive letter K: that my scripts use had been mapped to the Windows session's worktree (`kkokosa-refactored-journey`) in the meantime, so my build commands compiled that tree (7e4d sources) instead of mine, and the DLL looked as good as the old one. I found it from the build timestamps and a measurement that was too good. I mapped my own worktree to X:, removed the CMake cache of my build tree (it had K: paths), rebuilt, and repeated every measurement above. Side effect to know about: my two builds with the wrong K: built the target `clrlxrgc` in the object directory of `kkokosa-refactored-journey` (its own sources, so its `artifacts\obj` gc_lxr state is rebuilt from the current files; nothing was installed or changed in its sources).
+* Three edits of my first attempt to patch a temporary checkout went to the main worktree (a .NET relative path resolves against the process directory, not the PowerShell location): two `#undef small` blocks in P4 and a flag in `run-lxr-rc-vertical.ps1`. I reverted them before the commit (the diff of the commit has neither).
+
+### 12.6 Not verified
+
+* Windows: PrivateTests on the fix DLL; Jan's full command (the full run was not repeated); a job limit with a real workload (the job-limit rows are the start-up probe only); the per-pause effect of the tree rebuild on LOS growth (a rebuild copies and recomputes 2 x pages x 4 bytes: 8 MB for a 4 GB LOS; not timed) **[N]**.
+* The card table: no write beyond the committed range was seen in any run. A store barrier that writes a card for a slot outside the admitted ranges would fault; I read the code (only the runtime helpers use `g_gc_card_table`, and LXR installs its own barrier) but did not prove it **[N]**.
+* Reserves beyond 250000 MB on Windows.
