@@ -4,6 +4,7 @@
 #include "common.h"
 #include "gcenv.h"
 #include "laxori_gc.h"
+#include "laxori_default_limits.h"
 #include "laxori_write_barrier.h"
 #include "laxori_platform.h"
 #include "laxori_worker_policy.h"
@@ -14,9 +15,12 @@
 
 #include <algorithm>
 #include <new>
-#ifndef TARGET_WINDOWS
+#ifdef TARGET_WINDOWS
+#include <psapi.h>
+#else
 #include <time.h>
-#endif // !TARGET_WINDOWS
+#include <unistd.h>
+#endif // TARGET_WINDOWS
 
 // Entry of the assembly write barrier slow path (defined below).
 extern "C" void LaxoriBarrierSlowPath(Object** slot);
@@ -322,13 +326,14 @@ HRESULT LaxoriGcHeap::Initialize()
     configuration.forwardingShift = m_header_bits.bit_shift;
     size_t immixInitial = 8;
     size_t largeInitial = 16;
-    size_t immixReserve = 128;
-    size_t largeReserve = 256;
+    size_t immixReserve = LaxoriDefaultLimits::LegacyImmixReserveMB;
+    size_t largeReserve = LaxoriDefaultLimits::LegacyLargeReserveMB;
     bool legacy = false;
     size_t youngMB = SIZE_MAX >> 20;
     size_t nurseryRatio = SIZE_MAX;
     size_t managedLimitMB = 0;
-    size_t nativePlaneLimitMB = 4096;
+    size_t nativePlaneLimitMB = LaxoriDefaultLimits::MinimumNativePlaneLimitMB;
+    bool nativePlaneLimitSpecified = false;
     bool noRecycling = false;
     bool noMutatorRecycling = false;
     bool overshoot = true;
@@ -355,7 +360,7 @@ HRESULT LaxoriGcHeap::Initialize()
         !ReadSetting("LAXORILOSReserveMB", &largeReserve, 10,
             LaxoriSideMetadataLayout::AddressLimit >> 20, &largeReserveSpecified) ||
         !ReadSetting("LAXORIManagedHeapHardLimitMB", &managedLimitMB, 10, LaxoriSideMetadataLayout::AddressLimit >> 20) ||
-        !ReadSetting("LAXORINativePlaneLimitMB", &nativePlaneLimitMB, 10, SIZE_MAX >> 20) ||
+        !ReadSetting("LAXORINativePlaneLimitMB", &nativePlaneLimitMB, 10, SIZE_MAX >> 20, &nativePlaneLimitSpecified) ||
         !ReadSetting("LAXORITraceThreshold", &m_policy_configuration.traceThreshold, 10, 100) ||
         !ReadSetting("LAXORIRCStopPercent", &m_policy_configuration.rcStopPercent, 10, 100) ||
         !ReadSetting("LAXORIMaxSurvivalMB", &m_policy_configuration.maxSurvivalMB, 10, SIZE_MAX >> 20) ||
@@ -453,6 +458,33 @@ HRESULT LaxoriGcHeap::Initialize()
         immixReserve = immixInitial;
         largeReserve = largeInitial;
     }
+    m_immix_reserve_defaulted = !legacy && !immixReserveSpecified;
+    m_large_reserve_defaulted = !legacy && !largeReserveSpecified;
+    m_hard_limit_explicit = managedLimitMB != 0;
+    if (m_immix_reserve_defaulted || m_large_reserve_defaulted)
+    {
+        size_t addressLimitMB = LaxoriSideMetadataLayout::AddressLimit >> 20;
+        if (m_reserved_limit != 0 && (m_reserved_limit >> 20) < addressLimitMB)
+        {
+            addressLimitMB = m_reserved_limit >> 20;
+        }
+        LaxoriDefaultLimits::ReservesMB(
+            GCToOSInterface::GetPhysicalMemoryLimit(), addressLimitMB, managedLimitMB,
+            m_immix_reserve_defaulted, &immixReserve, m_large_reserve_defaulted, &largeReserve);
+        if (m_immix_reserve_defaulted && immixReserve < immixInitial)
+        {
+            immixReserve = immixInitial;
+        }
+        if (m_large_reserve_defaulted && largeReserve < largeInitial)
+        {
+            largeReserve = largeInitial;
+        }
+    }
+    m_native_limit_defaulted = !nativePlaneLimitSpecified;
+    if (m_native_limit_defaulted)
+    {
+        nativePlaneLimitMB = LaxoriDefaultLimits::NativePlaneLimitMB(immixReserve, largeReserve);
+    }
     if (immixInitial == 0 || largeInitial == 0 || immixReserve < immixInitial ||
         largeReserve < largeInitial ||
         immixReserve > (LaxoriSideMetadataLayout::AddressLimit >> 20) - largeReserve ||
@@ -480,6 +512,33 @@ HRESULT LaxoriGcHeap::Initialize()
     }
     configuration.hardLimitBytes = m_hard_limit;
     m_native_plane_limit = nativePlaneLimitMB << 20;
+    size_t commitHeadroomMB = 0;
+    bool commitHeadroomSpecified = false;
+    if (!ReadSetting("LAXORICommitHeadroomMB", &commitHeadroomMB, 10, SIZE_MAX >> 20, &commitHeadroomSpecified))
+    {
+        return E_FAIL;
+    }
+#ifdef TARGET_WINDOWS
+    // Only the process's immediate job is read, not parent jobs. An explicit zero disables the check.
+    JOBOBJECT_EXTENDED_LIMIT_INFORMATION job{};
+    if (!(commitHeadroomSpecified && commitHeadroomMB == 0) &&
+        QueryInformationJobObject(nullptr, JobObjectExtendedLimitInformation, &job, sizeof(job), nullptr))
+    {
+        uint64_t specified = static_cast<uint64_t>(commitHeadroomMB) << 20;
+        if ((job.BasicLimitInformation.LimitFlags & JOB_OBJECT_LIMIT_PROCESS_MEMORY) != 0 && job.ProcessMemoryLimit != 0)
+        {
+            m_process_commit_limit = job.ProcessMemoryLimit;
+            m_process_commit_headroom = commitHeadroomSpecified
+                ? specified : LaxoriDefaultLimits::CommitHeadroomBytes(m_process_commit_limit);
+        }
+        if ((job.BasicLimitInformation.LimitFlags & JOB_OBJECT_LIMIT_JOB_MEMORY) != 0 && job.JobMemoryLimit != 0)
+        {
+            m_job_commit_limit = job.JobMemoryLimit;
+            m_job_commit_headroom = commitHeadroomSpecified
+                ? specified : LaxoriDefaultLimits::CommitHeadroomBytes(m_job_commit_limit);
+        }
+    }
+#endif // TARGET_WINDOWS
     configuration.lineRecycling = !noRecycling && !noMutatorRecycling;
     configuration.copyLineRecycling = !noRecycling;
     // The engine enables overshoot only when there is no hard limit and the reservation is larger than the initial
@@ -488,8 +547,15 @@ HRESULT LaxoriGcHeap::Initialize()
     m_policy_configuration.youngLimitBytes = youngMB == (SIZE_MAX >> 20) ? SIZE_MAX : youngMB << 20;
     if (nurseryRatio != SIZE_MAX)
     {
+        size_t ratioBase = m_hard_limit;
+        if (managedLimitMB == 0 && (m_immix_reserve_defaulted || m_large_reserve_defaulted))
+        {
+            ratioBase = (m_immix_reserve_defaulted ? LaxoriDefaultLimits::LegacyImmixReserveMB : immixReserve) +
+                (m_large_reserve_defaulted ? LaxoriDefaultLimits::LegacyLargeReserveMB : largeReserve);
+            ratioBase <<= 20;
+        }
         m_policy_configuration.nurseryBlocks =
-            m_hard_limit / ImmixBlockGeometry::BlockBytes / (nurseryRatio + 1);
+            ratioBase / ImmixBlockGeometry::BlockBytes / (nurseryRatio + 1);
         if (m_policy_configuration.nurseryBlocks == 0)
         {
             Unsupported("LAXORINurseryRatio leaves no nursery block.");
@@ -506,25 +572,29 @@ HRESULT LaxoriGcHeap::Initialize()
         m_enumeration.get_loader_allocator_object_slot, true, FinishTrace, this, IsImmortal, FinishEpoch,
         nullptr, FinishLazy, CanAdmitRange,
     };
+    model.admitRange = AdmitHeapTables;
     model.finishRelocation = FinishRelocation;
     if (m_engine.Initialize(configuration, runtime, &model) != LaxoriRcResult::Success)
     {
         Unsupported("LAXORI could not reserve its owned heap, metadata or worker resources.");
         return E_OUTOFMEMORY;
     }
+    m_engine.SetBorrowCeiling(PolicyReserveBytes());
     if (m_engine.GetNativePlaneCommittedBytes() > m_native_plane_limit)
     {
         m_engine.Shutdown();
         Unsupported("LAXORI initial native planes exceed LAXORINativePlaneLimitMB.");
         return E_OUTOFMEMORY;
     }
-    m_cards = new (std::nothrow) uint8_t[m_engine.GetReservationBytes() / 2048 + 1]{};
-    m_bundles = new (std::nothrow) uint8_t[m_engine.GetReservationBytes() / (2 * 1024 * 1024) + 1]{};
-    if (m_cards == nullptr || m_bundles == nullptr)
+    if (!m_card_storage.Reserve(m_engine.GetReservationBytes() / 2048 + 1) ||
+        !m_bundle_storage.Reserve(m_engine.GetReservationBytes() / (2 * 1024 * 1024) + 1))
     {
         m_engine.Shutdown();
+        Unsupported("LAXORI could not reserve its card tables.");
         return E_OUTOFMEMORY;
     }
+    m_cards = m_card_storage.Get();
+    m_bundles = m_bundle_storage.Get();
     if (!InitializePrivateTier(regionKB, privateEnabled, escapedInPlace, escapedCollectDiv))
     {
         m_engine.Shutdown();
@@ -563,7 +633,7 @@ HRESULT LaxoriGcHeap::Initialize()
         m_region_owner,
         m_private_bits_base,
         m_region_shift,
-        reinterpret_cast<void*>(&LaxoriEscapeSlowPath));
+        reinterpret_cast<void*>(&LaxoriEscapeSlowPath), &m_private_heap_bytes);
     GCToEEInterface::StompWriteBarrier(&parameters);
     gc_alloc_context* context = GCToEEInterface::GetAllocContext();
     if (context != nullptr && FindOrAttach(context, false) == nullptr)
@@ -716,6 +786,10 @@ Object* LaxoriGcHeap::AllocShared(gc_alloc_context* context, size_t size, uint32
     }
     if (mutator == nullptr)
     {
+        if (!m_shutdown.load())
+        {
+            ReportOutOfMemory(size, LaxoriRcResult::CapacityExceeded);
+        }
         return nullptr;
     }
     Object* object = nullptr;
@@ -723,6 +797,7 @@ Object* LaxoriGcHeap::AllocShared(gc_alloc_context* context, size_t size, uint32
     // the pause needs no per-object flag to know that the object stays.
     bool pinned = (flags & GC_ALLOC_PINNED_OBJECT_HEAP) != 0;
     LaxoriRcResult result = m_engine.Allocate(mutator, size, &object, pinned);
+    LaxoriRcResult growth = LaxoriRcResult::AllocationFailure;
     if (result == LaxoriRcResult::AllocationFailure && !m_shutdown.load())
     {
         // The lazy sweep after the last pause makes promoted blocks Reusable. A collection is needed only if the
@@ -747,7 +822,8 @@ Object* LaxoriGcHeap::AllocShared(gc_alloc_context* context, size_t size, uint32
     }
     if (result == LaxoriRcResult::AllocationFailure && !m_shutdown.load())
     {
-        LaxoriRcResult grown = TryGrow(size >= LaxoriLargeObjectSpace::MinimumObjectBytes, size);
+        growth = TryGrow(size >= LaxoriLargeObjectSpace::MinimumObjectBytes, size);
+        LaxoriRcResult grown = growth;
         if (grown == LaxoriRcResult::Success)
         {
             m_engine.ResetAllocationCursors();
@@ -780,6 +856,10 @@ Object* LaxoriGcHeap::AllocShared(gc_alloc_context* context, size_t size, uint32
     }
     if (result == LaxoriRcResult::AllocationFailure)
     {
+        if (!m_shutdown.load())
+        {
+            ReportOutOfMemory(size, growth);
+        }
         return nullptr;
     }
     if (result != LaxoriRcResult::Success)
@@ -831,11 +911,186 @@ void LaxoriGcHeap::RegisterFinalizable(Object* object, uint32_t flags)
     }
 }
 
-bool LaxoriGcHeap::CanAdmitRange(size_t, size_t, size_t nativeBytes, void* context)
+bool LaxoriGcHeap::CanAdmitRange(size_t, size_t slotCount, size_t nativeBytes, void* context)
 {
-    // The engine reports all native planes. The collector keeps no per-object table of its own since P17 S7.
+    // Keep the existing native-plane limit: allocation tracking and the four RC log streams.
     LaxoriGcHeap* heap = static_cast<LaxoriGcHeap*>(context);
-    return nativeBytes <= heap->m_native_plane_limit;
+    heap->m_native_refused_bytes.store(nativeBytes > heap->m_native_plane_limit ? nativeBytes : 0,
+        std::memory_order_relaxed);
+    if (nativeBytes > heap->m_native_plane_limit)
+    {
+        return false;
+    }
+#ifdef TARGET_WINDOWS
+    if (heap->m_process_commit_limit != 0 || heap->m_job_commit_limit != 0)
+    {
+        // Include the range, metadata/cards (one sixteenth of the range), and new native planes.
+        size_t rangeBytes = slotCount * sizeof(uintptr_t);
+        size_t nativeNow = heap->m_engine.GetNativePlaneCommittedBytes();
+        uint64_t added = static_cast<uint64_t>(rangeBytes) + rangeBytes / 16 +
+            (nativeBytes > nativeNow ? nativeBytes - nativeNow : 0);
+        if (heap->m_process_commit_limit != 0)
+        {
+            PROCESS_MEMORY_COUNTERS_EX counters{};
+            counters.cb = sizeof(counters);
+            if (GetProcessMemoryInfo(GetCurrentProcess(), reinterpret_cast<PROCESS_MEMORY_COUNTERS*>(&counters),
+                    sizeof(counters)) &&
+                !LaxoriDefaultLimits::FitsCommitLimit(heap->m_process_commit_limit, heap->m_process_commit_headroom,
+                    counters.PrivateUsage, added))
+            {
+                heap->RecordCommitRefusal(added, counters.PrivateUsage, false);
+                return false;
+            }
+        }
+        uint64_t jobCommitted = 0;
+        if (heap->m_job_commit_limit != 0 && GetJobCommittedBytes(&jobCommitted) &&
+            !LaxoriDefaultLimits::FitsCommitLimit(heap->m_job_commit_limit, heap->m_job_commit_headroom, jobCommitted, added))
+        {
+            heap->RecordCommitRefusal(added, jobCommitted, true);
+            return false;
+        }
+    }
+#else
+    (void)slotCount;
+#endif // TARGET_WINDOWS
+    return true;
+}
+
+#ifdef TARGET_WINDOWS
+bool LaxoriGcHeap::GetJobCommittedBytes(uint64_t* committed)
+{
+    JOBOBJECT_LIMIT_VIOLATION_INFORMATION violation{};
+    if (QueryInformationJobObject(nullptr, JobObjectLimitViolationInformation, &violation, sizeof(violation), nullptr))
+    {
+        *committed = violation.JobMemory;
+        return true;
+    }
+    // The peak is conservative if the current commit cannot be read.
+    JOBOBJECT_EXTENDED_LIMIT_INFORMATION job{};
+    if (QueryInformationJobObject(nullptr, JobObjectExtendedLimitInformation, &job, sizeof(job), nullptr))
+    {
+        *committed = job.PeakJobMemoryUsed;
+        return true;
+    }
+    return false;
+}
+
+void LaxoriGcHeap::RecordCommitRefusal(uint64_t addedBytes, uint64_t committedBytes, bool jobLimit)
+{
+    m_commit_refused_job.store(jobLimit, std::memory_order_relaxed);
+    m_commit_refused_committed.store(static_cast<size_t>(committedBytes), std::memory_order_relaxed);
+    m_commit_refused_bytes.store(static_cast<size_t>(addedBytes), std::memory_order_relaxed);
+}
+#endif // TARGET_WINDOWS
+
+void LaxoriGcHeap::ReportOutOfMemory(size_t size, LaxoriRcResult growth)
+{
+    if (m_out_of_memory_reported.exchange(true, std::memory_order_acq_rel))
+    {
+        return;
+    }
+    constexpr size_t MB = size_t{1} << 20;
+    size_t immixReserve = m_heap_configuration.immixReservationBytes;
+    size_t largeReserve = m_heap_configuration.largeObjectReservationBytes;
+    size_t admitted = m_engine.GetAdmittedBytes();
+    size_t immix = m_engine.GetImmixCapacityBytes();
+    size_t large = admitted > immix ? admitted - immix : 0;
+    bool largeRequest = size >= LaxoriLargeObjectSpace::MinimumObjectBytes;
+    size_t block = ImmixBlockGeometry::BlockBytes;
+    char text[640];
+    int length;
+    if (growth == LaxoriRcResult::CapacityExceeded)
+    {
+        length = snprintf(text, sizeof(text),
+            "LAXORI: out of memory. More than %zu threads allocate at the same time. This limit is fixed.\n",
+            MaximumMutators);
+    }
+    else if (growth == LaxoriRcResult::OutOfMemory && m_commit_refused_bytes.load(std::memory_order_relaxed) != 0)
+    {
+        bool jobLimit = m_commit_refused_job.load(std::memory_order_relaxed);
+        length = snprintf(text, sizeof(text),
+            "LAXORI: out of memory. %s %zu MB committed, and the %s commit limit of the job object is %zu MB. "
+            "A heap growth would commit %zu KB more and leave less than %zu MB for the collector and the runtime "
+            "(Immix capacity %zu MB, LOS %zu MB, native planes %zu MB). Raise the memory limit of the job, or set "
+            "DOTNET_LAXORICommitHeadroomMB (decimal MB; 0 switches the check off).\n",
+            jobLimit ? "All processes in the job have" : "The process has",
+            m_commit_refused_committed.load(std::memory_order_relaxed) / MB, jobLimit ? "job" : "per-process",
+            static_cast<size_t>((jobLimit ? m_job_commit_limit : m_process_commit_limit) / MB),
+            m_commit_refused_bytes.load(std::memory_order_relaxed) / 1024,
+            static_cast<size_t>((jobLimit ? m_job_commit_headroom : m_process_commit_headroom) / MB),
+            immix / MB, large / MB, m_engine.GetNativePlaneCommittedBytes() / MB);
+    }
+    else if (growth == LaxoriRcResult::OutOfMemory && m_native_refused_bytes.load(std::memory_order_relaxed) != 0)
+    {
+        length = snprintf(text, sizeof(text),
+            "LAXORI: out of memory. Native planes would use %zu MB; LAXORINativePlaneLimitMB is %zu MB%s "
+            "(%zu MB committed). Raise DOTNET_LAXORINativePlaneLimitMB (decimal MB).\n",
+            m_native_refused_bytes.load(std::memory_order_relaxed) / MB, m_native_plane_limit / MB,
+            m_native_limit_defaulted ? " (default, derived from the reservation)" : "",
+            m_engine.GetNativePlaneCommittedBytes() / MB);
+    }
+    else if (growth == LaxoriRcResult::OutOfMemory)
+    {
+        length = snprintf(text, sizeof(text),
+            "LAXORI: out of memory. The operating system did not commit heap or metadata memory "
+            "(Immix %zu MB of %zu MB, LOS %zu MB of %zu MB). Check the process, job or container memory limit.\n",
+            immix / MB, immixReserve / MB, large / MB, largeReserve / MB);
+    }
+    else if (m_hard_limit < m_engine.GetReservationBytes() &&
+        m_hard_limit - (admitted < m_hard_limit ? admitted : m_hard_limit) < (largeRequest ? size : block))
+    {
+        length = snprintf(text, sizeof(text),
+            "LAXORI: out of memory. The heap reached LAXORIManagedHeapHardLimitMB=%zu MB (%zu MB admitted). "
+            "Raise DOTNET_LAXORIManagedHeapHardLimitMB (decimal MB).\n", m_hard_limit / MB, admitted / MB);
+    }
+    else if (largeRequest && largeReserve - (large < largeReserve ? large : largeReserve) < size)
+    {
+        length = snprintf(text, sizeof(text),
+            "LAXORI: out of memory. LOS is full at LAXORILOSReserveMB=%zu MB%s (%zu MB admitted; request %zu bytes). "
+            "Raise DOTNET_LAXORILOSReserveMB (decimal MB; also DOTNET_LAXORINativePlaneLimitMB if set).\n",
+            largeReserve / MB, m_large_reserve_defaulted
+                ? (m_hard_limit_explicit ? " (default with managed hard limit)" : " (default: process memory limit)") : "",
+            large / MB, size);
+    }
+    else if (!largeRequest && immixReserve - (immix < immixReserve ? immix : immixReserve) < block)
+    {
+        length = snprintf(text, sizeof(text),
+            "LAXORI: out of memory. Immix is full at LAXORIImmixReserveMB=%zu MB%s (%zu MB admitted). "
+            "Raise DOTNET_LAXORIImmixReserveMB (decimal MB; also DOTNET_LAXORINativePlaneLimitMB if set).\n",
+            immixReserve / MB, m_immix_reserve_defaulted
+                ? (m_hard_limit_explicit ? " (default with managed hard limit)" : " (default: process memory limit)") : "", immix / MB);
+    }
+    else
+    {
+        length = snprintf(text, sizeof(text),
+            "LAXORI: out of memory. No free space for %zu bytes (Immix %zu MB of %zu MB, LOS %zu MB of %zu MB). "
+            "The heap can be fragmented; raise DOTNET_LAXORIImmixReserveMB or DOTNET_LAXORILOSReserveMB (decimal MB).\n",
+            size, immix / MB, immixReserve / MB, large / MB, largeReserve / MB);
+    }
+    if (length <= 0)
+    {
+        return;
+    }
+    size_t count = static_cast<size_t>(length) < sizeof(text) ? static_cast<size_t>(length) : sizeof(text) - 1;
+#ifdef TARGET_WINDOWS
+    HANDLE error = GetStdHandle(STD_ERROR_HANDLE);
+    DWORD written;
+    if (error != nullptr && error != INVALID_HANDLE_VALUE)
+    {
+        WriteFile(error, text, static_cast<DWORD>(count), &written, nullptr);
+    }
+#else
+    ssize_t written = write(STDERR_FILENO, text, count);
+    (void)written;
+#endif // TARGET_WINDOWS
+}
+
+size_t LaxoriGcHeap::PolicyReserveBytes() const
+{
+    size_t reservation = m_engine.GetImmixReservationBytes();
+    return m_immix_reserve_defaulted
+        ? LaxoriHeapSizer::PolicyReserveBytes(reservation, m_mature_live_bytes.load(std::memory_order_relaxed))
+        : reservation;
 }
 
 LaxoriRcResult LaxoriGcHeap::TryGrow(bool large, size_t size)
@@ -1389,6 +1644,7 @@ LaxoriRcResult LaxoriGcHeap::FinishLazy(LaxoriReferenceCounting* engine, void* c
         size_t occupied = engine->GetImmixOccupiedBytes();
         size_t young = engine->GetYoungAllocationBytes();
         heap->m_mature_live_bytes.store(occupied > young ? occupied - young : 0, std::memory_order_relaxed);
+        engine->SetBorrowCeiling(heap->PolicyReserveBytes());
     }
     if (!heap->m_policy.FinishLazySweep(
             heap->m_current_pause_kind, engine->GetAdmittedBytes() / LaxoriLargeObjectSpace::PageBytes, mature,
@@ -1428,7 +1684,7 @@ LaxoriRcResult LaxoriGcHeap::CollectForPressure(bool emergency, bool user, bool 
             // The nursery is as large as the free capacity, so a small capacity means many collections. Let the heap
             // sizer raise the capacity in this pause (laxori_heap_sizing.h).
             target = m_sizer.TargetCapacity(
-                capacity, m_mature_live_bytes.load(std::memory_order_relaxed), m_engine.GetImmixReservationBytes());
+                capacity, m_mature_live_bytes.load(std::memory_order_relaxed), PolicyReserveBytes());
             if (target > capacity && m_engine.RequestImmixCapacity(target) == LaxoriRcResult::Success)
             {
                 m_sizing_growths.fetch_add(1, std::memory_order_relaxed);
@@ -2337,7 +2593,7 @@ uint32_t LaxoriGcHeap::GetMemoryLoad()
 void LaxoriGcHeap::PublishMemoryInfo()
 {
     uint64_t physical = GCToOSInterface::GetPhysicalMemoryLimit();
-    uint64_t available = m_hard_limit;
+    uint64_t available = physical != 0 && physical < m_hard_limit ? physical : m_hard_limit;
     bool concurrent = m_current_pause_kind == LaxoriPauseKind::FinalMark && !m_forced_blocking;
     uint64_t values[MemoryFields]{
         available, physical / 10 * 9, physical / 100 * m_last_memory_load.load(),

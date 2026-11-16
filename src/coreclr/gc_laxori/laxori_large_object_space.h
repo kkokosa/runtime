@@ -222,6 +222,7 @@ private:
     void UnlinkActive(Span* span);
     size_t FindFirstFit(size_t pageCount) const;
     void SetFreeLeaf(size_t page, size_t pageCount);
+    bool ResizeFreeTree(size_t pages);
     size_t FreeLeaf(size_t page) const;
     void CarveFree(size_t page, size_t pageCount);
     void InsertFreeAndCoalesce(size_t page, size_t pageCount);

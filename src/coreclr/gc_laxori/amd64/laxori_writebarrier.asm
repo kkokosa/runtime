@@ -107,7 +107,8 @@ endif
         ; is the reference in a region of the current thread? owner_table[(ref - heap low) >> 15] == the TEB address
         mov     rax, rdx
         sub     rax, qword ptr [HeapLowSlot]
-        cmp     rax, qword ptr [HeapSizeSlot]
+        mov     r8, qword ptr [PrivateHeapBytesSlot]
+        cmp     rax, qword ptr [r8]
         jae     LaxoriLogCheck
         shr     rax, LAXORI_BLOCK_SHIFT
         mov     r8, qword ptr [OwnerTableSlot]
@@ -239,6 +240,8 @@ PrivateBitsSlot dq 0
 RegionShiftSlot dq 0
         PATCH_LABEL LaxoriPatchable_EscapePath
 EscapePathSlot  dq 0
+        PATCH_LABEL LaxoriPatchable_PrivateHeapBytes
+PrivateHeapBytesSlot dq 0
 
         public  LaxoriWriteBarrierBlock_End
 LaxoriWriteBarrierBlock_End label qword

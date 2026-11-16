@@ -1,0 +1,83 @@
+=== before512
+reserve_mib=1024 hard_limit_mib=1024 native_limit_mib=4608 available_mib=512 private_mib=149.6 working_set_mib=82.0
+live_mib=16 admitted_mib=51 native_planes_mib=207 rc_logs_mib=207.6 private_mib=293.1
+live_mib=32 admitted_mib=88 native_planes_mib=355 rc_logs_mib=355.0 private_mib=493.6
+LAXORI: out of memory. The operating system did not commit heap or metadata memory (Immix 76 MB of 512 MB, LOS 16 MB of 512 MB). Check the process, job or container memory limit.
+oom_after_arrays=2443
+PASS
+Stack overflow.
+RESULT before512 exit=-1073741571
+=== job512
+reserve_mib=1024 hard_limit_mib=1024 native_limit_mib=4608 available_mib=512 private_mib=149.5 working_set_mib=80.9
+live_mib=16 admitted_mib=51 native_planes_mib=206 rc_logs_mib=206.4 private_mib=291.5
+live_mib=32 admitted_mib=82 native_planes_mib=328 rc_logs_mib=328.8 private_mib=450.0
+LAXORI: out of memory. All processes in the job have 449 MB committed, and the job commit limit of the job object is 512 MB. A heap growth would commit 162 KB more and leave less than 64 MB for the collector and the runtime (Immix capacity 66 MB, LOS 16 MB, native planes 328 MB). Raise the memory limit of the job, or set DOTNET_LAXORICommitHeadroomMB (decimal MB; 0 switches the check off).
+oom_after_arrays=2113
+PASS
+RESULT job512 exit=0
+=== process512
+reserve_mib=1024 hard_limit_mib=1024 native_limit_mib=4608 available_mib=512 private_mib=149.2 working_set_mib=80.6
+live_mib=16 admitted_mib=51 native_planes_mib=207 rc_logs_mib=207.1 private_mib=292.2
+live_mib=32 admitted_mib=82 native_planes_mib=329 rc_logs_mib=329.0 private_mib=450.2
+LAXORI: out of memory. The process has 449 MB committed, and the per-process commit limit of the job object is 512 MB. A heap growth would commit 162 KB more and leave less than 64 MB for the collector and the runtime (Immix capacity 66 MB, LOS 16 MB, native planes 329 MB). Raise the memory limit of the job, or set DOTNET_LAXORICommitHeadroomMB (decimal MB; 0 switches the check off).
+oom_after_arrays=2111
+PASS
+RESULT process512 exit=0
+=== job1024
+reserve_mib=2048 hard_limit_mib=2048 native_limit_mib=9216 available_mib=1024 private_mib=149.6 working_set_mib=80.9
+live_mib=16 admitted_mib=51 native_planes_mib=206 rc_logs_mib=206.6 private_mib=291.9
+live_mib=32 admitted_mib=88 native_planes_mib=352 rc_logs_mib=352.8 private_mib=480.2
+live_mib=40 space=small arrays=2560 admitted_mib=124
+PASS
+RESULT job1024 exit=0
+=== process1024
+reserve_mib=2048 hard_limit_mib=2048 native_limit_mib=9216 available_mib=1024 private_mib=149.3 working_set_mib=80.7
+live_mib=16 admitted_mib=51 native_planes_mib=206 rc_logs_mib=206.8 private_mib=291.8
+live_mib=32 admitted_mib=88 native_planes_mib=352 rc_logs_mib=352.9 private_mib=480.3
+live_mib=40 space=small arrays=2560 admitted_mib=124
+PASS
+RESULT process1024 exit=0
+=== job1024-companion512
+reserve_mib=2048 hard_limit_mib=2048 native_limit_mib=9216 available_mib=1024 private_mib=149.6 working_set_mib=81.0
+live_mib=16 admitted_mib=51 native_planes_mib=207 rc_logs_mib=207.0 private_mib=292.3
+LAXORI: out of memory. All processes in the job have 898 MB committed, and the job commit limit of the job object is 1024 MB. A heap growth would commit 162 KB more and leave less than 128 MB for the collector and the runtime (Immix capacity 53 MB, LOS 16 MB, native planes 278 MB). Raise the memory limit of the job, or set DOTNET_LAXORICommitHeadroomMB (decimal MB; 0 switches the check off).
+oom_after_arrays=1710
+PASS
+RESULT job1024-companion512 exit=0
+=== process1024-companion512
+reserve_mib=2048 hard_limit_mib=2048 native_limit_mib=9216 available_mib=1024 private_mib=149.2 working_set_mib=80.6
+live_mib=16 admitted_mib=51 native_planes_mib=206 rc_logs_mib=206.8 private_mib=291.7
+live_mib=32 admitted_mib=88 native_planes_mib=352 rc_logs_mib=352.8 private_mib=479.9
+live_mib=40 space=small arrays=2560 admitted_mib=124
+PASS
+RESULT process1024-companion512 exit=0
+=== headroom128
+reserve_mib=1024 hard_limit_mib=1024 native_limit_mib=4608 available_mib=512 private_mib=149.3 working_set_mib=80.6
+live_mib=16 admitted_mib=51 native_planes_mib=206 rc_logs_mib=206.9 private_mib=291.9
+LAXORI: out of memory. All processes in the job have 386 MB committed, and the job commit limit of the job object is 512 MB. A heap growth would commit 162 KB more and leave less than 128 MB for the collector and the runtime (Immix capacity 53 MB, LOS 16 MB, native planes 279 MB). Raise the memory limit of the job, or set DOTNET_LAXORICommitHeadroomMB (decimal MB; 0 switches the check off).
+oom_after_arrays=1719
+PASS
+RESULT headroom128 exit=0
+=== disabled1024
+reserve_mib=2048 hard_limit_mib=2048 native_limit_mib=9216 available_mib=1024 private_mib=149.5 working_set_mib=80.9
+live_mib=16 admitted_mib=51 native_planes_mib=206 rc_logs_mib=206.6 private_mib=292.5
+live_mib=32 admitted_mib=88 native_planes_mib=352 rc_logs_mib=352.9 private_mib=480.0
+live_mib=40 space=small arrays=2560 admitted_mib=124
+PASS
+RESULT disabled1024 exit=0
+=== bitmap512
+reserve_mib=1024 hard_limit_mib=1024 native_limit_mib=4608 available_mib=512 private_mib=149.4 working_set_mib=80.0
+live_mib=16 admitted_mib=51 native_planes_mib=207 rc_logs_mib=207.0 private_mib=292.6
+live_mib=32 admitted_mib=82 native_planes_mib=328 rc_logs_mib=328.4 private_mib=450.6
+LAXORI: out of memory. All processes in the job have 449 MB committed, and the job commit limit of the job object is 512 MB. A heap growth would commit 162 KB more and leave less than 64 MB for the collector and the runtime (Immix capacity 66 MB, LOS 16 MB, native planes 328 MB). Raise the memory limit of the job, or set DOTNET_LAXORICommitHeadroomMB (decimal MB; 0 switches the check off).
+oom_after_arrays=2110
+PASS
+RESULT bitmap512 exit=0
+=== bitmap1024
+reserve_mib=2048 hard_limit_mib=2048 native_limit_mib=9216 available_mib=1024 private_mib=149.6 working_set_mib=80.3
+live_mib=16 admitted_mib=51 native_planes_mib=205 rc_logs_mib=205.4 private_mib=290.8
+live_mib=32 admitted_mib=88 native_planes_mib=352 rc_logs_mib=352.9 private_mib=481.5
+live_mib=40 space=small arrays=2560 admitted_mib=124
+PASS
+RESULT bitmap1024 exit=0
+matrix failed=0

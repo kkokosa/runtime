@@ -1,0 +1,14 @@
+LAXORI: out of memory. All processes in the job have 448 MB committed, and the job commit limit of the job object is 512 MB. A heap growth would commit 34 KB more and leave less than 64 MB for the collector and the runtime (Immix capacity 65 MB, LOS 16 MB, native planes 328 MB). Raise the memory limit of the job, or set DOTNET_LAXORICommitHeadroomMB (decimal MB; 0 switches the check off).
+Unhandled exception. System.Reflection.TargetInvocationException: Exception has been thrown by the target of an invocation.
+ ---> System.OutOfMemoryException: Exception of type 'System.OutOfMemoryException' was thrown.
+   at System.String.Ctor(Char c, Int32 count)
+   at GcBench.MediumArrays(Int32 entries, Int64 count, Boolean calibrate) in J:\docs\design\laxori-port\windows\driver\GcBench.cs:line 301
+   at GcBench.Run(String workload, Int32 size, Int64 ops, Int64[] latency, Boolean calibrate) in J:\docs\design\laxori-port\windows\driver\GcBench.cs:line 459
+   at InvokeStub_GcBench.Run(Object, Span`1)
+   at System.Reflection.MethodBaseInvoker.InvokeWithManyArgs(Object obj, BindingFlags invokeAttr, Binder binder, Object[] parameters, CultureInfo culture)
+   --- End of inner exception stack trace ---
+   at System.Reflection.MethodBaseInvoker.InvokeWithManyArgs(Object obj, BindingFlags invokeAttr, Binder binder, Object[] parameters, CultureInfo culture)
+   at System.Reflection.RuntimeMethodInfo.Invoke(Object obj, BindingFlags invokeAttr, Binder binder, Object[] parameters, CultureInfo culture)
+   at System.Reflection.MethodBase.Invoke(Object obj, Object[] parameters)
+   at CompareDriver.<>c__DisplayClass8_0.<Main>g__Invoke|0(Int32 count, Int64 ops) in J:\docs\design\laxori-port\windows\driver\CompareDriver.cs:line 112
+   at CompareDriver.Main(String[] args) in J:\docs\design\laxori-port\windows\driver\CompareDriver.cs:line 165

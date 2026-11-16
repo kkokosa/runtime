@@ -7,6 +7,7 @@
 #include <algorithm>
 #include <cstddef>
 #include <cstdint>
+#include "laxori_default_limits.h"
 
 // Port-specific. The Java LAXORI runs in the fixed heap that -Xms/-Xmx give, so its heap-full trigger makes the whole free
 // heap the nursery. The .NET host has no such setting, so the collector must choose the Immix capacity. The capacity is
@@ -41,6 +42,7 @@ public:
     // The standard collector keeps its gen0 budget below a share of physical memory (gen0size * heaps <= physical / 6).
     // The nursery here is one budget for the process, and the heap needs room for live data, so the share is smaller.
     static constexpr size_t PhysicalMemoryDivisor = 16;
+    static constexpr size_t LiveReserveFactor = 2;
 
     static size_t DefaultNurseryCap(uint64_t physicalBytes)
     {
@@ -50,6 +52,15 @@ public:
             return DefaultNurseryCapBytes;
         }
         return share > MinimumNurseryCapBytes ? static_cast<size_t>(share) : MinimumNurseryCapBytes;
+    }
+
+    // Keep the old small-heap policy when the reservation follows the process memory limit.
+    static size_t PolicyReserveBytes(size_t reservationBytes, size_t liveBytes)
+    {
+        size_t floor = LaxoriDefaultLimits::LegacyImmixReserveMB << 20;
+        size_t wanted = liveBytes > SIZE_MAX / LiveReserveFactor ? SIZE_MAX : liveBytes * LiveReserveFactor;
+        wanted = wanted > floor ? wanted : floor;
+        return wanted < reservationBytes ? wanted : reservationBytes;
     }
 
     void Configure(const LaxoriHeapSizingConfiguration& configuration, size_t initialCapacityBytes)

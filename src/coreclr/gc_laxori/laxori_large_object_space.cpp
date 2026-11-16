@@ -4,6 +4,7 @@
 #include "common.h"
 #include "gcenv.h"
 #include "laxori_large_object_space.h"
+#include "laxori_virtual_array.h"
 #ifdef LAXORI_ENABLE_LAZY_COMPLETION_COUNTER
 #include "laxori_completion_counter.h"
 #endif
@@ -96,6 +97,7 @@ struct LaxoriLargeObjectSpace::SideState
     bool legacyWalks = false;
     bool validate = false;
     std::atomic<size_t> validationFailures{0};
+    LaxoriVirtualArray<std::atomic<uintptr_t>> pageMapStorage;
 
     ~SideState()
     {
@@ -348,6 +350,38 @@ void LaxoriLargeObjectSpace::SetFreeLeaf(size_t page, size_t pageCount)
     }
 }
 
+bool LaxoriLargeObjectSpace::ResizeFreeTree(size_t pages)
+{
+    if (pages <= m_tree_leaves)
+    {
+        return true;
+    }
+    size_t leaves = m_tree_leaves == 0 ? 1 : m_tree_leaves;
+    while (leaves < pages)
+    {
+        leaves <<= 1;
+    }
+    uint32_t* tree = static_cast<uint32_t*>(calloc(2 * leaves, sizeof(uint32_t)));
+    if (tree == nullptr)
+    {
+        return false;
+    }
+    if (m_free_tree != nullptr)
+    {
+        memcpy(tree + leaves, m_free_tree + m_tree_leaves, m_tree_leaves * sizeof(uint32_t));
+    }
+    for (size_t node = leaves - 1; node >= 1; node--)
+    {
+        uint32_t left = tree[2 * node];
+        uint32_t right = tree[2 * node + 1];
+        tree[node] = left > right ? left : right;
+    }
+    free(m_free_tree);
+    m_free_tree = tree;
+    m_tree_leaves = leaves;
+    return true;
+}
+
 size_t LaxoriLargeObjectSpace::FindFirstFit(size_t pageCount) const
 {
     if (m_free_tree == nullptr || pageCount == 0 || pageCount > m_free_tree[1])
@@ -533,7 +567,7 @@ bool LaxoriLargeObjectSpace::FindSpan(uintptr_t address, SpanSnapshot* snapshot,
         return false;
     }
     uintptr_t start = GetReservationStart();
-    if (address < start || address - start >= m_reservation_bytes)
+    if (address < start || address - start >= m_admitted_bytes.load(std::memory_order_acquire))
     {
         return false;
     }
@@ -621,29 +655,30 @@ LaxoriLargeObjectResult LaxoriLargeObjectSpace::Initialize(
     }
 
     size_t reservationPages = reservationBytes / PageBytes;
-    size_t leaves = 1;
-    while (leaves < reservationPages)
-    {
-        leaves <<= 1;
-    }
     if (reservationPages > UINT32_MAX)
     {
         return LaxoriLargeObjectResult::UnsupportedAddressSpace;
     }
-    // The tables are zero pages that the system backs when they are first written, so a large reservation costs address
-    // space and not memory.
+    size_t admittedPages = admittedBytes / PageBytes;
+    size_t leaves = 1;
+    while (leaves < admittedPages)
+    {
+        leaves <<= 1;
+    }
+    // Windows charges committed pages even before a write. Commit the map and size the tree for admitted pages only.
     uint32_t* tree = static_cast<uint32_t*>(calloc(2 * leaves, sizeof(uint32_t)));
-    std::atomic<uintptr_t>* map = static_cast<std::atomic<uintptr_t>*>(calloc(reservationPages, sizeof(uintptr_t)));
     auto freeTables = [&]()
     {
         free(tree);
-        free(map);
+        m_side->pageMapStorage.Shutdown();
     };
-    if (tree == nullptr || map == nullptr)
+    if (tree == nullptr || !m_side->pageMapStorage.Reserve(reservationPages) ||
+        !m_side->pageMapStorage.Commit(0, admittedPages, false))
     {
         freeTables();
         return LaxoriLargeObjectResult::OutOfMemory;
     }
+    std::atomic<uintptr_t>* map = m_side->pageMapStorage.Get();
 
     bool ownsReservation = suppliedReservation == nullptr;
     void* reservation = ownsReservation
@@ -720,7 +755,12 @@ LaxoriLargeObjectResult LaxoriLargeObjectSpace::GrowQuiescent(size_t admittedByt
     {
         return LaxoriLargeObjectResult::InvalidArgument;
     }
-    if (!CommitAdmittedPages(GetReservationStart() + previous, admittedBytes - previous))
+    if (!ResizeFreeTree(admittedBytes / PageBytes))
+    {
+        return LaxoriLargeObjectResult::OutOfMemory;
+    }
+    if (!m_side->pageMapStorage.Commit(previous / PageBytes, (admittedBytes - previous) / PageBytes, false) ||
+        !CommitAdmittedPages(GetReservationStart() + previous, admittedBytes - previous))
     {
         return LaxoriLargeObjectResult::CommitFailed;
     }
@@ -836,7 +876,10 @@ void LaxoriLargeObjectSpace::Shutdown()
         m_span_chunks = next;
     }
     free(m_free_tree);
-    free(m_page_map);
+    if (m_side != nullptr)
+    {
+        m_side->pageMapStorage.Shutdown();
+    }
     m_free_tree = nullptr;
     m_page_map = nullptr;
     m_tree_leaves = 0;

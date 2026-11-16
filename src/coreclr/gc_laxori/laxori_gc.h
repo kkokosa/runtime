@@ -182,6 +182,12 @@ private:
     static void Resume(bool finished, void* context);
     static void RetireAllocationContext(gc_alloc_context* context, void* heap);
     static bool CanAdmitRange(size_t firstSlot, size_t slotCount, size_t nativeBytes, void* heap);
+#ifdef TARGET_WINDOWS
+    static bool GetJobCommittedBytes(uint64_t* committed);
+    void RecordCommitRefusal(uint64_t addedBytes, uint64_t committedBytes, bool jobLimit);
+#endif // TARGET_WINDOWS
+    static bool AdmitHeapTables(size_t firstSlot, size_t slotCount, bool initialize, void* heap);
+    bool CommitHeapTables(size_t firstSlot, size_t slotCount);
     static LaxoriRcResult CaptureRoots(LaxoriReferenceCounting* engine, void* context);
     static LaxoriRcResult FinishTrace(LaxoriReferenceCounting* engine, void* context);
     static LaxoriRcResult FinishEpoch(LaxoriReferenceCounting* engine, void* context);
@@ -265,6 +271,11 @@ private:
     size_t m_region_shift = 0;
     size_t m_max_private_object = 0;
     uint64_t* m_region_owner = nullptr;
+    LaxoriVirtualArray<uint64_t> m_region_owner_storage;
+    LaxoriVirtualArray<uint64_t> m_private_bits_storage;
+    LaxoriVirtualArray<uint32_t> m_private_index_storage;
+    // Committed Immix high-water mark, read by the copied barrier through a fixed pointer.
+    uint64_t m_private_heap_bytes = 0;
     uint64_t* m_private_bits = nullptr;
     uintptr_t m_private_bits_base = 0;
     uint32_t* m_private_index = nullptr;
@@ -293,6 +304,8 @@ private:
     void RetireAllocationSpan(gc_alloc_context* context, bool subtractUnused);
     void RegisterFinalizable(Object* object, uint32_t flags);
     LaxoriRcResult TryGrow(bool large, size_t size);
+    void ReportOutOfMemory(size_t size, LaxoriRcResult growth);
+    size_t PolicyReserveBytes() const;
     LaxoriRcResult CollectForPressure(bool emergency, bool user, bool heapFull = false);
     LaxoriRcResult UpdatePolicyHints();
     LaxoriCollectionCause GetCollectionCause(bool heapFull) const;
@@ -314,6 +327,20 @@ private:
     bool m_wait_for_lazy = false;
     size_t m_native_plane_limit = 0;
     size_t m_hard_limit = 0;
+    bool m_immix_reserve_defaulted = false;
+    bool m_large_reserve_defaulted = false;
+    bool m_hard_limit_explicit = false;
+    bool m_native_limit_defaulted = false;
+    std::atomic<bool> m_out_of_memory_reported{false};
+    std::atomic<size_t> m_native_refused_bytes{0};
+    // Compare the per-process limit with process commit, and the job limit with total job commit.
+    uint64_t m_process_commit_limit = 0;
+    uint64_t m_process_commit_headroom = 0;
+    uint64_t m_job_commit_limit = 0;
+    uint64_t m_job_commit_headroom = 0;
+    std::atomic<size_t> m_commit_refused_bytes{0};
+    std::atomic<size_t> m_commit_refused_committed{0};
+    std::atomic<bool> m_commit_refused_job{false};
     std::atomic<LaxoriCollectionCause> m_collection_cause{LaxoriCollectionCause::None};
     // Heap sizing (laxori_heap_sizing.h). The sizer is used with the collection lock held. The live estimate is written by
     // FinishLazy, on a worker thread.
@@ -332,6 +359,8 @@ private:
     ObjectHeaderBitsParameters m_header_bits{};
     FrozenSegment m_frozen[MaximumFrozenSegments];
     std::atomic<uint32_t> m_frozen_readers;
+    LaxoriVirtualArray<uint8_t> m_card_storage;
+    LaxoriVirtualArray<uint8_t> m_bundle_storage;
     uint8_t* m_cards;
     uint8_t* m_bundles;
     CLRCriticalSection m_collection_lock;

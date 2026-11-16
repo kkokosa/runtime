@@ -18,6 +18,214 @@ with `DOTNET_GCPath`.
 | P31 count-plane object starts (port of LXR a3a225d40a9) | Done, **default**. Bitmap build kept as `libclrlaxorigc-bitmap.so`. See "Update: P31" below. |
 | Two inherited LXR defects behind `PrivateTests all 2 13` failures (LXR 1d351781d03) | Ported and fixed. 13-thread failure rate 0/80 (was 12/20 in L1). See "Update: P32" below. |
 | Sync with `lxr-gc-review` a782e26dc3e: item 13 marking window, safe LOS, parallel selection | Ported, three commits. See "Update: P33" below. |
+| Process-limit defaults and metadata committed on admission | Ported from LXR d67c0073c25/fa827d78804. Windows and Linux checks pass except the inherited 512 MiB Windows job failure. See the next section. |
+| Windows job commit headroom | Ported from LXR 7d2e464017a/443e767fecc. The 512 MiB retained-small-array probe now exits with a caught managed OOM instead of a crash. See below. |
+| RC logs committed on use | Ported from LXR 2499e220465. Startup private commit falls from 151.0 to 54.8 MiB; the retained-small-array probe now fits 40 MiB under a 512 MiB job. See the report below. |
+
+## Update: RC logs committed on use
+
+The four RC streams reserve their full address ranges but commit only the
+prefix needed for published entries. Reset can release an excess tail after
+the bank's readers finish. The assembly write barriers and thread-local
+append path are unchanged.
+
+The [implementation and measurement report](results/rc-log-demand/README.md)
+records Windows startup and constrained-job commit, native checks, workload
+checksums, and the limits of the evidence. The following headroom section
+describes the earlier state, before this RC-log change.
+
+## Update: Windows job commit headroom
+
+Source: LXR `7d2e464017a` and `443e767fecc`. This change does not change RC-log commitment.
+Windows charges committed pages even before they are written. The four RC streams still commit about
+four times the admitted heap. Without the check, growth can consume the memory needed for pause work
+lists, thread stacks, and the runtime.
+
+At startup, Laxori reads the per-process and whole-job commit limits of its immediate Windows job.
+Before growth, `CanAdmitRange` checks current commit plus the proposed heap range, one sixteenth of the
+range for metadata/cards, and the additional native-plane bytes. Growth must leave the larger of one
+eighth of each limit and 64 MiB free, capped at that limit. The per-process check uses `PrivateUsage`;
+the whole-job check uses `JobObjectLimitViolationInformation.JobMemory`, with `PeakJobMemoryUsed` as
+a conservative fallback. The existing native-plane check remains in place. Allocation can collect
+and retry; if it still fails, the allocation-free diagnostic names the limit before the runtime
+throws `OutOfMemoryException`.
+
+`DOTNET_LAXORICommitHeadroomMB` sets a decimal MiB margin; `0` disables this check. The shared
+configuration reader also accepts `COMPlus_LAXORICommitHeadroomMB` and
+`System.GC.LAXORICommitHeadroomMB`. The setting is parsed but has no effect on Linux.
+As in LXR, parent jobs are not inspected, limits are not refreshed after startup, and failed OS
+queries do not block growth. This is a safety margin, not a reservation against allocations by other
+processes or the runtime.
+
+### Root-cause check and Windows results
+
+Fresh count-plane and bitmap Release libraries were built from this worktree using:
+
+```powershell
+src\coreclr\build-runtime.cmd -release -x64 -configureonly -subdir job-headroom -cmakeargs "-DCLR_CMAKE_ENABLE_LAXORI_GC=ON"
+# In the same cmd.exe process as eng\native\init-vs-env.cmd x64:
+cmake --build M:\artifacts\obj\coreclr\windows.x64.Release\job-headroom --target clrlaxorigc clrlaxorigc_bitmap --parallel 6
+```
+
+`M:` was a temporary mapping of this worktree, removed after validation. The runtime frame and
+managed probes were copied from the preceding memory-limit worktree. The Windows runtime and
+CoreLib are the previously verified Debug build, not a newly built full Release runtime.
+
+The same frame with the preceding `clrlaxorigc-after.dll` reproduces the 512 MiB failure:
+at 32 MiB retained, it reports 88 MiB admitted, 355.0 MiB of RC logs, and 493.6 MiB private.
+One run prints a caught OOM and `PASS`, then exits with stack overflow (`0xc00000fd`).
+Thus checking only the probe's `PASS` text is not sufficient; the process exit code must also be zero.
+With the port, the process exits zero after a caught OOM near 448-449 MiB commit and prints the
+64 MiB job-headroom diagnostic. The retained target remains 40 MiB: this fixes failure handling,
+not the capacity needed to retain all 40 MiB under a 512 MiB job.
+
+| Check | Result |
+|---|---|
+| 512 MiB whole-job and per-process limits, `MemoryLimits.dll 1024 350 40 small oom` | Both exit 0 with a caught OOM and the applicable limit diagnostic. Whole-job bitmap also passes. |
+| 1024 MiB whole-job and per-process limits, `2048 350 40 small` | Both exit 0 and retain all 40 MiB. Whole-job bitmap also passes. |
+| 1024 MiB job, `-CompanionCommitMB 512`, target `40 small oom` | Exit 0; whole-job diagnostic at 898 MiB total commit with a 128 MiB margin. |
+| Same companion with `-ProcessLimit`, target `40 small` | Exit 0 and retains all 40 MiB. This checks that the two limits use different commit counters. |
+| Explicit `LAXORICommitHeadroomMB=128`, 512 MiB job | Exit 0 with a caught OOM and a 128 MiB margin diagnostic. |
+| Explicit `LAXORICommitHeadroomMB=0`, 1024 MiB job | Exit 0 and retains all 40 MiB. |
+| No job limit, retained `140 small` and `300 large` | Both exit 0, with 296 and 608 MiB admitted. |
+| Native P2.1-P3.4, count build | All nine programs pass. |
+| P4 default, count; `--p8-policy`, count and bitmap | 105881/105881; 100/100 in both variants, including four added headroom checks. |
+| P4 `--p8-storage`, count and bitmap | 1646/1646 and 1662/1662. |
+| P4 count `--object-start`, `--s3-bookkeeping`, `--s7-pins`, `--s5b-overshoot`, `--marking-window` | 4279, 1325, 4099, 422, and 39 checks pass. |
+| Private verifier, L1 and L2, 1/2/4/8/13 threads, both variants | All 20 runs pass (`all 2 <threads>`, no extra repetitions). |
+| `losarrays 1500 100000`, `mediumarrays 20000 300000` | Exit 0; checksums 13936826922 and 7032863679. |
+
+`MemoryLimits/run-in-job.ps1` now accepts `-CompanionCommitMB`. It creates a second suspended
+process in the job and commits that many MiB in it, without running a second GC workload.
+The job owns and terminates both processes. For example:
+
+```powershell
+# Set DOTNET_gcServer=1 and DOTNET_GCPath inside this PowerShell process, not before starting pwsh.
+.\docs\design\laxori-port\MemoryLimits\run-in-job.ps1 -LimitMB 1024 -CompanionCommitMB 512 -FilePath <corerun.exe> -Arguments "<MemoryLimits.dll> 2048 350 40 small oom"
+```
+
+### Linux results and gaps
+
+Both Release libraries build with clang 14 using `src/coreclr/build-runtime.sh -release -x64 -ninja
+-component clrlaxorigc -component clrlaxorigc_bitmap -subdir job-headroom -numproc 4
+-cmakeargs -DCLR_CMAKE_ENABLE_LAXORI_GC=ON`. Managed checks use a private copy of the preceding
+Linux runtime frame with the freshly built libraries. The shared `/tmp/lxr-bench.lock` was held
+once for the complete managed batch; no performance conclusions are drawn from these runs.
+
+All ten native programs pass, including P4 default 105881/105881. Bitmap P4 default also passes.
+Policy is 100/100 in both variants; storage is 1654/1654 count and 1670/1670 bitmap. The same five
+nearby count selectors listed above pass. Both libraries retain `140 small` and `300 large`;
+private verifier `all 2 13` passes in L1 and L2 for both. All seven standard workload checksums
+listed in the preceding process-limit report match. An isolated cgroup with `memory.max=1073741824`
+and `memory.swap.max=0` passes `2048 0 140 small`; only the new child process entered the cgroup,
+and the empty cgroup was removed.
+
+Logs are under `artifacts/job-headroom`. The before/after Windows job log is retained in
+`results/commit-headroom/windows-headroom-matrix.txt`; the Linux managed summary is beside it.
+Not rerun: a full runtime/CoreLib build, Debug GC libraries, all remaining P4 selectors, extra
+private-test repetitions, barrier mutation controls, ARM64, and GC stress. Nested jobs and forced
+OS-query failure/fallback paths were not tested.
+
+## Update: process-limit defaults and metadata committed on admission
+
+Source: LXR `d67c0073c25` and `fa827d78804` on `lxr-gc-review`. The separate prerequisite
+`976dad3e7209de844c01f764408930405b665b73` changes five LXR assertion masks from `7` to `7u`.
+It fixes the Windows Debug baseline without changing behavior, disabling `/WX`, or suppressing warnings.
+There are no other LXR changes in this port.
+
+Each default space reserves the process memory limit, including the job/process or cgroup limit reported by
+`GCToOSInterface::GetPhysicalMemoryLimit()`. The floors remain Immix 128 MiB and LOS 256 MiB; each space is
+capped at 256 GiB. Explicit reserves remain authoritative. A managed hard limit above 384 MiB supplies the
+default split; smaller hard limits retain the legacy reserves and restrict admission. Explicit initial sizes
+can raise a default reserve. The native-plane default is the larger of 4096 MiB and 450 percent of the combined
+reserve. All `DOTNET_LAXORI*MB` settings are decimal MiB.
+
+A large virtual reservation does not imply a large small-heap policy target. For a default Immix reserve,
+the sizing and borrowed-space ceiling use the smaller of the reserve and `max(128 MiB, 2 * mature live bytes)`.
+The nursery-ratio setting retains its legacy default-size base. Available memory is capped by the process limit.
+Allocation failures report the applicable thread, native-plane, managed, Immix, LOS, or OS-commit limit.
+
+Card/bundle tables, private owner/bitmap/index tables, LOS page map, dead-large list, and per-block tables now
+reserve stable addresses and commit only admitted ranges. Private bitmap/index commits cover Immix only.
+Commits precede capacity publication and are retained when borrowed capacity returns. Retry does not clear live
+metadata. The LOS free tree grows with admitted pages. New LOS state is at the end of `SideState`; `Span`,
+the LOS lock, and the final `m_side` member keep their layouts. Both assembly barriers and C++ escape checks
+bound private-owner reads by a published committed Immix range. The copied barrier observes growth without
+being patched again.
+
+### Validation
+
+Windows commands used the temporary `J:` mapping of this worktree. `$Frame` below is
+`J:\artifacts\laxori-memory\frame`; `$Probe` is `J:\artifacts\laxori-memory\probe\MemoryLimits.dll`.
+Logs and private test frames are under `artifacts\laxori-memory`; generated binaries are not committed.
+The baseline log is also retained as the session file `baseline-windows-fixed.log`.
+
+| Command or check | Result |
+|---|---|
+| `build.cmd clr+libs+host` (Windows x64 Debug, after the separate prerequisite) | Exit 0, 24:25.63, zero errors; six existing NU1903 warnings. |
+| CMake `--build J:\artifacts\obj\coreclr\windows.x64.Debug --target clrlaxorigc clrlaxorigc_bitmap --parallel 6`, after `eng\native\init-vs-env.cmd x64` | Both final Windows libraries built, exit 0. |
+| `src\coreclr\build-runtime.cmd -release -x64 -component clrlaxorigc -component clrlaxorigc_bitmap -subdir laxori-memory -cmakeargs "-DCLR_CMAKE_ENABLE_LAXORI_GC=ON"` | Exit 0. The Windows script does not recognize these component names and builds its `install` target, including both Laxori libraries. |
+| `bash src/coreclr/build-runtime.sh -release -x64 -ninja -component clrlaxorigc -component clrlaxorigc_bitmap -subdir laxori-memory -numproc 4 -cmakeargs -DCLR_CMAKE_ENABLE_LAXORI_GC=ON`, with clang/clang++ 14 | Both Linux libraries built, exit 0. Final CMake incremental build also exited 0. |
+| `windows\native-windows.ps1`, all P2.1-P3.4 programs and P4/default selectors, Release count build | All ten programs pass; P4 default 105881/105881. All 48 selector entries have the expected result, including the failing zero-RC control. |
+| `bash docs/design/laxori-port/run-native-all.sh <worktree> <output>` | All ten Linux programs pass; P4 105881/105881; `native failed=0`. |
+| Final `windows\native-windows.ps1 -Program p4 -Bitmap -Selector '--p8-policy','--p8-storage'` | 96/96 and 1662/1662. Count storage: 1646/1646. Final Windows P2.5: 209097/209097. |
+| Final Linux `P4/run-laxori-rc-vertical.sh Release <output>` and `--p8-policy`, `--p8-storage`, `--object-start`, `--s7-pins`, `--s5b-overshoot`, `--s3-bookkeeping` | Both builds pass. Policy 96/96; storage count 1654/1654, bitmap 1670/1670; object starts 4279/4279; pins 4099/4099; borrowing 422/422; bookkeeping 1325/1325. Both default runs 105881/105881. |
+| Assembly barrier checks on Windows and Linux | 22 checks pass on each platform; Windows no-vector-save control is detected. |
+| Linux `corerun PrivateTests.dll all 2 13`, `DOTNET_LAXORIVerifyPrivate=1` | Count L2, count L1 (`DOTNET_LAXORIEscapedInPlace=0`), and bitmap L2 all exit 0 with `PASS`. |
+| Windows `windows\private-tests.ps1 -Library clrlaxorigc-after.dll -Repeats 2` | Count L2 at one and two threads passes. The remaining Debug matrix was stopped during the four-thread run; it is incomplete, not a pass. |
+| Windows `windows\private-tests.ps1 -Frame <frame> -Library <library> -Repeats 0 -Out <output> -Repo J:\ -Dotnet J:\.dotnet\dotnet.exe`, with `DOTNET_gcServer=1` | Count and bitmap libraries each pass all 10 runs: L2 and L1 at 1, 2, 4, 8, and 13 threads, with the private verifier enabled. Each 13-thread combination also passed one separate `corerun PrivateTests.dll all 2 13` run. The frame uses the verified Windows Debug runtime and CoreLib with the new Release GC library, not a full Release runtime. Clear `DOTNET_GCPath` before each script invocation: the first bitmap attempt inherited it from the count run and its `dotnet build` failed; the clean retry passed. |
+
+The regression checks fail before the port: P4 `--p8-storage` passed only 1462/1465 checks, exit 1.
+With `DOTNET_LAXORIImmixReserveMB=8000 DOTNET_LAXORILOSReserveMB=8000`,
+`corerun MemoryLimits.dll 16000 350` failed the startup bound at 492.0 MiB private memory before the port.
+The final library passes at 149.4 MiB. Larger combined reserves of 120000 and 500000 MiB used 150.6 and
+154.2 MiB in earlier runs of the same port.
+
+The new `MemoryLimits/MemoryLimits.csproj` probe and `MemoryLimits/run-in-job.ps1` are repeatable checks.
+Build the probe with `.dotnet\dotnet.exe build docs\design\laxori-port\MemoryLimits\MemoryLimits.csproj -c Release -o <probe-output>`.
+Set `DOTNET_gcServer=1` and `DOTNET_GCPath` to the tested library. Invoke
+`corerun MemoryLimits.dll <expected-reserve-MiB> <maximum-startup-private-MiB> [<live-MiB> <small|large> [oom]]`.
+Zero disables a bound. The probe retains and checks array data through collection and reports native-plane,
+RC-log, and private-memory sizes during growth.
+
+| Limit/settings and probe arguments | Result |
+|---|---|
+| Windows `run-in-job.ps1 -LimitMB 1024 -FilePath <corerun> -Arguments '<probe> 2048 350 40 small'` | Exit 0. Combined reserve 2048 MiB, available 1024 MiB, startup private 149.5 MiB; 40 MiB live passes. |
+| Same command with `-ProcessLimit` | Exit 0. Reserve 2048 MiB, available 1024 MiB, startup private 149.3 MiB; 40 MiB live passes. |
+| `LAXORIManagedHeapHardLimitMB=512`, probe `512 350 80 small` | Exit 0; 80 MiB live, admitted 176 MiB, native planes 704 MiB. |
+| No capacity settings, probe `0 350 140 small` and `0 350 300 large` | Both Windows runs exit 0; admitted 296 and 608 MiB. The same Linux runs with private bound zero pass. |
+| Explicit reserves 128/256, probe `384 350`; only Immix reserve 128, probe `65612 350` on this Windows host | Both exit 0; startup private 149.4 and 150.0 MiB. |
+| Hard limit 128 (`384 350 160 small oom`), reserves 32/32 (`64 350 40 small oom`), LOS reserve 32 (`160 350 40 large oom`), native limit 128 (`0 350 40 small oom`) | All final Windows runs catch the expected OOM, print one applicable diagnostic, and exit 0. Retained arrays at OOM: 3582, 1014, 31, and 503. |
+| Windows bitmap, probe `0 350 40 small` | Exit 0; admitted 124 MiB. |
+| Linux isolated cgroup v2: `memory.max=1073741824`, `memory.swap.max=0`, probe `2048 0 140 small` | Exit 0. Reserve 2048 MiB, available 1024 MiB, 140 MiB live; peak cgroup charge 278687744 bytes. Only the newly spawned test process was moved; the empty test cgroup was removed. |
+
+Workloads used the existing `CompareDriver.dll` with arguments `<output> <workload> <size> <operations>`,
+no `LAXORI` capacity settings, and the final count library. Linux: all seven standard checksums pass
+(`requests 8192 200000` = 27134172608; `binarytrees 18 1` = 68332294; `listsuffix 8192 600000` = 159636632672;
+`mixedmedium 12000 200000` = 40586599707; `losarrays 1500 100000` = 13936826922;
+`mediumarrays 20000 300000` = 7032863679; `losmany 2000 60000` = 42674603309).
+Windows: `losarrays` and `mediumarrays` pass the same checksums using the Windows driver.
+
+### Remaining gaps and the 512 MiB Windows job
+
+The 512 MiB job does **not** pass a 40 MiB retained-small-array run, before or after this port.
+The instrumented final run exits with `0x80004005`, "LAXORI emergency full collection failed";
+an earlier run exited with `0xc0000005`. The old library exits with `0xc00000fd`.
+At 32 MiB live, the final run has 86 MiB admitted, 344.6 MiB of RC logs, and 469.9 MiB private memory.
+The old run has 85 MiB admitted, 344.1 MiB of RC logs, and 476.7 MiB private memory.
+The four RC streams therefore account for about 4x admitted memory and most of the job limit.
+This was not clean managed-OOM handling in the process-limit port. The subsequent
+"Windows job commit headroom" update above ports LXR `7d2e464017a` and `443e767fecc` and
+checks the same case with `DOTNET_LAXORICommitHeadroomMB`.
+
+The full Linux `clr+libs+host` baseline failed with exit 131: `global.json` selects the Windows `.dotnet`
+directory and Linux cannot find its `libhostpolicy.so`. The Windows SDK and `global.json` were not changed.
+Linux managed checks use a copy of the documented `/root/prof/frame-c4` runtime, with both freshly built
+Laxori libraries; they are not validation of a freshly built full Linux runtime.
+The full Windows high-thread-count Debug GC matrix, Linux bitmap L1 repetitions, ARM64, and GC stress
+remain unverified. A matching four-thread run with the old Windows Debug library was also stopped after
+more than ten minutes, with individual checks still progressing; neither four-thread run is a completed result.
+These checks establish correctness in the stated cases, not a performance result.
 
 ## Update: P33 sync with lxr-gc-review a782e26dc3e (results in `results/p33-review-sync/`)
 

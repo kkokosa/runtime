@@ -168,9 +168,11 @@ int main()
     memset(g_heap, 0, HeapBytes);
     g_tag = LaxoriCurrentThreadTag();
 
+    uint64_t privateHeapBytes = HeapBytes;
     LaxoriWriteBarrierSetGlobals(
         Biased(g_metadata), reinterpret_cast<uintptr_t>(g_heap), HeapBytes, reinterpret_cast<void*>(&TestLogPath),
-        LaxoriWriteBarrierComputeXsaveMask(), g_owner, Biased(g_bits), RegionShift, reinterpret_cast<void*>(&TestEscapePath));
+        LaxoriWriteBarrierComputeXsaveMask(), g_owner, Biased(g_bits), RegionShift, reinterpret_cast<void*>(&TestEscapePath),
+        &privateHeapBytes);
 
     LaxoriWriteBarrierBlockInfo info;
     LaxoriWriteBarrierGetBlockInfo(&info);
@@ -274,6 +276,22 @@ int main()
     SetOwner(region1, false);
     CallHelper(assign, sharedA, privateRef);
     Check(g_escapeCalls == 0 && *sharedA == privateRef, "dissolved-region-is-shared");
+
+    // The owner table need not be readable for references beyond committed private metadata.
+    privateHeapBytes = 0;
+    uintptr_t noOwnerTable = 0;
+    size_t ownerOffset = &LaxoriPatchable_OwnerTable - original;
+    memcpy(page + ownerOffset, &noOwnerTable, sizeof(noOwnerTable));
+    Reset();
+    Check(CallHelper(assign, sharedA, privateRef) == 1, "vector-unadmitted-reference");
+    Check(*sharedA == privateRef && g_escapeCalls == 0, "unadmitted-reference-does-not-read-owner-table");
+    uintptr_t ownerTable = reinterpret_cast<uintptr_t>(g_owner);
+    memcpy(page + ownerOffset, &ownerTable, sizeof(ownerTable));
+    SetOwner(region1, true);
+    privateHeapBytes = HeapBytes;
+    Reset();
+    CallHelper(assign, sharedA, privateRef);
+    Check(g_escapeCalls == 1, "copied-barrier-sees-metadata-growth-without-repatch");
 
     std::printf(g_failures == 0 ? "ALL PASSED\n" : "FAILURES: %d\n", g_failures);
     return g_failures == 0 ? 0 : 1;

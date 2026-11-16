@@ -462,6 +462,24 @@ namespace
         Check(
             space.ValidateStructure(&active, &freePages) == LaxoriLargeObjectResult::Success && active == 2 && freePages == 0,
             "growth structure");
+        for (size_t next : {5 * Mebibyte, 9 * Mebibyte, StructureBytes})
+        {
+            size_t previous = space.GetAdmittedBytes();
+            Check(metadata.CommitDataRange(start + previous, next - previous) == SideMetadataResult::Success,
+                "metadata for growth across free-tree leaf counts");
+            LaxoriTestFailCommitAfter(0);
+            Check(space.GrowQuiescent(next) == LaxoriLargeObjectResult::CommitFailed &&
+                space.GetAdmittedBytes() == previous, "page-map commit failure does not publish LOS growth");
+            LaxoriTestFailCommitAfter(-1);
+            LaxoriLargeObjectAllocation found;
+            Check(space.GetContainingAllocation(start + previous, &found) == LaxoriLargeObjectResult::NotFound,
+                "lookups skip unadmitted page-map entries after a failed growth");
+            Check(space.GrowQuiescent(next) == LaxoriLargeObjectResult::Success, "retry grows beyond the free-tree leaf count");
+            Check(space.GetAllocation(front.object, &found) == LaxoriLargeObjectResult::Success &&
+                found.page_start == front.page_start, "tree resize preserves existing allocations");
+            Check(space.ValidateStructure(&active, &freePages) == LaxoriLargeObjectResult::Success &&
+                active == 2 && freePages == (next - 4 * Mebibyte) / Page, "resized tree preserves its free span");
+        }
         space.Shutdown();
     }
 

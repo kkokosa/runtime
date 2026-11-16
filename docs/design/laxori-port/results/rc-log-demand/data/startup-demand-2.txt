@@ -1,0 +1,3 @@
+reserve_mib=130968 hard_limit_mib=130968 native_limit_mib=589356 available_mib=65484 private_mib=54.9 working_set_mib=82.5
+live_mib=0 space=small arrays=0 admitted_mib=24
+PASS

@@ -1,0 +1,2 @@
+fast_refills=2228
+laxori: acquired=3235 dissolvedPause=3 dissolvedFull=3221 dissolvedEscape=11 dissolvedExit=0 localCollections=4919 localSkipped=3090 markAborted=131 notWorth=0 survivorBytes=2709792 reclaimedBytes=1285536552 escapeCalls=13332 escapedObjects=1649328 escapedBytes=52779520 foreign=0 acquireFailures=21 bulkEscapes=0

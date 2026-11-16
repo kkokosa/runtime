@@ -10,6 +10,7 @@
 #endif
 
 extern "C" LaxoriWriteBarrierGlobals g_laxori_write_barrier_globals = {};
+static uint64_t s_privateHeapBytes;
 
 static uintptr_t s_avLocations[] =
 {
@@ -32,6 +33,7 @@ static LaxoriWriteBarrierPatchable s_patchable[] =
     { &LaxoriPatchable_PrivateBits, &g_laxori_write_barrier_globals.private_bits },
     { &LaxoriPatchable_RegionShift, &g_laxori_write_barrier_globals.region_shift },
     { &LaxoriPatchable_EscapePath, &g_laxori_write_barrier_globals.escape_path },
+    { &LaxoriPatchable_PrivateHeapBytes, &g_laxori_write_barrier_globals.private_heap_bytes },
     { nullptr, nullptr },
 };
 
@@ -86,7 +88,8 @@ uintptr_t LaxoriWriteBarrierComputeXsaveMask()
 
 void LaxoriWriteBarrierSetGlobals(
     uintptr_t metadataBase, uintptr_t heapLow, uintptr_t heapSize, void* slowPath, uintptr_t xsaveMask,
-    uint64_t* ownerTable, uintptr_t privateBitsBase, uintptr_t regionShift, void* escapePath)
+    uint64_t* ownerTable, uintptr_t privateBitsBase, uintptr_t regionShift, void* escapePath,
+    uint64_t* privateHeapBytes)
 {
     g_laxori_write_barrier_globals.metadata_base = metadataBase;
     g_laxori_write_barrier_globals.heap_low = heapLow;
@@ -97,4 +100,7 @@ void LaxoriWriteBarrierSetGlobals(
     g_laxori_write_barrier_globals.private_bits = privateBitsBase;
     g_laxori_write_barrier_globals.region_shift = regionShift;
     g_laxori_write_barrier_globals.escape_path = reinterpret_cast<uintptr_t>(escapePath);
+    s_privateHeapBytes = heapSize;
+    g_laxori_write_barrier_globals.private_heap_bytes =
+        reinterpret_cast<uintptr_t>(privateHeapBytes == nullptr ? &s_privateHeapBytes : privateHeapBytes);
 }

@@ -393,7 +393,8 @@ extern "C" void LaxoriEscapeSlowPath(Object** slot, Object* reference)
 void LaxoriGcHeap::EscapeCheck(Object** destination, Object* reference)
 {
     uintptr_t offset = reinterpret_cast<uintptr_t>(reference) - m_arena;
-    if (offset >= m_arena_bytes || LaxoriLoadAcquire(&m_region_owner[offset >> ImmixBlockGeometry::BlockLogBytes]) !=
+    if (offset >= LaxoriLoadAcquire(&m_private_heap_bytes) ||
+        LaxoriLoadAcquire(&m_region_owner[offset >> ImmixBlockGeometry::BlockLogBytes]) !=
         CurrentThreadTag())
     {
         return;
@@ -427,7 +428,7 @@ void LaxoriGcHeap::EscapeObject(Object* object)
         return;
     }
     uintptr_t offset = reinterpret_cast<uintptr_t>(object) - heap->m_arena;
-    if (offset >= heap->m_arena_bytes ||
+    if (offset >= LaxoriLoadAcquire(&heap->m_private_heap_bytes) ||
         LaxoriLoadAcquire(&heap->m_region_owner[offset >> ImmixBlockGeometry::BlockLogBytes]) !=
             CurrentThreadTag())
     {
@@ -1272,14 +1273,61 @@ bool LaxoriGcHeap::InitializePrivateTier(size_t regionKB, bool enabled, bool col
     }
     m_max_private_object = m_region_bytes / 8 < 8192 ? m_region_bytes / 8 : 8192;
     size_t blocks = (m_arena_bytes >> ImmixBlockGeometry::BlockLogBytes) + 1;
-    m_region_owner = static_cast<uint64_t*>(calloc(blocks, sizeof(uint64_t)));
-    m_private_bits = static_cast<uint64_t*>(calloc((m_arena_bytes >> 9) + 2, sizeof(uint64_t)));
-    m_private_index = static_cast<uint32_t*>(calloc((m_arena_bytes >> IndexShift) + 2, sizeof(uint32_t)));
-    if (m_region_owner == nullptr || m_private_bits == nullptr || m_private_index == nullptr)
+    if (!m_region_owner_storage.Reserve(blocks) ||
+        !m_private_bits_storage.Reserve((m_arena_bytes >> 9) + 2) ||
+        !m_private_index_storage.Reserve((m_arena_bytes >> IndexShift) + 2))
+    {
+        return false;
+    }
+    m_region_owner = m_region_owner_storage.Get();
+    m_private_bits = m_private_bits_storage.Get();
+    m_private_index = m_private_index_storage.Get();
+    size_t immix = m_engine.GetImmixCapacityBytes();
+    size_t large = m_engine.GetAdmittedBytes() - immix;
+    if (!CommitHeapTables(0, immix / sizeof(uintptr_t)) ||
+        !CommitHeapTables(m_engine.GetImmixReservationBytes() / sizeof(uintptr_t), large / sizeof(uintptr_t)))
     {
         return false;
     }
     m_private_bits_base = reinterpret_cast<uintptr_t>(m_private_bits) - (m_arena >> 6);
     m_engine.SetRegionOwnerTable(m_region_owner);
+    return true;
+}
+
+bool LaxoriGcHeap::AdmitHeapTables(size_t firstSlot, size_t slotCount, bool, void* context)
+{
+    return static_cast<LaxoriGcHeap*>(context)->CommitHeapTables(firstSlot, slotCount);
+}
+
+bool LaxoriGcHeap::CommitHeapTables(size_t firstSlot, size_t slotCount)
+{
+    if (slotCount == 0)
+    {
+        return true;
+    }
+    size_t first = firstSlot * sizeof(uintptr_t);
+    size_t end = (firstSlot + slotCount) * sizeof(uintptr_t);
+    size_t firstBlock = first >> ImmixBlockGeometry::BlockLogBytes;
+    size_t endBlock = (end + ImmixBlockGeometry::BlockBytes - 1) >> ImmixBlockGeometry::BlockLogBytes;
+    if (!m_card_storage.Commit(first >> 11, ((end + 2047) >> 11) - (first >> 11), false) ||
+        !m_bundle_storage.Commit(first >> 21, ((end + (size_t{1} << 21) - 1) >> 21) - (first >> 21), false) ||
+        !m_region_owner_storage.Commit(firstBlock, endBlock - firstBlock, false))
+    {
+        return false;
+    }
+    if (first < m_engine.GetImmixReservationBytes())
+    {
+        if (!m_private_bits_storage.Commit(first >> 9, ((end + 511) >> 9) - (first >> 9), false) ||
+            !m_private_index_storage.Commit(first >> IndexShift,
+                ((end + (size_t{1} << IndexShift) - 1) >> IndexShift) - (first >> IndexShift), false))
+        {
+            return false;
+        }
+        // Tables stay committed when borrowed capacity is returned; no live metadata is reset on re-admission.
+        if (end > LaxoriLoadAcquire(&m_private_heap_bytes))
+        {
+            LaxoriStoreRelease(&m_private_heap_bytes, static_cast<uint64_t>(end));
+        }
+    }
     return true;
 }

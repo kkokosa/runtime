@@ -43,6 +43,7 @@ extern "C"
     extern uint8_t LaxoriPatchable_PrivateBits;
     extern uint8_t LaxoriPatchable_RegionShift;
     extern uint8_t LaxoriPatchable_EscapePath;
+    extern uint8_t LaxoriPatchable_PrivateHeapBytes;
     extern uint8_t LaxoriPrivateBitsAVLocation;
 }
 
@@ -64,6 +65,8 @@ struct LaxoriWriteBarrierGlobals
     uintptr_t private_bits;
     uintptr_t region_shift;
     uintptr_t escape_path;
+    // Pointer to the committed Immix high-water mark. LOS references cannot belong to a private region.
+    uintptr_t private_heap_bytes;
 };
 
 extern "C" LaxoriWriteBarrierGlobals g_laxori_write_barrier_globals;
@@ -96,6 +99,7 @@ uintptr_t LaxoriWriteBarrierComputeXsaveMask();
 // Sets the values that the patchable slots cache.
 void LaxoriWriteBarrierSetGlobals(
     uintptr_t metadataBase, uintptr_t heapLow, uintptr_t heapSize, void* slowPath, uintptr_t xsaveMask,
-    uint64_t* ownerTable, uintptr_t privateBitsBase, uintptr_t regionShift, void* escapePath);
+    uint64_t* ownerTable, uintptr_t privateBitsBase, uintptr_t regionShift, void* escapePath,
+    uint64_t* privateHeapBytes = nullptr);
 
 #endif // LAXORI_WRITE_BARRIER_H

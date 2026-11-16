@@ -1,0 +1,5 @@
+reserve_mib=2048 hard_limit_mib=2048 native_limit_mib=9216 available_mib=1024 private_mib=149.0 working_set_mib=80.5
+live_mib=16 admitted_mib=51 native_planes_mib=207 rc_logs_mib=207.1 private_mib=292.6
+live_mib=32 admitted_mib=87 native_planes_mib=349 rc_logs_mib=349.5 private_mib=475.1
+live_mib=40 space=small arrays=2560 admitted_mib=122
+PASS

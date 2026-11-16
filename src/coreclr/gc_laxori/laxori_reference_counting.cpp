@@ -91,9 +91,13 @@ struct LaxoriReferenceCounting::LogChunk
 
 struct LaxoriReferenceCounting::LogStream
 {
+    static constexpr size_t CommitChunkSlots = 64 * 1024 / sizeof(uintptr_t);
+    static constexpr size_t MaximumCommitChunkSlots = 1024 * 1024 / sizeof(uintptr_t);
+
     uintptr_t* references = nullptr;
     std::atomic<uint16_t>* published = nullptr;
     std::atomic<size_t> reserved{0};
+    std::atomic<size_t> committed{0};
     size_t capacity = 0;
     LaxoriVirtualArray<uintptr_t> referenceStorage;
     LaxoriVirtualArray<std::atomic<uint16_t>> publicationStorage;
@@ -101,6 +105,80 @@ struct LaxoriReferenceCounting::LogStream
     std::atomic<uint64_t> flushes{0};
     std::atomic<uint64_t> copiedBytes{0};
     std::atomic<uint64_t> resetBytes{0};
+
+    bool EnsureCommitted(LaxoriReferenceCounting* engine, size_t required)
+    {
+        if (required <= committed.load(std::memory_order_acquire))
+        {
+            return true;
+        }
+        // All streams share the admission lock so concurrent growth cannot spend the same native-memory allowance.
+        while (engine->m_log_commit_lock.test_and_set(std::memory_order_acquire))
+        {
+            YieldProcessor();
+        }
+        size_t current = committed.load(std::memory_order_relaxed);
+        bool success = true;
+        if (required > current)
+        {
+            size_t increment = current < CommitChunkSlots ? CommitChunkSlots : current;
+            increment = increment > MaximumCommitChunkSlots ? MaximumCommitChunkSlots : increment;
+            size_t next = capacity - current < increment ? capacity : current + increment;
+            next = next < required ? required : next;
+            auto fits = [&](size_t target)
+            {
+                size_t nativeBytes = engine->GetNativePlaneCommittedBytes() +
+                    referenceStorage.ProjectedCommittedBytes(current, target - current) -
+                    referenceStorage.GetCommittedBytes();
+                if (published != nullptr)
+                {
+                    nativeBytes += publicationStorage.ProjectedCommittedBytes(current, target - current) -
+                        publicationStorage.GetCommittedBytes();
+                }
+                return engine->m_object_model.canAdmitRange == nullptr ||
+                    engine->m_object_model.canAdmitRange(0, 0, nativeBytes, engine->m_object_model.context);
+            };
+            success = fits(next);
+            if (!success)
+            {
+                size_t pageSlots = GCToOSInterface::GetPageSize() / sizeof(uintptr_t);
+                size_t minimum = (required + pageSlots - 1) & ~(pageSlots - 1);
+                minimum = minimum > capacity ? capacity : minimum;
+                success = minimum < next && fits(minimum);
+                next = minimum;
+            }
+            if (success)
+            {
+                success = referenceStorage.Commit(current, next - current, false) &&
+                    (published == nullptr || publicationStorage.Commit(current, next - current));
+                if (success)
+                {
+                    committed.store(next, std::memory_order_release);
+                }
+            }
+        }
+        engine->m_log_commit_lock.clear(std::memory_order_release);
+        return success;
+    }
+
+    // ResetBank owns the stream exclusively, after all readers of the old bank have finished.
+    bool Trim(size_t used)
+    {
+        size_t keep = (used + CommitChunkSlots - 1) & ~(CommitChunkSlots - 1);
+        keep = keep < CommitChunkSlots ? CommitChunkSlots : keep;
+        size_t current = committed.load(std::memory_order_relaxed);
+        if (keep >= current || current - keep < keep)
+        {
+            return true;
+        }
+        if (!referenceStorage.Decommit(keep, current - keep, true) ||
+            (published != nullptr && !publicationStorage.Decommit(keep, current - keep, true)))
+        {
+            return false;
+        }
+        committed.store(keep, std::memory_order_release);
+        return true;
+    }
 };
 
 struct LaxoriReferenceCounting::LogBank
@@ -846,6 +924,10 @@ LaxoriRcResult LaxoriReferenceCounting::Initialize(
     {
         return Fail(LaxoriRcResult::MetadataFailure);
     }
+    if (!GrowDeadLarge(m_initial_large))
+    {
+        return Fail(LaxoriRcResult::OutOfMemory);
+    }
     if (m_overshoot)
     {
         m_allocation.EnablePlacementQuiescent(m_immix_floor / ImmixBlockGeometry::BlockBytes);
@@ -979,38 +1061,33 @@ LaxoriRcResult LaxoriReferenceCounting::InitializeBuffers(size_t slots)
     m_root_capacity[1] = m_configuration.maximumRoots;
     if (m_configuration.largeObjectBytes != 0)
     {
-        m_dead_large = new (std::nothrow) uintptr_t[
-            m_configuration.largeObjectBytes / LaxoriLargeObjectSpace::PageBytes]{};
-    }
-    if (m_configuration.immixBytes != 0)
-    {
-        m_mature_candidates = new (std::nothrow) std::atomic<uint8_t>[
-            m_configuration.immixBytes / ImmixBlockGeometry::BlockBytes]{};
-        m_block_flags = new (std::nothrow) std::atomic<uint8_t>[
-            m_configuration.immixBytes / ImmixBlockGeometry::BlockBytes]{};
-        if (m_configuration.prezero && !m_observer)
-        {
-            m_zero_state = new (std::nothrow) std::atomic<uint8_t>[
-                m_configuration.immixBytes / ImmixBlockGeometry::BlockBytes]{};
-            if (m_zero_state == nullptr)
-            {
-                return Fail(LaxoriRcResult::OutOfMemory);
-            }
-        }
-        // Not initialized: the entries are written before they are read, and the pages stay untouched until used.
-        m_allocated_list = new (std::nothrow) uint32_t[m_configuration.immixBytes / ImmixBlockGeometry::BlockBytes];
-        if (m_allocated_list == nullptr || m_block_flags == nullptr)
+        if (!m_dead_large_storage.Reserve(m_configuration.largeObjectBytes / LaxoriLargeObjectSpace::PageBytes))
         {
             return Fail(LaxoriRcResult::OutOfMemory);
         }
-        if (m_configuration.evacuateMature)
+        m_dead_large = m_dead_large_storage.Get();
+    }
+    if (m_configuration.immixBytes != 0)
+    {
+        size_t blocks = m_configuration.immixBytes / ImmixBlockGeometry::BlockBytes;
+        bool reserved = m_mature_candidates_storage.Reserve(blocks) && m_block_flags_storage.Reserve(blocks) &&
+            m_allocated_list_storage.Reserve(blocks);
+        m_mature_candidates = m_mature_candidates_storage.Get();
+        m_block_flags = m_block_flags_storage.Get();
+        m_allocated_list = m_allocated_list_storage.Get();
+        if (reserved && m_configuration.prezero && !m_observer)
         {
-            m_evacuation_sources = new (std::nothrow) std::atomic<uint8_t>[
-                m_configuration.immixBytes / ImmixBlockGeometry::BlockBytes]{};
-            if (m_evacuation_sources == nullptr)
-            {
-                return Fail(LaxoriRcResult::OutOfMemory);
-            }
+            reserved = m_zero_state_storage.Reserve(blocks);
+            m_zero_state = m_zero_state_storage.Get();
+        }
+        if (reserved && m_configuration.evacuateMature)
+        {
+            reserved = m_evacuation_sources_storage.Reserve(blocks);
+            m_evacuation_sources = m_evacuation_sources_storage.Get();
+        }
+        if (!reserved || !GrowBlockTables(m_initial_immix))
+        {
+            return Fail(LaxoriRcResult::OutOfMemory);
         }
     }
     if (m_mutators == nullptr || m_mutator_chunks == nullptr ||
@@ -1030,9 +1107,7 @@ LaxoriRcResult LaxoriReferenceCounting::InitializeBuffers(size_t slots)
         {
             stream->capacity = bank.capacity;
             if (!stream->referenceStorage.Reserve(slots) ||
-                !stream->referenceStorage.Commit(0, stream->capacity, false) ||
-                (m_observer && (!stream->publicationStorage.Reserve(slots) ||
-                    !stream->publicationStorage.Commit(0, stream->capacity))))
+                (m_observer && !stream->publicationStorage.Reserve(slots)))
             {
                 return Fail(LaxoriRcResult::OutOfMemory);
             }
@@ -1387,7 +1462,7 @@ void LaxoriReferenceCounting::Shutdown()
     DeleteReleaseChunks();
     delete[] m_copy_logs;
     delete[] m_worker_counters;
-    delete[] m_evacuation_sources;
+    m_evacuation_sources_storage.Shutdown();
     delete[] m_mutator_chunks;
 #ifdef LAXORI_SIDE_METADATA_TEST_PLATFORM
     m_extent_storage.Shutdown();
@@ -1396,11 +1471,13 @@ void LaxoriReferenceCounting::Shutdown()
     m_allocated_block_storage.Shutdown();
     delete[] m_roots[0];
     delete[] m_roots[1];
-    delete[] m_dead_large;
-    delete[] m_mature_candidates;
-    delete[] m_block_flags;
-    delete[] m_zero_state;
-    delete[] m_allocated_list;
+    m_dead_large_storage.Shutdown();
+    m_dead_large_capacity.store(0, std::memory_order_relaxed);
+    m_mature_candidates_storage.Shutdown();
+    m_block_flags_storage.Shutdown();
+    m_zero_state_storage.Shutdown();
+    m_allocated_list_storage.Shutdown();
+    m_block_table_blocks.store(0, std::memory_order_relaxed);
     delete[] m_trace_locks;
     delete[] m_scan_buckets;
     m_banks = nullptr;
@@ -1937,6 +2014,11 @@ LaxoriRcResult LaxoriReferenceCounting::PublishReferences(
         {
             return Fail(LaxoriRcResult::CapacityExceeded);
         }
+        // A consumer can observe reserved immediately. Back its entire range before publishing the reservation.
+        if (!stream.EnsureCommitted(this, start + count))
+        {
+            return Fail(LaxoriRcResult::OutOfMemory);
+        }
         if (stream.reserved.compare_exchange_weak(
                 start, start + count, std::memory_order_relaxed))
         {
@@ -2020,6 +2102,10 @@ LaxoriRcResult LaxoriReferenceCounting::ResetBank(LogBank& bank)
             cursor += count;
         }
         stream->reserved.store(0, std::memory_order_relaxed);
+        if (!stream->Trim(limit))
+        {
+            return Fail(LaxoriRcResult::OutOfMemory);
+        }
     }
     return LaxoriRcResult::Success;
 }
@@ -3469,7 +3555,8 @@ bool LaxoriReferenceCounting::IsPinnedObject(Object* object) const
     return false;
 #else
     uintptr_t start = Start(object);
-    if (m_block_flags == nullptr || !IsImmix(start))
+    if (m_block_flags == nullptr || !IsImmix(start) ||
+        (start - GetReservationStart()) / ImmixBlockGeometry::BlockBytes >= m_block_table_blocks.load(std::memory_order_acquire))
     {
         return false;
     }
@@ -3495,6 +3582,7 @@ bool LaxoriReferenceCounting::IsPinnedForPause(Object* object) const
 bool LaxoriReferenceCounting::IsPinnedBlock(uintptr_t address) const
 {
     return m_block_flags != nullptr && IsImmix(address) &&
+        (address - GetReservationStart()) / ImmixBlockGeometry::BlockBytes < m_block_table_blocks.load(std::memory_order_acquire) &&
         (m_block_flags[(address - GetReservationStart()) / ImmixBlockGeometry::BlockBytes].load(
             std::memory_order_acquire) & ImmixAllocationManager::PinnedBlockFlag) != 0;
 }
@@ -3919,6 +4007,7 @@ bool LaxoriReferenceCounting::IsMatureCandidate(uintptr_t address)
     if (m_evacuation_sources == nullptr ||
         (GetTracePhase() == LaxoriTracePhase::Inactive && m_pause_kind == LaxoriPauseKind::RefCount) ||
         !IsImmix(address) ||
+        (address - GetReservationStart()) / ImmixBlockGeometry::BlockBytes >= m_block_table_blocks.load(std::memory_order_acquire) ||
         m_evacuation_sources[(address - GetReservationStart()) / ImmixBlockGeometry::BlockBytes].load(
             std::memory_order_acquire) == 0)
     {
@@ -5805,7 +5894,7 @@ SideMetadataResult LaxoriReferenceCounting::Death(uintptr_t start, void* context
         return result;
     }
     size_t index = engine->m_dead_large_count.fetch_add(1, std::memory_order_relaxed);
-    if (index >= engine->m_configuration.largeObjectBytes / LaxoriLargeObjectSpace::PageBytes)
+    if (index >= engine->m_dead_large_capacity.load(std::memory_order_relaxed))
     {
         engine->Fail(LaxoriRcResult::CapacityExceeded);
         return SideMetadataResult::InconsistentState;
@@ -8197,6 +8286,42 @@ size_t LaxoriReferenceCounting::GetCommittedBytes() const
     return m_immix_capacity.load(std::memory_order_acquire) + m_large.GetCommittedBytes();
 }
 
+bool LaxoriReferenceCounting::GrowBlockTables(size_t immixBytes)
+{
+    size_t blocks = immixBytes / ImmixBlockGeometry::BlockBytes;
+    size_t committed = m_block_table_blocks.load(std::memory_order_relaxed);
+    if (blocks <= committed)
+    {
+        return true;
+    }
+    if (!m_mature_candidates_storage.Commit(committed, blocks - committed, false) ||
+        !m_block_flags_storage.Commit(committed, blocks - committed, false) ||
+        !m_allocated_list_storage.Commit(committed, blocks - committed, false) ||
+        (m_zero_state != nullptr && !m_zero_state_storage.Commit(committed, blocks - committed, false)) ||
+        (m_evacuation_sources != nullptr && !m_evacuation_sources_storage.Commit(committed, blocks - committed, false)))
+    {
+        return false;
+    }
+    m_block_table_blocks.store(blocks, std::memory_order_release);
+    return true;
+}
+
+bool LaxoriReferenceCounting::GrowDeadLarge(size_t largeBytes)
+{
+    size_t pages = largeBytes / LaxoriLargeObjectSpace::PageBytes;
+    size_t committed = m_dead_large_capacity.load(std::memory_order_relaxed);
+    if (pages <= committed)
+    {
+        return true;
+    }
+    if (!m_dead_large_storage.Commit(committed, pages - committed, false))
+    {
+        return false;
+    }
+    m_dead_large_capacity.store(pages, std::memory_order_release);
+    return true;
+}
+
 size_t LaxoriReferenceCounting::GetImmixReservationBytes() const
 {
     return m_configuration.immixBytes;
@@ -8529,7 +8654,6 @@ bool LaxoriReferenceCounting::FitAdmission(bool large, size_t current, size_t mi
     size_t granularity = large ? LaxoriLargeObjectSpace::PageBytes : ImmixBlockGeometry::BlockBytes;
     size_t offset = large ? m_configuration.immixBytes : 0;
     size_t first = (offset + current) / sizeof(uintptr_t);
-    size_t previousLogCapacity = GetAdmittedBytes() / sizeof(uintptr_t);
     auto fits = [&](size_t candidate)
     {
         size_t slots = candidate / sizeof(uintptr_t);
@@ -8542,10 +8666,8 @@ bool LaxoriReferenceCounting::FitAdmission(bool large, size_t current, size_t mi
             for (LogStream* stream : {
                     &m_banks[bank].increments, &m_banks[bank].decrements})
             {
-                size_t desired = previousLogCapacity + slots;
-                nativeBytes += desired > stream->capacity
-                    ? stream->referenceStorage.ProjectedCommittedBytes(stream->capacity, desired - stream->capacity)
-                    : stream->referenceStorage.GetCommittedBytes();
+                nativeBytes += stream->referenceStorage.GetCommittedBytes() +
+                    stream->publicationStorage.GetCommittedBytes();
             }
         }
         return m_object_model.canAdmitRange(first, slots, nativeBytes, m_object_model.context);
@@ -8583,25 +8705,9 @@ LaxoriRcResult LaxoriReferenceCounting::AdmitSuspended(
     size_t first = (offset + current) / sizeof(uintptr_t);
     size_t previousLogCapacity = GetAdmittedBytes() / sizeof(uintptr_t);
     size_t count = increment / sizeof(uintptr_t);
-    size_t logIncrement = count;
     if (!CommitPlanes(first, count, initialize))
     {
         return LaxoriRcResult::OutOfMemory;
-    }
-    for (size_t bank = 0; bank < 2; bank++)
-    {
-        for (LogStream* stream : {
-                &m_banks[bank].increments, &m_banks[bank].decrements})
-        {
-            // The log capacity never shrinks (see ReturnTailSuspended), so a range that was given back and is admitted
-            // again may need no new storage.
-            size_t desired = previousLogCapacity + logIncrement;
-            if (desired > stream->capacity &&
-                !stream->referenceStorage.Commit(stream->capacity, desired - stream->capacity, false))
-            {
-                return LaxoriRcResult::OutOfMemory;
-            }
-        }
     }
     if (m_object_model.admitRange != nullptr &&
         !m_object_model.admitRange(first, count, initialize, m_object_model.context))
@@ -8615,7 +8721,8 @@ LaxoriRcResult LaxoriReferenceCounting::AdmitSuspended(
     }
     if (large)
     {
-        if (m_large.GrowQuiescent(next) != LaxoriLargeObjectResult::Success)
+        // Commit list storage before the LOS publishes its larger admitted range.
+        if (!GrowDeadLarge(next) || m_large.GrowQuiescent(next) != LaxoriLargeObjectResult::Success)
         {
             return LaxoriRcResult::OutOfMemory;
         }
@@ -8623,6 +8730,10 @@ LaxoriRcResult LaxoriReferenceCounting::AdmitSuspended(
     else
     {
         if (!GCToOSInterface::VirtualCommit(reinterpret_cast<void*>(start), increment))
+        {
+            return LaxoriRcResult::OutOfMemory;
+        }
+        if (!GrowBlockTables(next))
         {
             return LaxoriRcResult::OutOfMemory;
         }
@@ -8634,7 +8745,7 @@ LaxoriRcResult LaxoriReferenceCounting::AdmitSuspended(
     }
     for (size_t bank = 0; bank < 2; bank++)
     {
-        size_t desired = previousLogCapacity + logIncrement;
+        size_t desired = previousLogCapacity + count;
         if (desired > m_banks[bank].capacity)
         {
             m_banks[bank].capacity = desired;
@@ -8695,8 +8806,9 @@ LaxoriRcResult LaxoriReferenceCounting::BorrowSuspended()
     size_t current = GetImmixCapacityBytes();
     size_t block = ImmixBlockGeometry::BlockBytes;
     size_t missing = ((request - free) * LaxoriLargeObjectSpace::PageBytes + block - 1) & ~(block - 1);
-    // The hard limit equals the whole reservation here (see m_overshoot), so the room is what is left of it.
-    size_t room = m_configuration.immixBytes - current;
+    size_t ceiling = m_borrow_ceiling.load(std::memory_order_relaxed);
+    size_t reserve = ceiling < m_configuration.immixBytes ? ceiling : m_configuration.immixBytes;
+    size_t room = reserve > current ? reserve - current : 0;
     size_t limitRoom = m_configuration.hardLimitBytes - GetAdmittedBytes();
 #if defined(LAXORI_SIDE_METADATA_TEST_PLATFORM) && defined(LAXORI_S5B_IGNORE_HARD_LIMIT_CONTROL)
     limitRoom = room;
@@ -10162,7 +10274,7 @@ LaxoriRcResult LaxoriReferenceCounting::SweepCycleRange(size_t first, size_t lim
         {
             size = GetLargeObjectSize(start);
             size_t dead = m_dead_large_count.fetch_add(1, std::memory_order_relaxed);
-            if (dead >= m_configuration.largeObjectBytes / LaxoriLargeObjectSpace::PageBytes)
+            if (dead >= m_dead_large_capacity.load(std::memory_order_relaxed))
             {
                 status = Fail(LaxoriRcResult::CapacityExceeded);
                 break;
@@ -10373,6 +10485,10 @@ LaxoriRcResult LaxoriReferenceCounting::ValidateLogStorageForTest(uint8_t test)
     }
     LogBank& bank = m_banks[m_producer_bank.load()];
     LogStream& stream = bank.increments;
+    if ((test == 1 || test == 3 || test == 4) && !stream.EnsureCommitted(this, 1))
+    {
+        return Fail(LaxoriRcResult::OutOfMemory);
+    }
     if (test == 1)
     {
         stream.reserved.store(1);
@@ -10385,6 +10501,10 @@ LaxoriRcResult LaxoriReferenceCounting::ValidateLogStorageForTest(uint8_t test)
         values[index] = LaxoriSideMetadataLayout::AddressLimit - (index + 1) * sizeof(uintptr_t);
     }
     values[1] = 0;
+    if (test == 8)
+    {
+        return PublishReferences(stream, stream.capacity, values, 1);
+    }
     if (test == 2 || test == 6)
     {
         values[1] = UINTPTR_MAX;
@@ -10404,6 +10524,105 @@ LaxoriRcResult LaxoriReferenceCounting::ValidateLogStorageForTest(uint8_t test)
         stream.references[0] = static_cast<uintptr_t>(count) << LogCountShift;
         stream.reserved.store(test == 3 ? count : 1);
         return ReadPublishedRange(stream, 0, stream.reserved.load(), &count);
+    }
+    if (test == 7)
+    {
+        constexpr size_t Producers = 4;
+        size_t rounds = stream.capacity / (Producers * BufferCapacity);
+        if (rounds == 0 || stream.committed.load() != 0)
+        {
+            return LaxoriRcResult::InvalidArgument;
+        }
+        std::atomic<bool> ready{false};
+        std::atomic<size_t> waiting{0};
+        std::atomic<size_t> failures{0};
+        std::thread producers[Producers];
+        for (size_t producer = 0; producer < Producers; producer++)
+        {
+            producers[producer] = std::thread([&, producer]()
+            {
+                uintptr_t entries[BufferCapacity];
+                std::fill_n(entries, BufferCapacity, producer + 1);
+                waiting.fetch_add(1);
+                while (!ready.load(std::memory_order_acquire))
+                {
+                    YieldProcessor();
+                }
+                for (size_t round = 0; round < rounds; round++)
+                {
+                    if (PublishReferences(stream, stream.capacity, entries, BufferCapacity - producer) !=
+                        LaxoriRcResult::Success)
+                    {
+                        failures.fetch_add(1);
+                        return;
+                    }
+                }
+            });
+        }
+        while (waiting.load() != Producers)
+        {
+            YieldProcessor();
+        }
+        ready.store(true, std::memory_order_release);
+        for (std::thread& producer : producers)
+        {
+            producer.join();
+        }
+        if (failures.load() != 0)
+        {
+            return LaxoriRcResult::InvariantViolation;
+        }
+        size_t seen[Producers]{};
+        size_t limit = stream.reserved.load();
+        for (size_t cursor = 0; cursor < limit;)
+        {
+            size_t count;
+            if (ReadPublishedRange(stream, cursor, limit, &count) != LaxoriRcResult::Success)
+            {
+                return LaxoriRcResult::InvariantViolation;
+            }
+            uintptr_t value = stream.references[cursor] & LogReferenceMask;
+            if (value == 0 || value > Producers || count != BufferCapacity - (value - 1))
+            {
+                return LaxoriRcResult::InvariantViolation;
+            }
+            for (size_t index = 1; index < count; index++)
+            {
+                if (stream.references[cursor + index] != value)
+                {
+                    return LaxoriRcResult::InvariantViolation;
+                }
+            }
+            seen[value - 1]++;
+            cursor += count;
+        }
+        for (size_t count : seen)
+        {
+            if (count != rounds)
+            {
+                return LaxoriRcResult::InvariantViolation;
+            }
+        }
+        if (stream.referenceStorage.GetCommittedBytes() < limit * sizeof(uintptr_t) ||
+            bank.decrements.referenceStorage.GetCommittedBytes() != 0 ||
+            ResetBank(bank) != LaxoriRcResult::Success ||
+            PublishReferences(stream, stream.capacity, values, 1) != LaxoriRcResult::Success ||
+            ResetBank(bank) != LaxoriRcResult::Success ||
+            stream.referenceStorage.GetCommittedBytes() != LogStream::CommitChunkSlots * sizeof(uintptr_t) ||
+            (m_observer && stream.publicationStorage.GetCommittedBytes() !=
+                LogStream::CommitChunkSlots * sizeof(std::atomic<uint16_t>)))
+        {
+            return LaxoriRcResult::InvariantViolation;
+        }
+        // The released tail must be usable again, not just absent from the accounting.
+        for (size_t index = 0; index < rounds * Producers; index++)
+        {
+            if (PublishReferences(stream, stream.capacity, values, BufferCapacity) != LaxoriRcResult::Success)
+            {
+                return LaxoriRcResult::InvariantViolation;
+            }
+        }
+        return ResetBank(bank);
     }
     if (m_observer)
     {

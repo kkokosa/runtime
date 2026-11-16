@@ -1,0 +1,17 @@
+batch lock acquired
+PASS
+PASS
+count probes and private tests pass
+PASS
+PASS
+bitmap probes and private tests pass
+requests 27134172608 PASS
+binarytrees 68332294 PASS
+listsuffix 159636632672 PASS
+mixedmedium 40586599707 PASS
+losarrays 13936826922 PASS
+mediumarrays 7032863679 PASS
+losmany 42674603309 PASS
+live_mib=140 space=small arrays=8960 admitted_mib=296
+PASS
+managed checks PASS

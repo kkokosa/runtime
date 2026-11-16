@@ -140,6 +140,7 @@ namespace
     Object* Allocate(LaxoriReferenceCounting& engine, LaxoriRcMutator* mutator, Type& type);
     Object** Field(Object* object, size_t index = 0);
     bool Store(LaxoriReferenceCounting& engine, LaxoriRcMutator* mutator, Object** slot, Object* target);
+    bool NativeAdmission(size_t first, size_t count, size_t bytes, void* context);
 
     struct MovingRoots
     {
@@ -1384,12 +1385,11 @@ namespace
             {
                 return;
             }
-            size_t payload = engine.GetAdmittedBytes();
-            Check(engine.GetStorageMetric(11) == payload && engine.GetStorageMetric(12) == 0 &&
-                engine.GetStorageMetric(13) == payload && engine.GetStorageMetric(14) == 0 &&
-                engine.GetStorageMetric(17) == payload && engine.GetStorageMetric(18) == 0 &&
-                engine.GetStorageMetric(19) == payload && engine.GetStorageMetric(20) == 0,
-                "four full-capacity payload streams have no separate publication backing");
+            Check(engine.GetStorageMetric(11) == 0 && engine.GetStorageMetric(12) == 0 &&
+                engine.GetStorageMetric(13) == 0 && engine.GetStorageMetric(14) == 0 &&
+                engine.GetStorageMetric(17) == 0 && engine.GetStorageMetric(18) == 0 &&
+                engine.GetStorageMetric(19) == 0 && engine.GetStorageMetric(20) == 0,
+                "unused log streams reserve address space without committing payload or publication pages");
             Check(engine.ValidateLogStorageForTest(0) == LaxoriRcResult::CapacityExceeded &&
                 engine.GetFailure() == LaxoriRcResult::CapacityExceeded,
                 "all1024 partial widths and every admitted one-entry flush preserve exact47-bit payload before overflow");
@@ -1411,6 +1411,63 @@ namespace
             Check(observer.InitializeObserver(8, 1) == LaxoriRcResult::Success &&
                 observer.ValidateLogStorageForTest(6) == LaxoriRcResult::Success,
                 "observer publication preserves full-width foreign values without truncation");
+        }
+        for (int64_t after : {int64_t{0}, int64_t{1}})
+        {
+            LaxoriReferenceCounting observer;
+            if (!Check(observer.InitializeObserver(8, 1) == LaxoriRcResult::Success,
+                    "commit-failure fixture reserves empty observer streams"))
+            {
+                return;
+            }
+            LaxoriTestFailCommitAfter(after);
+            LaxoriRcResult result = observer.ValidateLogStorageForTest(6);
+            LaxoriTestFailCommitAfter(-1);
+            Check(result == LaxoriRcResult::OutOfMemory && observer.GetFailure() == result &&
+                observer.GetStorageMetric(29) == 0 && observer.GetStorageMetric(12) == 0,
+                "failed payload or publication commitment reports OOM without reserving an unreadable entry");
+        }
+        for (size_t allowance : {size_t{0}, GCToOSInterface::GetPageSize()})
+        {
+            LaxoriReferenceCounting engine;
+            LaxoriRcConfiguration configuration{
+                16 * ImmixBlockGeometry::BlockBytes, 8 * LaxoriLargeObjectSpace::MinimumObjectBytes,
+                16, 1024, 4, 8,
+            };
+            size_t limit = SIZE_MAX;
+            LaxoriRcObjectModel model{};
+            model.context = &limit;
+            model.canAdmitRange = NativeAdmission;
+            LaxoriPauseRuntimeAdapter runtime{Suspend, Resume, nullptr, false};
+            if (!Check(engine.Initialize(configuration, runtime, &model) == LaxoriRcResult::Success,
+                    "log admission fixture initializes"))
+            {
+                return;
+            }
+            size_t initialNative = engine.GetNativePlaneCommittedBytes();
+            limit = initialNative + allowance;
+            LaxoriRcResult expected = allowance == 0 ? LaxoriRcResult::OutOfMemory : LaxoriRcResult::Success;
+            Check(engine.ValidateLogStorageForTest(8) == expected &&
+                engine.GetFailure() == expected && engine.GetNativePlaneCommittedBytes() == limit &&
+                engine.GetStorageMetric(29) == (allowance == 0 ? 0 : 1),
+                "log growth either fits the minimum page budget or fails without committing or reserving an entry");
+        }
+        {
+            LaxoriReferenceCounting engine;
+            LaxoriRcMutator* mutator;
+            int identity;
+            if (!Initialize(engine, 8, &mutator, &identity))
+            {
+                return;
+            }
+            Check(engine.ValidateLogStorageForTest(7) == LaxoriRcResult::Success,
+                "concurrent producers cross commit boundaries without lost entries, and a quiet epoch releases excess pages");
+        }
+        {
+            LaxoriReferenceCounting observer;
+            Check(observer.InitializeObserver(128 * 1024, 4) == LaxoriRcResult::Success &&
+                observer.ValidateLogStorageForTest(7) == LaxoriRcResult::Success,
+                "observer payload and publication pages grow, shrink, and recommit together under concurrent producers");
         }
         for (uint8_t bits : {uint8_t{2}, uint8_t{4}, uint8_t{8}})
         {
@@ -1472,7 +1529,7 @@ namespace
             };
             LaxoriPauseRuntimeAdapter runtime{Suspend, Resume, nullptr, false};
             if (!Check(engine.Initialize(configuration, runtime) == LaxoriRcResult::Success,
-                "simultaneous-context fixture admits all log backing before stores"))
+                "simultaneous-context fixture reserves log backing before stores"))
             {
                 return;
             }
@@ -2047,9 +2104,11 @@ namespace
         }
         Check(engine.GetAdmittedBytes() > initial && engine.GetGrowthCount() > 0,
             "capacity growth is measured rather than a larger eager arena");
-        Check(engine.GetNativePlaneCommittedBytes() > initialNative &&
+        Check(engine.GetNativePlaneCommittedBytes() == initialNative &&
+            engine.GetStorageMetric(11) == 0 && engine.GetStorageMetric(13) == 0 &&
+            engine.GetStorageMetric(17) == 0 && engine.GetStorageMetric(19) == 0 &&
             engine.GetReservationStart() == start && engine.GetFieldMetadataBase() == descriptor,
-            "committed native planes grow without changing any published address");
+            "heap growth without logged fields commits no log pages and preserves published addresses");
         Check(engine.Grow(false, configuration.hardLimitBytes, Capture, &capture, Timeout) ==
                 LaxoriRcResult::AllocationFailure && engine.GetFailure() == LaxoriRcResult::Success,
             "hard-limit failure does not poison existing owned storage");
@@ -2235,12 +2294,12 @@ namespace
 
     void ValidateGrowthFailure()
     {
-        // Three object planes (S7 removed the two trace tables), four payload streams, fifteen metadata planes (fourteen
-        // without the ValidObject plane of the default variant), then the managed heap.
+        // Three object planes (S7 removed the two trace tables), fifteen metadata planes (fourteen
+        // without the ValidObject plane of the default variant), the managed heap and three per-block tables.
 #ifdef LAXORI_OBJECT_START_WALK
-        constexpr int64_t CommitCalls = 22;
+        constexpr int64_t CommitCalls = 21;
 #else
-        constexpr int64_t CommitCalls = 23;
+        constexpr int64_t CommitCalls = 22;
 #endif // LAXORI_OBJECT_START_WALK
         for (int64_t after = 0; after <= CommitCalls; after++)
         {
@@ -2276,7 +2335,7 @@ namespace
                     ? result == LaxoriRcResult::Success && engine.GetAdmittedBytes() > capacity
                     : result == LaxoriRcResult::OutOfMemory && engine.GetAdmittedBytes() == capacity) &&
                 engine.GetFailure() == LaxoriRcResult::Success && engine.GetObjectExtent(object) == 24,
-                "partial plane, stream, metadata or heap commit failure does not publish capacity or poison old objects");
+                "partial plane, metadata or heap commit failure does not publish capacity or poison old objects");
             Check((after == CommitCalls ||
                     engine.Grow(false, 32768, Capture, &roots, Timeout) == LaxoriRcResult::Success) &&
                 engine.GetAdmittedBytes() > capacity,
@@ -2284,6 +2343,60 @@ namespace
             Epoch(engine, values);
             Check(engine.GetLiveBytes() == 24, "post-failure roots and reclamation stay valid");
         }
+    }
+
+    void ValidateLargeGrowthFailure()
+    {
+        constexpr size_t LargeBytes = LaxoriLargeObjectSpace::MinimumObjectBytes;
+        bool completed = false;
+        for (int64_t after = 0; after < 40; after++)
+        {
+            LaxoriReferenceCounting engine;
+            LaxoriRcConfiguration configuration{
+                2 * ImmixBlockGeometry::BlockBytes, 4 * LargeBytes,
+                4, 1024, 4, 8, 1024 * 1024, 1024 * 1024, 2 * 1024 * 1024,
+            };
+            LaxoriPauseRuntimeAdapter runtime{Suspend, Resume, nullptr, false};
+            LaxoriRcMutator* mutator = nullptr;
+            int identity;
+            if (!Check(engine.Initialize(configuration, runtime) == LaxoriRcResult::Success &&
+                    engine.AttachMutator(&identity, &mutator) == LaxoriRcResult::Success,
+                    "LOS commit failure fixture initializes"))
+            {
+                return;
+            }
+            Type type(LargeBytes, 0);
+            Object* object = nullptr;
+            if (!Check(engine.Allocate(mutator, LargeBytes, &object) == LaxoriRcResult::Success,
+                    "preexisting LOS object allocates"))
+            {
+                return;
+            }
+            object->RawSetMethodTable(type.table);
+            std::vector<Object*> values{object};
+            Roots roots{&values};
+            size_t capacity = engine.GetAdmittedBytes();
+            LaxoriTestFailCommitAfter(after);
+            LaxoriRcResult result = engine.Grow(true, 8 * LargeBytes, Capture, &roots, Timeout);
+            LaxoriTestFailCommitAfter(-1);
+            std::printf("large_growth_failure_after=%lld result=%u\n",
+                static_cast<long long>(after), static_cast<unsigned>(result));
+            Check(engine.GetFailure() == LaxoriRcResult::Success && engine.GetObjectExtent(object) == LargeBytes,
+                "LOS growth failure preserves old objects and engine state");
+            if (result == LaxoriRcResult::Success)
+            {
+                Check(engine.GetAdmittedBytes() > capacity, "LOS growth publishes capacity after all commits");
+                completed = true;
+                break;
+            }
+            Check(result == LaxoriRcResult::OutOfMemory && engine.GetAdmittedBytes() == capacity,
+                "LOS list, page-map and heap commit failures do not publish capacity");
+            Check(engine.Grow(true, 8 * LargeBytes, Capture, &roots, Timeout) == LaxoriRcResult::Success,
+                "LOS growth recovers after a failed commit");
+            Check(Epoch(engine, values) && engine.GetLiveBytes() == LargeBytes,
+                "LOS reclamation remains valid after a failed growth");
+        }
+        Check(completed, "LOS failure injection covers every admission commit");
     }
 
     void ValidateCoalescedGrowth()
@@ -2418,10 +2531,18 @@ namespace
         LaxoriRcConfiguration configuration{
             1024 * 1024, 1024 * 1024, 4, 1024, 4, 8, 2 * 1024 * 1024, 1024 * 1024, 3 * 1024 * 1024,
         };
-        size_t limit = SIZE_MAX;
+        struct GrowthBudget
+        {
+            size_t nativeBytes;
+            size_t rangeSlots;
+        } budget{SIZE_MAX, SIZE_MAX};
         LaxoriRcObjectModel model{};
-        model.context = &limit;
-        model.canAdmitRange = NativeAdmission;
+        model.context = &budget;
+        model.canAdmitRange = [](size_t, size_t count, size_t bytes, void* context)
+        {
+            GrowthBudget* budget = static_cast<GrowthBudget*>(context);
+            return bytes <= budget->nativeBytes && count <= budget->rangeSlots;
+        };
         LaxoriPauseRuntimeAdapter runtime{Suspend, Resume, nullptr, false};
         LaxoriRcMutator* mutator = nullptr;
         int identity;
@@ -2440,13 +2561,14 @@ namespace
         Object* next = nullptr;
         Check(engine.Allocate(mutator, 24, &next) == LaxoriRcResult::AllocationFailure,
             "retained objects exhaust initial Immix capacity");
-        limit = engine.GetNativePlaneCommittedBytes() + 1024 * 1024;
+        budget.nativeBytes = engine.GetNativePlaneCommittedBytes() + 1024 * 1024;
+        budget.rangeSlots = 65536 / sizeof(uintptr_t);
         Roots roots{&values};
         Check(engine.Grow(false, 24, Capture, &roots, Timeout) == LaxoriRcResult::Success &&
             engine.GetImmixCapacityBytes() > configuration.immixBytes &&
             engine.GetImmixCapacityBytes() < 2 * configuration.immixBytes &&
-            engine.GetNativePlaneCommittedBytes() <= limit,
-            "affordable minimum growth succeeds when preferred doubling exceeds the native budget");
+            engine.GetNativePlaneCommittedBytes() <= budget.nativeBytes,
+            "affordable minimum growth succeeds when preferred doubling exceeds the admission budget");
         Check(engine.Allocate(mutator, 24, &next) == LaxoriRcResult::Success,
             "smaller admitted growth makes the failed allocation succeed");
     }
@@ -2506,6 +2628,63 @@ namespace
         Check(LaxoriHeapSizer::DefaultNurseryCap(uint64_t{1} << 30) == 64 * MB, "the cap is a sixteenth of physical memory");
         Check(LaxoriHeapSizer::DefaultNurseryCap(uint64_t{256} << 20) == 16 * MB && LaxoriHeapSizer::DefaultNurseryCap(0) == 16 * MB,
             "a small or unknown memory limit gets the smallest cap");
+        for (size_t limitMB : {size_t{0}, size_t{64}, size_t{1024}, size_t{32768}, size_t{524288}})
+        {
+            size_t immix = 128;
+            size_t large = 256;
+            LaxoriDefaultLimits::ReservesMB(static_cast<uint64_t>(limitMB) << 20, size_t{1} << 28, 0,
+                true, &immix, true, &large);
+            Check(immix == (std::max)(size_t{128}, (std::min)(limitMB, size_t{262144})) &&
+                large == (std::max)(size_t{256}, (std::min)(limitMB, size_t{262144})),
+                "default reserves follow process memory with legacy floors and address ceilings");
+            Check(LaxoriDefaultLimits::NativePlaneLimitMB(immix, large) ==
+                (std::max)(size_t{4096}, (immix + large) * 450 / 100),
+                "the default native limit follows both reservations");
+        }
+        size_t immix = 128;
+        size_t large = 256;
+        LaxoriDefaultLimits::ReservesMB(uint64_t{32} << 30, 1024, 0, true, &immix, true, &large);
+        Check(immix == 512 && large == 512, "default reservations fit the host address limit");
+        immix = 128;
+        large = 256;
+        LaxoriDefaultLimits::ReservesMB(uint64_t{32} << 30, 1024, 0, false, &immix, true, &large);
+        Check(immix == 128 && large == 896, "an explicit Immix reserve stays authoritative at the address limit");
+        for (size_t hard : {size_t{384}, size_t{385}, size_t{512}, size_t{1024}})
+        {
+            immix = 128;
+            large = 256;
+            LaxoriDefaultLimits::ReservesMB(uint64_t{32} << 30, 4096, hard, true, &immix, true, &large);
+            Check(immix + large == hard && large >= 256 && immix >= 128,
+                "a managed hard limit supplies the default reservation split");
+        }
+        immix = 300;
+        large = 256;
+        LaxoriDefaultLimits::ReservesMB(uint64_t{32} << 30, 4096, 1024, false, &immix, true, &large);
+        Check(immix == 300 && large == 724, "hard-limit split preserves an explicit Immix reserve");
+        immix = 128;
+        large = 300;
+        LaxoriDefaultLimits::ReservesMB(uint64_t{32} << 30, 4096, 1024, true, &immix, false, &large);
+        Check(immix == 724 && large == 300, "hard-limit split preserves an explicit LOS reserve");
+        LaxoriDefaultLimits::ReservesMB(uint64_t{32} << 30, 4096, 2048, false, &immix, false, &large);
+        Check(immix == 724 && large == 300, "two explicit reserves are not enlarged by the hard limit");
+        Check(LaxoriDefaultLimits::CommitHeadroomBytes(uint64_t{512} << 20) == 64 * MB &&
+            LaxoriDefaultLimits::CommitHeadroomBytes(uint64_t{4} << 30) == 512 * MB &&
+            LaxoriDefaultLimits::CommitHeadroomBytes(uint64_t{32} << 20) == 32 * MB,
+            "commit headroom is an eighth of the limit, at least 64 MB and no more than the limit");
+        Check(LaxoriDefaultLimits::FitsCommitLimit(0, 0, SIZE_MAX, SIZE_MAX),
+            "no commit limit admits every growth");
+        Check(LaxoriDefaultLimits::FitsCommitLimit(512 * MB, 64 * MB, 400 * MB, 48 * MB) &&
+            !LaxoriDefaultLimits::FitsCommitLimit(512 * MB, 64 * MB, 400 * MB, 48 * MB + 1),
+            "growth can use commit up to the limit less the headroom");
+        Check(!LaxoriDefaultLimits::FitsCommitLimit(512 * MB, 64 * MB, 500 * MB, 0) &&
+            !LaxoriDefaultLimits::FitsCommitLimit(512 * MB, 600 * MB, 0, 0) &&
+            !LaxoriDefaultLimits::FitsCommitLimit(512 * MB, 64 * MB, 0, UINT64_MAX),
+            "commit in the headroom, headroom above the limit and huge growth are refused without overflow");
+        Check(LaxoriHeapSizer::PolicyReserveBytes(32768 * MB, 64 * MB) == 128 * MB &&
+            LaxoriHeapSizer::PolicyReserveBytes(32768 * MB, 65 * MB) == 130 * MB,
+            "default policy reserve keeps the small-heap ceiling and grows with live data");
+        Check(LaxoriHeapSizer::PolicyReserveBytes(64 * MB, SIZE_MAX) == 64 * MB,
+            "policy reserve saturates without exceeding the address reservation");
     }
 
     void ValidateImmixCapacityRequest()
@@ -11023,6 +11202,7 @@ int main(int argc, char** argv)
         ValidateFastSpan();
         ValidateGrowth();
         ValidateGrowthFailure();
+        ValidateLargeGrowthFailure();
         ValidateCoalescedGrowth();
         ValidateMinimumGrowthBudget();
         ValidateImmixCapacityRequest();

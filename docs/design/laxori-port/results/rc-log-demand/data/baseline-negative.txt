@@ -1,0 +1,7 @@
+[p4 --log-storage] exit=1 :: FAIL: 2114/2121 log storage checks
+    FAIL: unused log streams reserve address space without committing payload or publication pages
+    FAIL: failed payload or publication commitment reports OOM without reserving an unreadable entry
+    FAIL: failed payload or publication commitment reports OOM without reserving an unreadable entry
+    FAIL: log growth either fits the minimum page budget or fails without committing or reserving an entry
+    FAIL: log growth either fits the minimum page budget or fails without committing or reserving an entry
+native Release failed=1

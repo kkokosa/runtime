@@ -1,0 +1,6 @@
+reserve_mib=1024 hard_limit_mib=1024 native_limit_mib=4608 available_mib=512 private_mib=149.6 working_set_mib=81.1
+live_mib=16 admitted_mib=51 native_planes_mib=207 rc_logs_mib=207.1 private_mib=292.4
+live_mib=32 admitted_mib=82 native_planes_mib=328 rc_logs_mib=328.9 private_mib=450.0
+LAXORI: out of memory. All processes in the job have 449 MB committed, and the job commit limit of the job object is 512 MB. A heap growth would commit 162 KB more and leave less than 64 MB for the collector and the runtime (Immix capacity 66 MB, LOS 16 MB, native planes 328 MB). Raise the memory limit of the job, or set DOTNET_LAXORICommitHeadroomMB (decimal MB; 0 switches the check off).
+oom_after_arrays=2114
+PASS

@@ -102,7 +102,8 @@ LOCAL_LABEL(AssignRefEntry):
         // is the reference in a region of the current thread? owner_table[(ref - heap low) >> 15] == fs:0
         mov     rax, rsi
         sub     rax, qword ptr [rip + LOCAL_LABEL(HeapLowSlot)]
-        cmp     rax, qword ptr [rip + LOCAL_LABEL(HeapSizeSlot)]
+        mov     r8, qword ptr [rip + LOCAL_LABEL(PrivateHeapBytesSlot)]
+        cmp     rax, qword ptr [r8]
         jae     LOCAL_LABEL(LogCheck)
         shr     rax, LAXORI_BLOCK_SHIFT
         mov     r8, qword ptr [rip + LOCAL_LABEL(OwnerTableSlot)]
@@ -238,6 +239,9 @@ LOCAL_LABEL(RegionShiftSlot):
         .quad   0
 PATCH_LABEL LaxoriPatchable_EscapePath
 LOCAL_LABEL(EscapePathSlot):
+        .quad   0
+PATCH_LABEL LaxoriPatchable_PrivateHeapBytes
+LOCAL_LABEL(PrivateHeapBytesSlot):
         .quad   0
 
         .global C_FUNC(LaxoriWriteBarrierBlock_End)

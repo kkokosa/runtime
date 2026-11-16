@@ -1,0 +1,26 @@
+Windows GC build cache:
+CLR_CMAKE_ENABLE_LAXORI_GC:BOOL=ON -DCLR_CMAKE_ENABLE_LAXORI_PHASE_TIMERS=ON
+CMAKE_BUILD_TYPE:STRING=Release
+CMAKE_CXX_COMPILER:FILEPATH=C:/Program Files/Microsoft Visual Studio/18/IntPreview/VC/Tools/MSVC/14.51.36231/bin/Hostx64/x64/cl.exe
+
+Linux baseline build invocation and compiler detection:
+Commencing CoreCLR Repo build
+__TargetRid: linux-x64
+Setting up directories for build
+Checking prerequisites...
+/usr/bin/ninja
+Commencing build of "  clrlaxorigc clrlaxorigc_bitmap " target in "CoreCLR component" for linux.x64.Release in <repo>/artifacts/obj/coreclr/linux.x64.Release/rclog
+Invoking "<repo>/eng/native/gen-buildsys.sh" "<repo>/src/coreclr" "<repo>/artifacts/obj/coreclr/linux.x64.Release/rclog" x64 linux clang Release "ninja"  -DCLR_CMAKE_PGO_INSTRUMENT=0 -DCLR_CMAKE_OPTDATA_PATH= -DCLR_CMAKE_PGO_OPTIMIZE=0 -DCLI_CMAKE_FALLBACK_OS="linux" -DFEATURE_DISTRO_AGNOSTIC_SSL=1 -DCLR_CMAKE_ENABLE_LAXORI_GC=ON
+Not searching for unused variables given on the command line.
+-- The C compiler identification is Clang 14.0.0
+-- The CXX compiler identification is Clang 14.0.0
+-- Detecting C compiler ABI info
+-- Detecting C compiler ABI info - done
+-- Check for working C compiler: /usr/bin/clang-14 - skipped
+-- Detecting C compile features
+-- Detecting C compile features - done
+-- Detecting CXX compiler ABI info
+-- Detecting CXX compiler ABI info - done
+-- Check for working CXX compiler: /usr/bin/clang++-14 - skipped
+-- Detecting CXX compile features
+-- Detecting CXX compile features - done

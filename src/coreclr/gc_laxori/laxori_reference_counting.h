@@ -163,6 +163,7 @@ struct LaxoriRcObjectModel
     // zero already, and a borrowed range is mostly never used, so the borrow skips the writes (P17 S5b).
     bool (*admitRange)(size_t firstSlot, size_t slotCount, bool initialize, void* context) = nullptr;
     LaxoriRcTraceClosure finishLazy = nullptr;
+    // slotCount == 0 checks log growth on a mutator; no managed range is admitted.
     bool (*canAdmitRange)(size_t firstSlot, size_t slotCount, size_t nativeBytes, void* context) = nullptr;
     // P17 S7: the pin callback and the copy callback are gone. The engine keeps the pin list of the pause itself
     // (AddPinnedRoot), and a profiler walk reads the copies from the forwarding records (WalkForwarded).
@@ -678,6 +679,7 @@ public:
     // pages the pause may copy (RequestBorrow). If fewer Immix pages are free, the pause admits the missing blocks
     // from the reservation, and it gives the free tail of the capacity back before the epoch flips.
     bool IsOvershootEnabled() const { return m_overshoot; }
+    void SetBorrowCeiling(size_t bytes) { m_borrow_ceiling.store(bytes, std::memory_order_relaxed); }
     void RequestBorrow(size_t copyPages) { m_borrow_request_pages = copyPages; }
     // Bytes of the capacity above the part that is kept (the initial capacity and regular growth).
     size_t GetBorrowedBytes() const;
@@ -1149,6 +1151,14 @@ private:
     LaxoriVirtualArray<std::atomic<uint8_t>> m_allocated_block_storage;
     // The blocks that mutators took since the last pause (see ImmixAllocationManager::AcquireNotes).
     uint32_t* m_allocated_list = nullptr;
+    LaxoriVirtualArray<uint32_t> m_allocated_list_storage;
+    LaxoriVirtualArray<std::atomic<uint8_t>> m_block_flags_storage;
+    LaxoriVirtualArray<std::atomic<uint8_t>> m_zero_state_storage;
+    LaxoriVirtualArray<std::atomic<uint8_t>> m_evacuation_sources_storage;
+    LaxoriVirtualArray<std::atomic<uint8_t>> m_mature_candidates_storage;
+    std::atomic<size_t> m_block_table_blocks{0};
+    bool GrowBlockTables(size_t immixBytes);
+    bool GrowDeadLarge(size_t largeBytes);
     std::atomic<size_t> m_allocated_count{0};
     std::atomic<size_t> m_immix_capacity{0};
 #ifdef LAXORI_SIDE_METADATA_TEST_PLATFORM
@@ -1168,6 +1178,7 @@ private:
     // P17 S5b. The capacity that is never given back: the initial capacity and every regular growth. The part above it
     // is borrowed for a pause. Only a pause changes these values.
     bool m_overshoot = false;
+    std::atomic<size_t> m_borrow_ceiling{SIZE_MAX};
     size_t m_immix_floor = 0;
     size_t m_borrow_request_pages = 0;
     std::atomic<uint64_t> m_overshoot_metrics[OvershootMetricCount]{};
@@ -1310,13 +1321,16 @@ private:
     std::atomic<size_t> m_pause_mature_copied_bytes{0};
     LogChunk* m_mutator_chunks;
     LogBank* m_banks;
+    std::atomic_flag m_log_commit_lock = ATOMIC_FLAG_INIT;
     uintptr_t* m_roots[2];
     size_t m_root_counts[2];
     size_t m_root_capacity[2];
     LaxoriWordArray m_retained_roots;
     LaxoriWordArray m_released_roots;
     size_t m_current_roots;
+    LaxoriVirtualArray<uintptr_t> m_dead_large_storage;
     uintptr_t* m_dead_large;
+    std::atomic<size_t> m_dead_large_capacity{0};
     std::atomic<uint8_t>* m_mature_candidates;
     std::atomic<size_t> m_dead_large_count;
     std::atomic<size_t> m_producer_bank;
