@@ -58,6 +58,18 @@ struct VirtualReserveFlags
     };
 };
 
+// Outcome of GCToOSInterface::VirtualReserve at a requested location
+enum class VirtualReserveStatus
+{
+    // The range was reserved at the requested location.
+    Success,
+    // The range, or a part of it, is already mapped.
+    Occupied,
+    // The OS refused for a reason other than the range being mapped,
+    // such as running out of address space or hitting a mapping limit.
+    Refused,
+};
+
 // An event is a synchronization object whose state can be set and reset
 // indicating that an event has occurred. It is used pervasively throughout
 // the GC.
@@ -126,6 +138,39 @@ public:
     //   true if the initialization succeeded, false if it did not
     bool CreateAutoEventNoThrow(bool initialState);
 
+};
+
+// A gate retains a wake until a waiter consumes it. Unlike an auto-reset event,
+// WakeAll releases all current waiters, and waits may return spuriously.
+// This is a notification primitive; callers must synchronize their shared state separately.
+// Gates have process lifetime, like GCEvent; they deliberately have no destructor.
+class GCGate final
+{
+    static const uint32_t Blocking = 0;
+    static const uint32_t Open = 1;
+
+    class Impl;
+    Impl* m_impl;
+    volatile uint32_t m_state;
+
+public:
+    // Constructs a closed gate.
+    GCGate();
+
+    GCGate(const GCGate&) = delete;
+    GCGate& operator=(const GCGate&) = delete;
+
+    void Wait();
+
+    // The timeout is in milliseconds. Returns false only on timeout.
+    bool TimedWait(int timeout);
+
+    // Releases at least one waiter, or retains a wake for a future waiter.
+    // Concurrent wakes may coalesce.
+    void WakeOne();
+
+    // Like WakeOne, but releases all currently blocked waiters.
+    void WakeAll();
 };
 
 // GC thread function prototype
@@ -290,7 +335,16 @@ public:
     //  granularity.
     static void* VirtualReserve(size_t size, size_t alignment, uint32_t flags, uint16_t node = NUMA_NODE_UNDEFINED);
 
-    static void* VirtualReserve(void* location, size_t size, bool useTHP = false);
+    // Reserve virtual memory range at the given location.
+    // Parameters:
+    //  location  - requested starting address, or nullptr for any address
+    //  size      - size of the virtual memory range
+    //  useTHP    - hint that the range should be backed by transparent huge pages
+    //  status    - optional, receives the outcome when location is not nullptr
+    // Return:
+    //  Starting virtual address of the reserved range, or nullptr if the range could not be
+    //  reserved (when location is not nullptr, at that location)
+    static void* VirtualReserve(void* location, size_t size, bool useTHP = false, VirtualReserveStatus* status = nullptr);
     // Reserve a virtual memory range at an exact address without replacing an existing mapping.
     // Returns the requested address on success and nullptr otherwise.
     static void* VirtualReserveAt(void* address, size_t size, uint32_t flags, uint16_t node = NUMA_NODE_UNDEFINED);
@@ -451,6 +505,14 @@ public:
     // Return:
     //  non zero if it has succeeded, 0 if it has failed
     static size_t GetVirtualMemoryMaxAddress();
+
+    // Get the range of addresses where this process can map memory.
+    // Parameters:
+    //  start - receives the lowest address that can be mapped
+    //  end   - receives the address right after the highest address that can be mapped
+    // Return:
+    //  true if it has succeeded, false if the range is not known. On failure start and end are not modified.
+    static bool GetUserAddressRange(size_t* start, size_t* end);
 
     // Get the physical memory that this process can use.
     // Return:

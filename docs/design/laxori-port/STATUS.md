@@ -21,6 +21,138 @@ with `DOTNET_GCPath`.
 | Process-limit defaults and metadata committed on admission | Ported from LXR d67c0073c25/fa827d78804. Windows and Linux checks pass except the inherited 512 MiB Windows job failure. See the next section. |
 | Windows job commit headroom | Ported from LXR 7d2e464017a/443e767fecc. The 512 MiB retained-small-array probe now exits with a caught managed OOM instead of a crash. See below. |
 | RC logs committed on use | Ported from LXR 2499e220465. Startup private commit falls from 151.0 to 54.8 MiB; the retained-small-array probe now fits 40 MiB under a 512 MiB job. See the report below. |
+| Newer Satori (runtimelab `feature/gc/baseline` 6ee7c720a00) | Ported, 31 commits with the runtime-side parts and the regression tests. Builds on Windows x64 and Linux x64; all checks pass. See the next section. |
+
+## Update: newer Satori from runtimelab `feature/gc/baseline`
+
+Source: dotnet/runtimelab `feature/gc/baseline`, head `6ee7c720a00` (2026-11-06). Our `gc_satori` was the first import
+(runtimelab `432092f8e05`). This branch only; the LXR review branch is not changed.
+
+### 1. What was ported
+
+All 34 non-merge commits of `432092f8e05..6ee7c720a00` were examined, oldest first, and cherry-picked with `-x` (the source
+hash is in each message), except:
+
+* `8e9bbd8b16c` (minipal Rosetta detection) and its revert `6f82a2f3f9a`: the pair has no net effect, so both were skipped.
+* `25880504544`: empty here, because our first import already contains it.
+
+The 31 commits are `cab03c00ffc` to `d3cb1f9fe33` (on top of `f54d4f1c97b`). Three conflicts were resolved by hand:
+
+* `src/installer/pkg/sfx/Microsoft.NETCore.App/Directory.Build.props`: both the `clrlxrgc` and the `satorigc` entries are kept.
+* `src/coreclr/gc/env/gcenv.os.h`: the new `VirtualReserve(location, size, useTHP, VirtualReserveStatus*)` and
+  `GetUserAddressRange` are used, and our `VirtualReserveAt` (LXR and Laxori use it) is kept.
+* `src/tests/profiler/native/gcheapenumerationprofiler/gcheapenumerationprofiler.cpp`: our `ObjectReferenceState` callback and
+  the new `ReferenceWalkState`/`ValidateObjectReferences` are both kept.
+
+After the port, `git diff 6ee7c720a00 HEAD -- src/coreclr/gc_satori src/tests/GC/Regressions/Satori` shows only our two local
+changes: `GetPendingBridgeHandles` (`1a70da8a2c9`) and the 1-line `SatoriGC.cpp` change of `9e0328e39a9`.
+
+### 2. Changes outside `gc_satori` (30 files, +652/-62; tests: 36 files, +2465/-36)
+
+| Area | Files | Change |
+|---|---|---|
+| GC OS interface | `gc/env/gcenv.os.h`, `gc/unix/gcenv.unix.cpp`, `gc/windows/gcenv.windows.cpp` | `VirtualReserve` reports a failure reason; `GetUserAddressRange` (arm64 uses `GetVirtualMemoryMaxAddress`). |
+| GC PAL | `gc/unix/gate.cpp`, `gc/unix/globals.h`, `gc/windows/gate.cpp` (new), both `CMakeLists.txt`, `gc/unix/events.cpp` (-31) | Platform code of `SatoriGate.cpp` moved to the GC PAL. |
+| GC interface and config | `gc/gcinterface.ee.h`, `gc/gcinterface.h`, `gc/gcconfig.h`, `gc/gcevents.h`, `gc/env/etmdummy.h` | New `IGCToCLREventSink::FireGCThreadLocalCollection` (appended at the END, so old GC libraries stay compatible); config keys that Satori reads. |
+| Events | `vm/ClrEtwAll.man`, `vm/ClrEtwAllMeta.lst`, NativeAOT eventpipe `.lst` | New event `GCThreadLocalCollection` (event and opcode 239), with escaped-byte totals. |
+| VM | `vm/gcenv.ee.cpp`, `vm/gchelpers.cpp`, `vm/gctoclreventsink.cpp/.h`, `vm/threadsuspend.cpp`, `vm/amd64/AsmMacros.inc` | Publish objects a custom GC leaves unfinished; heap dump events only at the end of a custom GC's collections; `GCRestartEEEnd` fires after `ResumeAllThreads` (#136491). |
+| NativeAOT | `nativeaot/Runtime/{gcenv.ee.cpp, gctoclreventsink.cpp/.h, threadstore.cpp, amd64/AsmMacros.inc}`, `runtime/amd64/AllocFast.asm` | Same event sink and collection changes; the hot allocation helpers are aligned to cache lines (Windows x64). |
+| Packaging | `installer/pkg/sfx/Microsoft.NETCore.App/Directory.Build.props` | Satori runtime pack metadata. |
+| Tests | `GC/Regressions/Satori` (7 folders, 9 tests), `GC/API`, `Interop/GCBridge`, profiler `gcheapenumeration`, eventpipe `gcdump*`, `HeapDumpGcTrackerTests`, `IpcTraceTest`, `GC/Scenarios/HugeObjects` | New and updated tests. |
+
+The write barrier commits change only files in `gc_satori` (Satori's own custom barriers). The shared assembly write barriers
+that LXR and Laxori use are not changed. Because the VM, the events and `AllocFast` changed, new runtime frames were built.
+
+### 3. Build
+
+Windows (`subst X:` = this worktree, because of MAX_PATH; `build.cmd -cmakeargs` accepts only one `-D`, so the tree was
+reconfigured for the other GCs):
+
+```
+X:\build.cmd -subset clr -c Release -a x64 -cmakeargs "-DCLR_CMAKE_ENABLE_LXR_GC=1" /p:CrossgenOldValueWriteBarriers=true   # exit 0, 13:48
+X:\artifacts\cmake-laxori.cmd clrlaxorigc clrlaxorigc_bitmap satorigc clrlxrgc   # reconfigure -DCLR_CMAKE_ENABLE_LAXORI_GC=1 -DCLR_CMAKE_ENABLE_SATORI_GC=1, build; exit 0
+X:\build.cmd -subset libs -c Release -a x64 -rc Release /p:CrossgenOldValueWriteBarriers=true /nodeReuse:false   # exit 0 (for the tests)
+```
+
+Frame `C:\lx-run\frame-sat2`: a copy of `C:\lx-run\frame` with the new `coreclr.dll`, `clrjit.dll`, `corerun.exe`,
+`System.Private.CoreLib.dll`, `clrgc.dll`, `clrgcexp.dll`, `clrlxrgc.dll`, `clrlaxorigc.dll`, `clrlaxorigc-bitmap.dll` and
+`satorigc.dll`.
+
+Linux (WSL2, shallow clone of this branch at `d3cb1f9fe33` in `/root/sat2/main`): `build.sh -s clr -c Release -cmakeargs
+"-DCLR_CMAKE_ENABLE_LXR_GC=1" /p:CrossgenOldValueWriteBarriers=true`, then cmake reconfigure with Laxori and Satori and
+`cmake --build ... --target clrlaxorigc clrlaxorigc_bitmap satorigc clrlxrgc`: all exit 0. Frame `/root/sat2/frame` from
+`satori-sync/make-frame-linux.sh /root/prof/frame-c4 /root/sat2/main /root/sat2/frame`.
+
+### 4. Validation (all pass)
+
+| Check | Windows x64 | Linux x64 |
+|---|---|---|
+| 7 workloads x WKS, SVR, Satori, LXR, Laxori: checksums | 35/35 (see note 1) | 35/35 (see note 2) |
+| Satori regression tests (`GC/Regressions/Satori`, priority 1, Core_Root, `DOTNET_GCName=satorigc`) | 9/9 | 9/9 |
+| Laxori native P4 default | PASS 105881/105881 (and every other P4 selector; the zero-RC control fails as required) | PASS 105881/105881 (`run-native-all.sh`: all 10 programs pass) |
+| Laxori PrivateTests `all 2 T`, T = 1 2 4 8 13 13 13, L2 and L1, `LAXORIVerifyPrivate=1` | 14/14 | 14/14 |
+
+Commands:
+
+```
+# Windows
+pwsh -File docs\design\laxori-port\satori-sync\workloads-windows.ps1 -Frame C:\lx-run\frame-sat2 -Driver C:\lx-run\dl\drvlm\out\CompareDriver.dll -Out C:\lx-run\sat2\wl-check
+pwsh -File docs\design\laxori-port\windows\native-windows.ps1 -Program p4 -Repo X:\ -Output C:\lx-run\sat2\native-p4
+pwsh -File docs\design\laxori-port\windows\private-tests.ps1 -Frame C:\lx-run\frame-sat2 -Repeats 2 -Out C:\lx-run\sat2\pt -Repo X:\
+X:\src\tests\build.cmd x64 Release -priority 1 -tree GC\Regressions\Satori
+#   copy satorigc.dll to Core_Root; CORE_ROOT=...\Tests\Core_Root DOTNET_GCName=satorigc.dll; run each GC\Regressions\Satori\**\*.cmd
+#   (ThreadLocalCollectionEvents also needs DOTNET_TieredCompilation=0, otherwise the harness skips it as JitOptimizationSensitive)
+# Linux
+flock /tmp/lxr-bench.lock satori-sync/workloads-linux.sh /root/sat2/frame /root/sat2/wl-check 1
+satori-sync/laxori-tests-linux.sh /root/sat2/main /root/sat2/frame /root/sat2/laxori-tests
+satori-sync/satori-tests-linux.sh /root/sat2/main /root/sat2/satori-tests   # libs, src/tests/build.sh -priority1 -tree:GC/Regressions/Satori, run with DOTNET_GCName=libsatorigc.so DOTNET_TieredCompilation=0
+```
+
+Notes:
+
+1. On Windows, LXR `mediumarrays` and `losmany` first failed with `OutOfMemoryException` when they ran with no heap settings.
+   With the usual settings of `windows/bench-windows.py` (mediumarrays: `ImmixInitialMB=200 ImmixReserveMB=400`; losmany:
+   `LOSInitialMB=1000 LOSReserveMB=1600 NativePlaneLimitMB=16000`) both pass. The OLD frame `C:\lx-run\frame` with no settings fails in
+   the same way (`results/control-oldframe-lxr-nosettings-windows.csv`), so this is the known limit of this LXR version, not an
+   effect of the port. The scripts now give these settings to LXR and Laxori (switch `-NoSettings` / argument `noset` to turn them off).
+2. On Linux, the first run used the driver `/root/laxori/drv2`, which does not know `losmany` (all five collectors failed with
+   `ArgumentException: losmany`). The rerun with `/root/laxori/drv4` (now the default of `workloads-linux.sh`) passes for all five.
+   Raw rows: `results/check-*.csv`.
+3. The Satori tests check `GC.GetConfigurationVariables()["SatoriGC"]` and return 100 when Satori is not loaded. Satori-only output
+   (`HugeArrayOutOfMemory` iterations, `BlockingCollect` requests, the three `EscapedByteTotals` scenarios of the new event)
+   shows that Satori was loaded.
+
+### 5. Satori against Laxori (5 interleaved runs, medians, wall / CPU / pause ms)
+
+`satori-sync/summarize.py results/measure-*.csv`. Satori runs with `DOTNET_GCPath` only (`gcServer` not set); Laxori with
+`gcServer=1` and the settings of note 1. Linux: under `/tmp/lxr-bench.lock`, driver `drv4`. Windows: driver `drvlm`, no other
+work on the host.
+
+| workload | Linux WKS | Linux Satori | Linux Laxori | Satori/Laxori | Windows WKS | Windows Satori | Windows Laxori | Satori/Laxori |
+|---|---|---|---|---|---|---|---|---|
+| requests | 359 / 357 / 72 | 350 / 426 / 24 | 324 / 392 / 10 | 1.08 | 334 / 297 / 56 | 308 / 328 / 9 | 285 / 297 / 8 | 1.08 |
+| binarytrees | 1090 / 1103 / 301 | 940 / 1526 / 84 | 1068 / 2528 / 114 | 0.88 | 897 / 875 / 238 | 751 / 1219 / 46 | 935 / 1984 / 98 | 0.80 |
+| listsuffix | 2315 / 2412 / 1309 | 813 / 1974 / 117 | 1589 / 3768 / 161 | 0.51 | 1923 / 1812 / 1008 | 702 / 1766 / 63 | 1332 / 3516 / 145 | 0.53 |
+| mixedmedium | 1191 / 1200 / 502 | 732 / 1453 / 137 | 1457 / 2471 / 202 | 0.50 | 1101 / 922 / 393 | 611 / 1188 / 67 | 1206 / 2312 / 117 | 0.51 |
+| losarrays | 2137 / 2250 / 1308 | 763 / 1335 / 97 | 1164 / 2517 / 461 | 0.66 | 1906 / 1797 / 1088 | 698 / 1219 / 68 | 5016 / 5656 / 552 | 0.14 |
+| mediumarrays | 1325 / 1315 / 566 | 808 / 1381 / 139 | 1083 / 1845 / 100 | 0.75 | 1252 / 1000 / 468 | 637 / 1234 / 56 | 978 / 1703 / 77 | 0.65 |
+| losmany | 2732 / 2920 / 123 | 2246 / 3873 / 152 | 1120 / 2848 / 207 | 2.01 | 2393 / 2562 / 117 | 2067 / 3359 / 128 | 9604 / 10656 / 575 | 0.22 |
+
+* The newer Satori is faster than Laxori on 5 of 7 workloads on both systems (wall 0.50 to 0.88 of Laxori). Laxori is faster only
+  on `requests` (by 8 percent) and on Linux `losmany` (2x).
+* Against the old Satori numbers of section 3 (Linux, other frame): `requests` 570 -> 350 ms; the others are within about 10 percent,
+  except `mediumarrays` 649 -> 808 ms (not examined).
+* Laxori on Windows is 4 to 9 times slower on `losarrays` and `losmany` than on Linux. This is not new in this port (the Laxori
+  library is the same) and was not examined here.
+
+### 6. Gaps
+
+* Not built or run: the other ported tests (GC/API, Interop/GCBridge, profiler gcheapenumeration, eventpipe gcdump*,
+  HeapDumpGcTrackerTests, IpcTraceTest, GC/Scenarios/HugeObjects) and NativeAOT (its runtime-side changes are compiled only by a
+  NativeAOT build).
+* Not tested: arm64 and Apple (several ported commits are for these platforms only).
+* Satori ran with the default `gcServer` in the measurement; the SVR value for Satori was not examined.
+* LXR and Laxori need the heap settings of note 1 for `mediumarrays` and `losmany`; this is not changed by this port.
 
 ## Update: RC logs committed on use
 
