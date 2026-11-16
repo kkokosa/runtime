@@ -327,3 +327,76 @@ The goal (about the same commit charge as the old DLL) is met: 133 MB against 13
 * Windows: PrivateTests on the fix DLL; Jan's full command (the full run was not repeated); a job limit with a real workload (the job-limit rows are the start-up probe only); the per-pause effect of the tree rebuild on LOS growth (a rebuild copies and recomputes 2 x pages x 4 bytes: 8 MB for a 4 GB LOS; not timed) **[N]**.
 * The card table: no write beyond the committed range was seen in any run. A store barrier that writes a card for a slot outside the admitted ranges would fault; I read the code (only the runtime helpers use `g_gc_card_table`, and LXR installs its own barrier) but did not prove it **[N]**.
 * Reserves beyond 250000 MB on Windows.
+## 13. Windows job-object commit limit: commit headroom for heap growth (workstream 1 of the Windows low-memory follow-up)
+
+### 13.1 The finding
+
+Under a 512 MB job-object memory limit (Windows x64, `docs/design/laxori-port/windows/results/lxr-0579-windows.md`), `binarytrees` ended with `LXR fatal: LXR allocation-pressure collection failed. (engine failure 4)` and `mediumarrays` ended with an access violation. The d67c and 0579 libraries had the same result.
+
+### 13.2 Cause (traced with cdb under the job limit)
+
+* `binarytrees`: a GC worker in the pause runs `ProcessDecrements` to `ReferenceBatch::Flush` to `NewWork`. There, `new (std::nothrow) Work` returns null and the engine records `Fail(OutOfMemory)`. A failed engine cannot finish the pause, so `Alloc` / `CollectForPressure` calls `Fatal`.
+* `mediumarrays`: a thread gets a stack overflow (`c00000fd` in `__chkstk`) because the system cannot commit the next stack guard page at the commit limit; the access violation follows.
+* Commit at the failure (`!address`): 507.6 MB private commit, but the admitted heap was only about 86 MB (largest `admittedK` 86560). About 470 MB was in four reference-count log streams (2 banks x increments and decrements). Each stream commits one 8-byte slot for each heap slot of the admitted heap, so the logs commit about 4 x the admitted heap. Windows charges committed pages that were never written, and the log capacity never shrinks.
+* The native plane limit (4.5 x the reserves, here about 4.6 GB) does not stop this growth. The heap grows until the job commit is full, and then a malloc in the pause or a stack commit fails. That is too late for a clean out-of-memory result.
+
+### 13.3 Fix
+
+`CanAdmitRange` (`lxr_gc.cpp`) has a second check on Windows. At start-up, LXR reads the limits of its job with `QueryInformationJobObject(JobObjectExtendedLimitInformation)`. A job can have two limits, and LXR checks each against its own commit value:
+
+* The per-process limit (`JOB_OBJECT_LIMIT_PROCESS_MEMORY`) is compared with the `PrivateUsage` of this process (`GetProcessMemoryInfo`).
+* The job limit (`JOB_OBJECT_LIMIT_JOB_MEMORY`) is shared by all processes in the job. It is compared with the commit of the whole job, `JOBOBJECT_LIMIT_VIOLATION_INFORMATION::JobMemory` (`QueryInformationJobObject(JobObjectLimitViolationInformation)`). A test job with two ballast processes of 234 MB and 332 MB private commit gave `JobMemory` = 567 MB, with no notification limit set. If this query fails, LXR uses `PeakJobMemoryUsed`: it is not lower than the current commit, so the check then refuses growth too early, but not too late.
+
+Before each heap growth, LXR adds the growth range, 1/16 of it for side metadata and cards, and the new native plane bytes to each commit value. If a sum leaves less than the headroom below its limit, the growth is refused. The allocator then collects and, if that does not help, throws `OutOfMemoryException` with this message (per-process limit; for the job limit the message starts "All processes in the job have ... MB committed, and the job commit limit ..."):
+
+```text
+LXR: out of memory. The process has 450 MB committed, and the per-process commit limit of the job object is 512 MB. A heap growth would commit 34 KB more and leave less than 64 MB for the collector and the runtime (Immix capacity 67 MB, LOS 16 MB, native planes 343 MB). Raise the memory limit of the job, or set DOTNET_LXRCommitHeadroomMB (decimal MB; 0 switches the check off).
+```
+
+* Headroom default: the larger of 1/8 of the limit and 64 MB, not more than the limit (`LxrDefaultLimits::CommitHeadroomBytes`).
+* `DOTNET_LXRCommitHeadroomMB` (decimal MB) sets the headroom; 0 switches the check off.
+* The headroom is computed for each limit.
+* Only the job of the process is read. The limits of a parent job (nested jobs) are not checked.
+* No job limit, or not Windows: no change (Linux overcommit does not charge pages that were never written).
+
+### 13.4 Results (Windows x64, Release, `logs/windows-commit-headroom.txt`, one run each, under `/tmp/lxr-bench.lock`)
+
+| Run | Old (0579) | Fix |
+| --- | --- | --- |
+| binarytrees 18, 512 MB | fatal, engine failure 4 | **pass** (peak commit 456 / 458 MB) |
+| mediumarrays 20000 300000, 512 MB | access violation | **OutOfMemoryException** with the message above (peak 450 MB) |
+| binarytrees, 1 GB | pass | pass (687 MB) |
+| mediumarrays, 2 GB / 4 GB | pass | pass (1058 / 1061 MB) |
+| binarytrees, 64 GB | pass | pass (798 MB) |
+| binarytrees, 512 MB, `LXRCommitHeadroomMB=0` | - | fatal, engine failure 4 (control: old behavior) |
+| mediumarrays, 512 MB, `LXRCommitHeadroomMB=0` | - | OutOfMemoryException from a failed OS commit (control; the old access violation did not occur in this run) |
+
+`binarytrees` now passes at 512 MB because the refused growth makes the allocator collect instead of growing the logs.
+
+Second version of the fix (separate per-process and job limits). The scratch runner can set a job limit (`JOB_OBJECT_LIMIT_JOB_MEMORY`) and can put a ballast process (a `pwsh` that commits N MB) in the same job before the workload starts. "First version" is the guard that compared the lower limit with the commit of this process only.
+
+| Run | First version | Second version |
+| --- | --- | --- |
+| binarytrees, per-process 512 MB | - | pass (peak 459 MB) |
+| mediumarrays, per-process 512 MB | - | OutOfMemoryException, per-process message (450 MB committed) |
+| binarytrees, job 512 MB, no ballast | - | pass (peak 466 MB) |
+| mediumarrays, job 512 MB, no ballast | - | OutOfMemoryException, job message (451 MB committed) |
+| binarytrees, job 1 GB + 600 MB ballast | `LXR fatal: LXR could not publish its initialized Immix allocation span. (engine failure 4)`, exit `0xC00000FD`, job peak 1048 MB | OutOfMemoryException, job message (898 MB committed in the job), job peak 907 MB |
+| mediumarrays, job 2 GB + 1000 MB ballast | runtime `Out of memory.` (no LXR message), job peak 2052 MB | OutOfMemoryException, job message (1792 MB committed in the job), job peak 1792 MB |
+| binarytrees, per-process 1 GB | - | pass (769 MB) |
+| mediumarrays, per-process 2 GB | - | pass (1058 MB) |
+| mediumarrays, job 2 GB, no ballast | - | pass (1060 MB) |
+
+P4 (Linux, Release, `run-lxr-rc-vertical.sh`): 105881/105881, including four new checks of `CommitHeadroomBytes` and `FitsCommitLimit` (limit 0, the exact boundary, no overflow). The Windows P4 build of this tree fails before this change on the `small` macro and C4456 in `lxr-rc-validation.cpp` (the same local fixes as in section 12.4 are needed); not changed here.
+
+### 13.5 Not verified and next step
+
+* The headroom value is chosen from these runs, not proven: a pause that needs more than 64 MB of new commit (large work lists, many threads) can still fail at the limit **[N]**.
+* Several processes in one job: the job limit is checked against the commit of the whole job (section 13.3). The check sees only the commit at the time of a growth: another process in the job can commit after it, so the headroom must also cover the growth of the other processes **[N]**.
+* The `PeakJobMemoryUsed` fallback was not exercised: `JobObjectLimitViolationInformation` did not fail in these runs **[N]**.
+* Proposal: commit the reference-count log streams on demand (or make them smaller). They commit about 4 x the admitted heap on Windows; that would let much larger heaps fit under a job limit.
+
+Update: [RC logs now commit on use](../rc-log-demand/README.md). Startup private
+commit fell from 133.8 to 36.9 MiB in five-run medians; binarytrees and
+mediumarrays both passed a 512 MiB process limit in a Windows job object.
+That report contains the paired timings, checksums, and validation limits.

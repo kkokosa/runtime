@@ -174,6 +174,10 @@ private:
     static void Resume(bool finished, void* context);
     static void RetireAllocationContext(gc_alloc_context* context, void* heap);
     static bool CanAdmitRange(size_t firstSlot, size_t slotCount, size_t nativeBytes, void* heap);
+#ifdef TARGET_WINDOWS
+    static bool GetJobCommittedBytes(uint64_t* committed);
+    void RecordCommitRefusal(uint64_t addedBytes, uint64_t committedBytes, bool jobLimit);
+#endif // TARGET_WINDOWS
     static bool AdmitCards(size_t firstSlot, size_t slotCount, bool initialize, void* heap);
     bool CommitCards(size_t firstSlot, size_t slotCount);
     static LxrRcResult CaptureRoots(LxrReferenceCounting* engine, void* context);
@@ -264,6 +268,18 @@ private:
     // CanAdmitRange refused last (0 if it never refused).
     std::atomic<bool> m_out_of_memory_reported{false};
     std::atomic<size_t> m_native_refused_bytes{0};
+    // The commit limits of the Windows job object of the process (0: no limit, or not Windows) and the headroom that a
+    // growth leaves free below each (lxr_default_limits.h, CommitHeadroomBytes; LXRCommitHeadroomMB). The process limit
+    // is compared with the commit of this process, and the job limit with the commit of all processes in the job.
+    // m_commit_refused_bytes is the commit that CanAdmitRange refused last, m_commit_refused_committed the commit that it
+    // compared with the limit, and m_commit_refused_job tells if the limit was the job limit.
+    uint64_t m_process_commit_limit = 0;
+    uint64_t m_process_commit_headroom = 0;
+    uint64_t m_job_commit_limit = 0;
+    uint64_t m_job_commit_headroom = 0;
+    std::atomic<size_t> m_commit_refused_bytes{0};
+    std::atomic<size_t> m_commit_refused_committed{0};
+    std::atomic<bool> m_commit_refused_job{false};
     std::atomic<LxrCollectionCause> m_collection_cause{LxrCollectionCause::None};
     // Heap sizing (lxr_heap_sizing.h). The sizer is used with the collection lock held. The live estimate is written by
     // FinishLazy, on a worker thread.

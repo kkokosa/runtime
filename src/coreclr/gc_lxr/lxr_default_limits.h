@@ -105,6 +105,36 @@ struct LxrDefaultLimits
         size_t derived = total > SIZE_MAX / NativePlanePercent ? SIZE_MAX >> 20 : total * NativePlanePercent / 100;
         return derived < MinimumNativePlaneLimitMB ? MinimumNativePlaneLimitMB : derived;
     }
+
+    // The commit limits of a Windows job object (lxr_gc.cpp, CanAdmitRange). Windows charges all committed memory to the
+    // limit, also the pages that were never written: the reference-count logs alone commit about four times the admitted
+    // heap. Before this rule the heap grew until the process had no commit left, and then a native allocation of the
+    // pause (engine failure 4, a fatal error) or the guard page of a thread stack (an access violation) failed. A growth
+    // must leave this headroom free for the native work lists of the collector, thread stacks and the runtime. The
+    // allocation that needed the growth then fails with OutOfMemoryException.
+    static constexpr size_t MinimumCommitHeadroomMB = 64;
+    static constexpr size_t CommitHeadroomDivisor = 8;
+    // The default headroom: one eighth of the limit, at least MinimumCommitHeadroomMB (and not more than the limit).
+    static uint64_t CommitHeadroomBytes(uint64_t limitBytes)
+    {
+        uint64_t headroom = limitBytes / CommitHeadroomDivisor;
+        uint64_t minimum = uint64_t{MinimumCommitHeadroomMB} << 20;
+        headroom = headroom > minimum ? headroom : minimum;
+        return headroom < limitBytes ? headroom : limitBytes;
+    }
+    // True if addedBytes more can be committed while committedBytes are committed now. A limit of 0 is no limit.
+    static bool FitsCommitLimit(uint64_t limitBytes, uint64_t headroomBytes, uint64_t committedBytes, uint64_t addedBytes)
+    {
+        if (limitBytes == 0)
+        {
+            return true;
+        }
+        if (headroomBytes > limitBytes || committedBytes > limitBytes - headroomBytes)
+        {
+            return false;
+        }
+        return addedBytes <= limitBytes - headroomBytes - committedBytes;
+    }
 };
 
 #endif // LXR_DEFAULT_LIMITS_H

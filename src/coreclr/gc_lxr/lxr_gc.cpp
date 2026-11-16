@@ -14,10 +14,12 @@
 
 #include <algorithm>
 #include <new>
-#ifndef TARGET_WINDOWS
+#ifdef TARGET_WINDOWS
+#include <psapi.h>
+#else
 #include <time.h>
 #include <unistd.h>
-#endif // !TARGET_WINDOWS
+#endif // TARGET_WINDOWS
 
 // Entry of the assembly write barrier slow path (defined below).
 extern "C" void LxrBarrierSlowPath(Object** slot);
@@ -515,6 +517,35 @@ HRESULT LxrGcHeap::Initialize()
     }
     configuration.hardLimitBytes = m_hard_limit;
     m_native_plane_limit = nativePlaneLimitMB << 20;
+    size_t commitHeadroomMB = 0;
+    bool commitHeadroomSpecified = false;
+    if (!ReadSetting("LXRCommitHeadroomMB", &commitHeadroomMB, 10, SIZE_MAX >> 20, &commitHeadroomSpecified))
+    {
+        return E_FAIL;
+    }
+#ifdef TARGET_WINDOWS
+    // A job object can limit the commit of each process in it and the commit of all its processes together, and Windows
+    // charges committed pages that were never written. LXRCommitHeadroomMB=0 switches the check off. Only the job of the
+    // process is read: the limits of a parent job (nested jobs) are not checked.
+    JOBOBJECT_EXTENDED_LIMIT_INFORMATION job{};
+    if (!(commitHeadroomSpecified && commitHeadroomMB == 0) &&
+        QueryInformationJobObject(nullptr, JobObjectExtendedLimitInformation, &job, sizeof(job), nullptr))
+    {
+        uint64_t specified = static_cast<uint64_t>(commitHeadroomMB) << 20;
+        if ((job.BasicLimitInformation.LimitFlags & JOB_OBJECT_LIMIT_PROCESS_MEMORY) != 0 && job.ProcessMemoryLimit != 0)
+        {
+            m_process_commit_limit = job.ProcessMemoryLimit;
+            m_process_commit_headroom = commitHeadroomSpecified
+                ? specified : LxrDefaultLimits::CommitHeadroomBytes(m_process_commit_limit);
+        }
+        if ((job.BasicLimitInformation.LimitFlags & JOB_OBJECT_LIMIT_JOB_MEMORY) != 0 && job.JobMemoryLimit != 0)
+        {
+            m_job_commit_limit = job.JobMemoryLimit;
+            m_job_commit_headroom = commitHeadroomSpecified
+                ? specified : LxrDefaultLimits::CommitHeadroomBytes(m_job_commit_limit);
+        }
+    }
+#endif // TARGET_WINDOWS
     configuration.lineRecycling = !noRecycling && !noMutatorRecycling;
     configuration.copyLineRecycling = !noRecycling;
     // The engine enables overshoot only when there is no hard limit and the reservation is larger than the initial
@@ -856,17 +887,79 @@ void LxrGcHeap::RegisterFinalizable(Object* object, uint32_t flags)
     }
 }
 
-bool LxrGcHeap::CanAdmitRange(size_t, size_t, size_t nativeBytes, void* context)
+bool LxrGcHeap::CanAdmitRange(size_t, size_t slotCount, size_t nativeBytes, void* context)
 {
     // The engine reports all native planes. The collector keeps no per-object table of its own since P17 S7.
     LxrGcHeap* heap = static_cast<LxrGcHeap*>(context);
-    if (nativeBytes <= heap->m_native_plane_limit)
+    if (nativeBytes > heap->m_native_plane_limit)
     {
+        heap->m_native_refused_bytes.store(nativeBytes, std::memory_order_relaxed);
+        return false;
+    }
+#ifdef TARGET_WINDOWS
+    if (heap->m_process_commit_limit != 0 || heap->m_job_commit_limit != 0)
+    {
+        // The growth commits the range, its side metadata and cards (taken as one sixteenth of the range) and the
+        // native planes above those that are committed now.
+        size_t rangeBytes = slotCount * sizeof(uintptr_t);
+        size_t nativeNow = heap->m_engine.GetNativePlaneCommittedBytes();
+        uint64_t added = static_cast<uint64_t>(rangeBytes) + rangeBytes / 16 +
+            (nativeBytes > nativeNow ? nativeBytes - nativeNow : 0);
+        if (heap->m_process_commit_limit != 0)
+        {
+            PROCESS_MEMORY_COUNTERS_EX counters{};
+            counters.cb = sizeof(counters);
+            if (GetProcessMemoryInfo(GetCurrentProcess(), reinterpret_cast<PROCESS_MEMORY_COUNTERS*>(&counters),
+                    sizeof(counters)) &&
+                !LxrDefaultLimits::FitsCommitLimit(heap->m_process_commit_limit, heap->m_process_commit_headroom,
+                    counters.PrivateUsage, added))
+            {
+                heap->RecordCommitRefusal(added, counters.PrivateUsage, false);
+                return false;
+            }
+        }
+        uint64_t jobCommitted = 0;
+        if (heap->m_job_commit_limit != 0 && GetJobCommittedBytes(&jobCommitted) &&
+            !LxrDefaultLimits::FitsCommitLimit(heap->m_job_commit_limit, heap->m_job_commit_headroom, jobCommitted, added))
+        {
+            heap->RecordCommitRefusal(added, jobCommitted, true);
+            return false;
+        }
+    }
+#else
+    (void)slotCount;
+#endif // TARGET_WINDOWS
+    return true;
+}
+
+#ifdef TARGET_WINDOWS
+// The commit of all processes in the job of this process. JOBOBJECT_LIMIT_VIOLATION_INFORMATION::JobMemory is the
+// current commit of the job, also when no notification limit is set. If it cannot be read, the peak commit of the job
+// is used: it is not lower than the current commit, so the check refuses growth too early, but never too late.
+bool LxrGcHeap::GetJobCommittedBytes(uint64_t* committed)
+{
+    JOBOBJECT_LIMIT_VIOLATION_INFORMATION violation{};
+    if (QueryInformationJobObject(nullptr, JobObjectLimitViolationInformation, &violation, sizeof(violation), nullptr))
+    {
+        *committed = violation.JobMemory;
         return true;
     }
-    heap->m_native_refused_bytes.store(nativeBytes, std::memory_order_relaxed);
+    JOBOBJECT_EXTENDED_LIMIT_INFORMATION job{};
+    if (QueryInformationJobObject(nullptr, JobObjectExtendedLimitInformation, &job, sizeof(job), nullptr))
+    {
+        *committed = job.PeakJobMemoryUsed;
+        return true;
+    }
     return false;
 }
+
+void LxrGcHeap::RecordCommitRefusal(uint64_t addedBytes, uint64_t committedBytes, bool jobLimit)
+{
+    m_commit_refused_job.store(jobLimit, std::memory_order_relaxed);
+    m_commit_refused_committed.store(static_cast<size_t>(committedBytes), std::memory_order_relaxed);
+    m_commit_refused_bytes.store(static_cast<size_t>(addedBytes), std::memory_order_relaxed);
+}
+#endif // TARGET_WINDOWS
 
 // Prints one line to stderr that names the limit that stopped an allocation. It runs when Alloc returns null, which the
 // runtime turns into OutOfMemoryException. The line is printed once per process: many threads can fail at the same
@@ -895,6 +988,21 @@ void LxrGcHeap::ReportOutOfMemory(size_t size, LxrRcResult growth)
         length = snprintf(text, sizeof(text),
             "LXR: out of memory. More than %zu threads allocate at the same time. This limit is fixed.\n",
             MaximumMutators);
+    }
+    else if (growth == LxrRcResult::OutOfMemory && m_commit_refused_bytes.load(std::memory_order_relaxed) != 0)
+    {
+        bool jobLimit = m_commit_refused_job.load(std::memory_order_relaxed);
+        length = snprintf(text, sizeof(text),
+            "LXR: out of memory. %s %zu MB committed, and the %s commit limit of the job object is %zu MB. "
+            "A heap growth would commit %zu KB more and leave less than %zu MB for the collector and the runtime "
+            "(Immix capacity %zu MB, LOS %zu MB, native planes %zu MB). Raise the memory limit of the job, or set "
+            "DOTNET_LXRCommitHeadroomMB (decimal MB; 0 switches the check off).\n",
+            jobLimit ? "All processes in the job have" : "The process has",
+            m_commit_refused_committed.load(std::memory_order_relaxed) / MB, jobLimit ? "job" : "per-process",
+            static_cast<size_t>((jobLimit ? m_job_commit_limit : m_process_commit_limit) / MB),
+            m_commit_refused_bytes.load(std::memory_order_relaxed) / 1024,
+            static_cast<size_t>((jobLimit ? m_job_commit_headroom : m_process_commit_headroom) / MB),
+            immix / MB, large / MB, m_engine.GetNativePlaneCommittedBytes() / MB);
     }
     else if (growth == LxrRcResult::OutOfMemory && m_native_refused_bytes.load(std::memory_order_relaxed) != 0)
     {

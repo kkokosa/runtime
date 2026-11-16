@@ -162,6 +162,7 @@ struct LxrRcObjectModel
     // zero already, and a borrowed range is mostly never used, so the borrow skips the writes (P17 S5b).
     bool (*admitRange)(size_t firstSlot, size_t slotCount, bool initialize, void* context) = nullptr;
     LxrRcTraceClosure finishLazy = nullptr;
+    // slotCount == 0 checks log growth on a mutator; no managed range is admitted.
     bool (*canAdmitRange)(size_t firstSlot, size_t slotCount, size_t nativeBytes, void* context) = nullptr;
     // P17 S7: the pin callback and the copy callback are gone. The engine keeps the pin list of the pause itself
     // (AddPinnedRoot), and a profiler walk reads the copies from the forwarding records (WalkForwarded).
@@ -1266,6 +1267,7 @@ private:
     std::atomic<size_t> m_pause_mature_copied_bytes{0};
     LogChunk* m_mutator_chunks;
     LogBank* m_banks;
+    std::atomic_flag m_log_commit_lock = ATOMIC_FLAG_INIT;
     uintptr_t* m_roots[2];
     size_t m_root_counts[2];
     size_t m_root_capacity[2];

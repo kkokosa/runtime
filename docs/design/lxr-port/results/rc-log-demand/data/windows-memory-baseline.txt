@@ -1,0 +1,16 @@
+binarytrees limit=512 exit=-532462766
+[31;1mLXR: out of memory. The process has 449 MB committed, and the per-process commit limit of the job object is 512 MB. A heap growth would commit 34 KB more and leave less than 64 MB for the collector and the runtime (Immix capacity 66 MB, LOS 16 MB, native planes 336 MB). Raise the memory limit of the job, or set DOTNET_LXRCommitHeadroomMB (decimal MB; 0 switches the check off).[0m
+peak commit of the process (PeakProcessMemoryUsed): 466 MB
+exit=-532462766 limit=512MB
+mediumarrays limit=512 exit=-532462766
+[31;1mLXR: out of memory. The process has 452 MB committed, and the per-process commit limit of the job object is 512 MB. A heap growth would commit 34 KB more and leave less than 64 MB for the collector and the runtime (Immix capacity 67 MB, LOS 16 MB, native planes 343 MB). Raise the memory limit of the job, or set DOTNET_LXRCommitHeadroomMB (decimal MB; 0 switches the check off).[0m
+peak commit of the process (PeakProcessMemoryUsed): 452 MB
+exit=-532462766 limit=512MB
+binarytrees limit=1024 exit=0
+peak commit of the process (PeakProcessMemoryUsed): 646 MB
+exit=0 limit=1024MB
+{"checksum":68332294,"wall_ms":1085.334,"cpu_ms":2296.875,"pause_ms":118.81850000000003,"collections":46,"peak_rss_mb":162.6640625}
+mediumarrays limit=1024 exit=0
+peak commit of the process (PeakProcessMemoryUsed): 897 MB
+exit=0 limit=1024MB
+{"checksum":7032863679,"wall_ms":1562.9028,"cpu_ms":2312.5,"pause_ms":179.88279999999997,"collections":274,"peak_rss_mb":217.59765625}

@@ -134,6 +134,7 @@ namespace
     Object* Allocate(LxrReferenceCounting& engine, LxrRcMutator* mutator, Type& type);
     Object** Field(Object* object, size_t index = 0);
     bool Store(LxrReferenceCounting& engine, LxrRcMutator* mutator, Object** slot, Object* target);
+    bool NativeAdmission(size_t first, size_t count, size_t bytes, void* context);
 
     struct MovingRoots
     {
@@ -1378,12 +1379,11 @@ namespace
             {
                 return;
             }
-            size_t payload = engine.GetAdmittedBytes();
-            Check(engine.GetStorageMetric(11) == payload && engine.GetStorageMetric(12) == 0 &&
-                engine.GetStorageMetric(13) == payload && engine.GetStorageMetric(14) == 0 &&
-                engine.GetStorageMetric(17) == payload && engine.GetStorageMetric(18) == 0 &&
-                engine.GetStorageMetric(19) == payload && engine.GetStorageMetric(20) == 0,
-                "four full-capacity payload streams have no separate publication backing");
+            Check(engine.GetStorageMetric(11) == 0 && engine.GetStorageMetric(12) == 0 &&
+                engine.GetStorageMetric(13) == 0 && engine.GetStorageMetric(14) == 0 &&
+                engine.GetStorageMetric(17) == 0 && engine.GetStorageMetric(18) == 0 &&
+                engine.GetStorageMetric(19) == 0 && engine.GetStorageMetric(20) == 0,
+                "unused log streams reserve address space without committing payload or publication pages");
             Check(engine.ValidateLogStorageForTest(0) == LxrRcResult::CapacityExceeded &&
                 engine.GetFailure() == LxrRcResult::CapacityExceeded,
                 "all1024 partial widths and every admitted one-entry flush preserve exact47-bit payload before overflow");
@@ -1405,6 +1405,63 @@ namespace
             Check(observer.InitializeObserver(8, 1) == LxrRcResult::Success &&
                 observer.ValidateLogStorageForTest(6) == LxrRcResult::Success,
                 "observer publication preserves full-width foreign values without truncation");
+        }
+        for (int64_t after : {int64_t{0}, int64_t{1}})
+        {
+            LxrReferenceCounting observer;
+            if (!Check(observer.InitializeObserver(8, 1) == LxrRcResult::Success,
+                    "commit-failure fixture reserves empty observer streams"))
+            {
+                return;
+            }
+            LxrTestFailCommitAfter(after);
+            LxrRcResult result = observer.ValidateLogStorageForTest(6);
+            LxrTestFailCommitAfter(-1);
+            Check(result == LxrRcResult::OutOfMemory && observer.GetFailure() == result &&
+                observer.GetStorageMetric(29) == 0 && observer.GetStorageMetric(12) == 0,
+                "failed payload or publication commitment reports OOM without reserving an unreadable entry");
+        }
+        for (size_t allowance : {size_t{0}, GCToOSInterface::GetPageSize()})
+        {
+            LxrReferenceCounting engine;
+            LxrRcConfiguration configuration{
+                16 * ImmixBlockGeometry::BlockBytes, 8 * LxrLargeObjectSpace::MinimumObjectBytes,
+                16, 1024, 4, 8,
+            };
+            size_t limit = SIZE_MAX;
+            LxrRcObjectModel model{};
+            model.context = &limit;
+            model.canAdmitRange = NativeAdmission;
+            LxrPauseRuntimeAdapter runtime{Suspend, Resume, nullptr, false};
+            if (!Check(engine.Initialize(configuration, runtime, &model) == LxrRcResult::Success,
+                    "log admission fixture initializes"))
+            {
+                return;
+            }
+            size_t initialNative = engine.GetNativePlaneCommittedBytes();
+            limit = initialNative + allowance;
+            LxrRcResult expected = allowance == 0 ? LxrRcResult::OutOfMemory : LxrRcResult::Success;
+            Check(engine.ValidateLogStorageForTest(8) == expected &&
+                engine.GetFailure() == expected && engine.GetNativePlaneCommittedBytes() == limit &&
+                engine.GetStorageMetric(29) == (allowance == 0 ? 0 : 1),
+                "log growth either fits the minimum page budget or fails without committing or reserving an entry");
+        }
+        {
+            LxrReferenceCounting engine;
+            LxrRcMutator* mutator;
+            int identity;
+            if (!Initialize(engine, 8, &mutator, &identity))
+            {
+                return;
+            }
+            Check(engine.ValidateLogStorageForTest(7) == LxrRcResult::Success,
+                "concurrent producers cross commit boundaries without lost entries, and a quiet epoch releases excess pages");
+        }
+        {
+            LxrReferenceCounting observer;
+            Check(observer.InitializeObserver(128 * 1024, 4) == LxrRcResult::Success &&
+                observer.ValidateLogStorageForTest(7) == LxrRcResult::Success,
+                "observer payload and publication pages grow, shrink, and recommit together under concurrent producers");
         }
         for (uint8_t bits : {uint8_t{2}, uint8_t{4}, uint8_t{8}})
         {
@@ -1466,7 +1523,7 @@ namespace
             };
             LxrPauseRuntimeAdapter runtime{Suspend, Resume, nullptr, false};
             if (!Check(engine.Initialize(configuration, runtime) == LxrRcResult::Success,
-                "simultaneous-context fixture admits all log backing before stores"))
+                "simultaneous-context fixture reserves log backing before stores"))
             {
                 return;
             }
@@ -2041,9 +2098,11 @@ namespace
         }
         Check(engine.GetAdmittedBytes() > initial && engine.GetGrowthCount() > 0,
             "capacity growth is measured rather than a larger eager arena");
-        Check(engine.GetNativePlaneCommittedBytes() > initialNative &&
+        Check(engine.GetNativePlaneCommittedBytes() == initialNative &&
+            engine.GetStorageMetric(11) == 0 && engine.GetStorageMetric(13) == 0 &&
+            engine.GetStorageMetric(17) == 0 && engine.GetStorageMetric(19) == 0 &&
             engine.GetReservationStart() == start && engine.GetFieldMetadataBase() == descriptor,
-            "committed native planes grow without changing any published address");
+            "heap growth without logged fields commits no log pages and preserves published addresses");
         Check(engine.Grow(false, configuration.hardLimitBytes, Capture, &capture, Timeout) ==
                 LxrRcResult::AllocationFailure && engine.GetFailure() == LxrRcResult::Success,
             "hard-limit failure does not poison existing owned storage");
@@ -2229,13 +2288,13 @@ namespace
 
     void ValidateGrowthFailure()
     {
-        // Three object planes (S7 removed the two trace tables), four payload streams, fifteen metadata planes (fourteen
+        // Three object planes (S7 removed the two trace tables), fifteen metadata planes (fourteen
         // without the ValidObject plane of the default variant), the managed heap, then the per-block tables of the engine
         // (candidates, flags, allocated list).
 #ifdef LXR_OBJECT_START_WALK
-        constexpr int64_t CommitCalls = 25;
+        constexpr int64_t CommitCalls = 21;
 #else
-        constexpr int64_t CommitCalls = 26;
+        constexpr int64_t CommitCalls = 22;
 #endif // LXR_OBJECT_START_WALK
         for (int64_t after = 0; after <= CommitCalls; after++)
         {
@@ -2271,7 +2330,7 @@ namespace
                     ? result == LxrRcResult::Success && engine.GetAdmittedBytes() > capacity
                     : result == LxrRcResult::OutOfMemory && engine.GetAdmittedBytes() == capacity) &&
                 engine.GetFailure() == LxrRcResult::Success && engine.GetObjectExtent(object) == 24,
-                "partial plane, stream, metadata or heap commit failure does not publish capacity or poison old objects");
+                "partial plane, metadata or heap commit failure does not publish capacity or poison old objects");
             Check((after == CommitCalls ||
                     engine.Grow(false, 32768, Capture, &roots, Timeout) == LxrRcResult::Success) &&
                 engine.GetAdmittedBytes() > capacity,
@@ -2413,10 +2472,18 @@ namespace
         LxrRcConfiguration configuration{
             1024 * 1024, 1024 * 1024, 4, 1024, 4, 8, 2 * 1024 * 1024, 1024 * 1024, 3 * 1024 * 1024,
         };
-        size_t limit = SIZE_MAX;
+        struct GrowthBudget
+        {
+            size_t nativeBytes;
+            size_t rangeSlots;
+        } budget{SIZE_MAX, SIZE_MAX};
         LxrRcObjectModel model{};
-        model.context = &limit;
-        model.canAdmitRange = NativeAdmission;
+        model.context = &budget;
+        model.canAdmitRange = [](size_t, size_t count, size_t bytes, void* context)
+        {
+            GrowthBudget* budget = static_cast<GrowthBudget*>(context);
+            return bytes <= budget->nativeBytes && count <= budget->rangeSlots;
+        };
         LxrPauseRuntimeAdapter runtime{Suspend, Resume, nullptr, false};
         LxrRcMutator* mutator = nullptr;
         int identity;
@@ -2435,13 +2502,14 @@ namespace
         Object* next = nullptr;
         Check(engine.Allocate(mutator, 24, &next) == LxrRcResult::AllocationFailure,
             "retained objects exhaust initial Immix capacity");
-        limit = engine.GetNativePlaneCommittedBytes() + 1024 * 1024;
+        budget.nativeBytes = engine.GetNativePlaneCommittedBytes() + 1024 * 1024;
+        budget.rangeSlots = 65536 / sizeof(uintptr_t);
         Roots roots{&values};
         Check(engine.Grow(false, 24, Capture, &roots, Timeout) == LxrRcResult::Success &&
             engine.GetImmixCapacityBytes() > configuration.immixBytes &&
             engine.GetImmixCapacityBytes() < 2 * configuration.immixBytes &&
-            engine.GetNativePlaneCommittedBytes() <= limit,
-            "affordable minimum growth succeeds when preferred doubling exceeds the native budget");
+            engine.GetNativePlaneCommittedBytes() <= budget.nativeBytes,
+            "affordable minimum growth succeeds when preferred doubling exceeds the admission budget");
         Check(engine.Allocate(mutator, 24, &next) == LxrRcResult::Success,
             "smaller admitted growth makes the failed allocation succeed");
     }
@@ -2548,6 +2616,19 @@ namespace
             "the native plane limit is 4.5 times the reservation");
         Check(LxrDefaultLimits::NativePlaneLimitMB(SIZE_MAX >> 21, SIZE_MAX >> 21) >= LxrDefaultLimits::MinimumNativePlaneLimitMB,
             "the native plane limit does not overflow");
+        Check(LxrDefaultLimits::CommitHeadroomBytes(uint64_t{512} << 20) == 64 * MB &&
+            LxrDefaultLimits::CommitHeadroomBytes(uint64_t{4} << 30) == 512 * MB &&
+            LxrDefaultLimits::CommitHeadroomBytes(uint64_t{32} << 20) == 32 * MB,
+            "the commit headroom is an eighth of the job limit, at least 64 MB and not more than the limit");
+        Check(LxrDefaultLimits::FitsCommitLimit(0, 0, SIZE_MAX, SIZE_MAX),
+            "no job limit admits every growth");
+        Check(LxrDefaultLimits::FitsCommitLimit(512 * MB, 64 * MB, 400 * MB, 48 * MB) &&
+            !LxrDefaultLimits::FitsCommitLimit(512 * MB, 64 * MB, 400 * MB, 48 * MB + 1),
+            "a growth may use the commit up to the limit less the headroom");
+        Check(!LxrDefaultLimits::FitsCommitLimit(512 * MB, 64 * MB, 500 * MB, 0) &&
+            !LxrDefaultLimits::FitsCommitLimit(512 * MB, 600 * MB, 0, 0) &&
+            !LxrDefaultLimits::FitsCommitLimit(512 * MB, 64 * MB, 0, UINT64_MAX),
+            "a process in the headroom, a headroom above the limit or a huge growth is refused without overflow");
 
         // With the default reserve the sizing keeps the old ceiling while the live size is small, and grows with it.
         Check(LxrHeapSizer::PolicyReserveBytes(60 * GB, 0) == 128 * MB &&

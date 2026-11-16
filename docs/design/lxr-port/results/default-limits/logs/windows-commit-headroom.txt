@@ -1,0 +1,97 @@
+===== wlm-bt512old
+peak commit of the process (PeakProcessMemoryUsed): 511 MB
+exit=-2147467259 limit=512MB
+===== wlm-bt512c
+peak commit of the process (PeakProcessMemoryUsed): 458 MB
+exit=0 limit=512MB
+===== wlm-ma512c
+peak commit of the process (PeakProcessMemoryUsed): 451 MB
+exit=-532462766 limit=512MB
+===== wlm-bt1g
+peak commit of the process (PeakProcessMemoryUsed): 687 MB
+exit=0 limit=1024MB
+===== wlm-ma2g
+peak commit of the process (PeakProcessMemoryUsed): 1058 MB
+exit=0 limit=2048MB
+===== wlm-ma4g
+peak commit of the process (PeakProcessMemoryUsed): 1061 MB
+exit=0 limit=4096MB
+===== wlm-bt64g
+peak commit of the process (PeakProcessMemoryUsed): 798 MB
+exit=0 limit=65536MB
+===== wlm-bt512off
+peak commit of the process (PeakProcessMemoryUsed): 512 MB
+exit=-2147467259 limit=512MB
+===== wlm-ma512off
+peak commit of the process (PeakProcessMemoryUsed): 512 MB
+exit=-532462766 limit=512MB
+
+===== Console lines (native stderr is not in the .log files; copied from the run output)
+wlm-bt512old (clrlxrgc-0579.dll): LXR fatal: LXR allocation-pressure collection failed. (engine failure 4)
+wlm-bt512off (fix, DOTNET_LXRCommitHeadroomMB=0): LXR fatal: LXR allocation-pressure collection failed. (engine failure 4)
+wlm-ma512off (fix, DOTNET_LXRCommitHeadroomMB=0): LXR: out of memory. The operating system did not commit memory for the heap (Immix capacity 61 MB of 512 MB, LOS 16 MB of 512 MB). [earlier 0579/d67c runs: access violation after stack overflow c00000fd in __chkstk]
+wlm-ma512c (fix): LXR: out of memory. The process has 451 MB committed, and the commit limit of its job object is 512 MB. A heap growth would commit 34 KB more and leave less than 64 MB for the collector and the runtime (Immix capacity 67 MB, LOS 16 MB, native planes 343 MB). ... System.OutOfMemoryException
+wlm-bt512c, wlm-bt1g, wlm-ma2g, wlm-ma4g, wlm-bt64g (fix): no LXR line, exit=0.
+
+==== Second version: separate per-process and job limits (clrlxrgc-wlm2.dll; clrlxrgc-wlm.dll is the first version) ====
+Note: the stderr lines of a run (LXR ..., Out of memory.) are printed before the === line of the same run. Names: bt/ma = binarytrees/mediumarrays, p = per-process limit, j = job limit, bN = ballast process of N MB in the job, old/new = first/second version.
+=== bt-p512-new (10 s)
+  peak commit of the process (PeakProcessMemoryUsed): 459 MB, job peak 459 MB
+  exit=0 limit=512MB
+LXR: out of memory. The process has 450 MB committed, and the per-process commit limit of the job object is 512 MB. A heap growth would commit 34 KB more and leave less than 64 MB for the collector and the runtime (Immix capacity 67 MB, LOS 16 MB, native planes 343 MB). Raise the memory limit of the job, or set DOTNET_LXRCommitHeadroomMB (decimal MB; 0 switches the check off).
+   at System.String.Ctor(Char c, Int32 count)
+   at GcBench.MediumArrays(Int32 entries, Int64 count, Boolean calibrate) in C:\lx-run\drv2\GcBench.cs:line 301
+   at GcBench.Run(String workload, Int32 size, Int64 ops, Int64[] latency, Boolean calibrate) in C:\lx-run\drv2\GcBench.cs:line 459
+   at InvokeStub_GcBench.Run(Object, Span`1)
+   at System.Reflection.MethodBaseInvoker.InvokeWithManyArgs(Object obj, BindingFlags invokeAttr, Binder binder, Object[] parameters, CultureInfo culture)
+   --- End of inner exception stack trace ---
+   at System.Reflection.MethodBaseInvoker.InvokeWithManyArgs(Object obj, BindingFlags invokeAttr, Binder binder, Object[] parameters, CultureInfo culture)
+   at System.Reflection.RuntimeMethodInfo.Invoke(Object obj, BindingFlags invokeAttr, Binder binder, Object[] parameters, CultureInfo culture)
+   at System.Reflection.MethodBase.Invoke(Object obj, Object[] parameters)
+   at CompareDriver.<>c__DisplayClass8_0.<Main>g__Invoke|0(Int32 count, Int64 ops) in C:\lx-run\drv2\CompareDriver.cs:line 112
+   at CompareDriver.Main(String[] args) in C:\lx-run\drv2\CompareDriver.cs:line 165
+=== ma-p512-new (12 s)
+LXR fatal: LXR could not publish its initialized Immix allocation span. (engine failure 4)
+=== bt-j1024b600-old (5 s)
+  ballast pid 49332 private 632 MB in the job
+  peak commit of the process (PeakProcessMemoryUsed): 632 MB, job peak 1048 MB
+  exit=-1073741571 limit=1024MB
+LXR: out of memory. All processes in the job have 898 MB committed, and the job commit limit of the job object is 1024 MB. A heap growth would commit 162 KB more and leave less than 128 MB for the collector and the runtime (Immix capacity 31 MB, LOS 16 MB, native planes 191 MB). Raise the memory limit of the job, or set DOTNET_LXRCommitHeadroomMB (decimal MB; 0 switches the check off).
+   --- End of inner exception stack trace ---
+   at System.Reflection.MethodBaseInvoker.InvokeWithManyArgs(Object obj, BindingFlags invokeAttr, Binder binder, Object[] parameters, CultureInfo culture)
+   at System.Reflection.RuntimeMethodInfo.Invoke(Object obj, BindingFlags invokeAttr, Binder binder, Object[] parameters, CultureInfo culture)
+   at CompareDriver.<>c__DisplayClass8_0.<Main>g__Invoke|0(Int32 count, Int64 ops) in C:\lx-run\drv2\CompareDriver.cs:line 111
+   at CompareDriver.Main(String[] args) in C:\lx-run\drv2\CompareDriver.cs:line 165
+=== bt-j1024b600-new (7 s)
+  ballast pid 41444 private 632 MB in the job
+  peak commit of the process (PeakProcessMemoryUsed): 632 MB, job peak 907 MB
+  exit=-532462766 limit=1024MB
+Out of memory.
+=== ma-j2048b1000-old (8 s)
+  ballast pid 46556 private 1034 MB in the job
+  peak commit of the process (PeakProcessMemoryUsed): 1033 MB, job peak 2052 MB
+  exit=-532462766 limit=2048MB
+LXR: out of memory. All processes in the job have 1792 MB committed, and the job commit limit of the job object is 2048 MB. A heap growth would commit 162 KB more and leave less than 256 MB for the collector and the runtime (Immix capacity 129 MB, LOS 16 MB, native planes 580 MB). Raise the memory limit of the job, or set DOTNET_LXRCommitHeadroomMB (decimal MB; 0 switches the check off).
+   at GcBench.MediumArrays(Int32 entries, Int64 count, Boolean calibrate) in C:\lx-run\drv2\GcBench.cs:line 316
+   at GcBench.Run(String workload, Int32 size, Int64 ops, Int64[] latency, Boolean calibrate) in C:\lx-run\drv2\GcBench.cs:line 459
+   at InvokeStub_GcBench.Run(Object, Span`1)
+   at System.Reflection.MethodBaseInvoker.InvokeWithManyArgs(Object obj, BindingFlags invokeAttr, Binder binder, Object[] parameters, CultureInfo culture)
+   --- End of inner exception stack trace ---
+   at System.Reflection.MethodBaseInvoker.InvokeWithManyArgs(Object obj, BindingFlags invokeAttr, Binder binder, Object[] parameters, CultureInfo culture)
+   at System.Reflection.RuntimeMethodInfo.Invoke(Object obj, BindingFlags invokeAttr, Binder binder, Object[] parameters, CultureInfo culture)
+   at System.Reflection.MethodBase.Invoke(Object obj, Object[] parameters)
+   at CompareDriver.<>c__DisplayClass8_0.<Main>g__Invoke|0(Int32 count, Int64 ops) in C:\lx-run\drv2\CompareDriver.cs:line 112
+   at CompareDriver.Main(String[] args) in C:\lx-run\drv2\CompareDriver.cs:line 165
+=== ma-j2048b1000-new (7 s)
+  ballast pid 47996 private 1033 MB in the job
+  peak commit of the process (PeakProcessMemoryUsed): 1033 MB, job peak 1792 MB
+  exit=-532462766 limit=2048MB
+=== bt-p1024-new (8 s)
+  peak commit of the process (PeakProcessMemoryUsed): 769 MB, job peak 769 MB
+  exit=0 limit=1024MB
+=== ma-p2048-new (5 s)
+  peak commit of the process (PeakProcessMemoryUsed): 1058 MB, job peak 1058 MB
+  exit=0 limit=2048MB
+=== ma-j2048-new (5 s)
+  peak commit of the process (PeakProcessMemoryUsed): 1060 MB, job peak 1060 MB
+  exit=0 limit=2048MB

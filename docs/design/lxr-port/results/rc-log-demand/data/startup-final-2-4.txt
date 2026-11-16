@@ -1,0 +1,16 @@
+private_mb=37.2 ws_mb=44.6
+committed private regions: 33.4 MB in 117 regions
+  0x216bcf19000 16.0 MB
+  0x296ad230000 8.0 MB
+  0x216be13e000 1.0 MB
+  0x216bcd9b000 1.0 MB
+  0x216bb1d0000 1.0 MB
+  0x21680000000 1.0 MB
+  0xe15354f1000 0.5 MB
+  0x4f18554f1000 0.5 MB
+  0x2168e2f2000 0.3 MB
+  0xe14b5691000 0.3 MB
+  0x1e0a9aa78000 0.3 MB
+  0x4c0a9aa78000 0.3 MB
+  0x4f17d5691000 0.3 MB
+  0x2168e2b0000 0.3 MB

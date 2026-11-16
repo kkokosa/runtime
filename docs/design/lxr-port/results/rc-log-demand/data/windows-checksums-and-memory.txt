@@ -1,0 +1,58 @@
+0 requests demand 334.0924 9 0
+0 requests baseline 318.6466 9 0
+0 binarytrees baseline 937.3687 31 0
+0 binarytrees demand 956.9975 30 0
+0 listsuffix demand 1190.0085 6 0
+0 listsuffix baseline 1199.6988 6 0
+0 mixedmedium demand 1250.2398 189 0
+0 mixedmedium baseline 1191.4439 181 0
+0 losarrays baseline 4858.4856 48 0
+0 losarrays demand 4988.3816 49 0
+0 mediumarrays demand 1276.0236 89 0
+0 mediumarrays baseline 1354.9559 89 0
+requests wall_ms: 318.647 -> 334.092; paired median +15.446 95% bootstrap [+15.446, +15.446]
+requests cpu_ms: 328.125 -> 406.250; paired median +78.125 95% bootstrap [+78.125, +78.125]
+requests pause_ms: 19.301 -> 21.349; paired median +2.048 95% bootstrap [+2.048, +2.048]
+requests collections: 9.000 -> 9.000; paired median +0.000 95% bootstrap [+0.000, +0.000]
+requests peak_rss_mb: 168.234 -> 169.883; paired median +1.648 95% bootstrap [+1.648, +1.648]
+binarytrees wall_ms: 937.369 -> 956.997; paired median +19.629 95% bootstrap [+19.629, +19.629]
+binarytrees cpu_ms: 1953.125 -> 2531.250; paired median +578.125 95% bootstrap [+578.125, +578.125]
+binarytrees pause_ms: 88.315 -> 102.576; paired median +14.262 95% bootstrap [+14.262, +14.262]
+binarytrees collections: 31.000 -> 30.000; paired median -1.000 95% bootstrap [-1.000, -1.000]
+binarytrees peak_rss_mb: 196.055 -> 211.348; paired median +15.293 95% bootstrap [+15.293, +15.293]
+listsuffix wall_ms: 1199.699 -> 1190.008; paired median -9.690 95% bootstrap [-9.690, -9.690]
+listsuffix cpu_ms: 3031.250 -> 3640.625; paired median +609.375 95% bootstrap [+609.375, +609.375]
+listsuffix pause_ms: 149.417 -> 167.405; paired median +17.988 95% bootstrap [+17.988, +17.988]
+listsuffix collections: 6.000 -> 6.000; paired median +0.000 95% bootstrap [+0.000, +0.000]
+listsuffix peak_rss_mb: 199.152 -> 201.809; paired median +2.656 95% bootstrap [+2.656, +2.656]
+mixedmedium wall_ms: 1191.444 -> 1250.240; paired median +58.796 95% bootstrap [+58.796, +58.796]
+mixedmedium cpu_ms: 2093.750 -> 2578.125; paired median +484.375 95% bootstrap [+484.375, +484.375]
+mixedmedium pause_ms: 125.958 -> 126.944; paired median +0.986 95% bootstrap [+0.986, +0.986]
+mixedmedium collections: 181.000 -> 189.000; paired median +8.000 95% bootstrap [+8.000, +8.000]
+mixedmedium peak_rss_mb: 195.027 -> 195.594; paired median +0.566 95% bootstrap [+0.566, +0.566]
+losarrays wall_ms: 4858.486 -> 4988.382; paired median +129.896 95% bootstrap [+129.896, +129.896]
+losarrays cpu_ms: 5250.000 -> 5453.125; paired median +203.125 95% bootstrap [+203.125, +203.125]
+losarrays pause_ms: 566.395 -> 606.869; paired median +40.474 95% bootstrap [+40.474, +40.474]
+losarrays collections: 48.000 -> 49.000; paired median +1.000 95% bootstrap [+1.000, +1.000]
+losarrays peak_rss_mb: 323.836 -> 332.285; paired median +8.449 95% bootstrap [+8.449, +8.449]
+mediumarrays wall_ms: 1354.956 -> 1276.024; paired median -78.932 95% bootstrap [-78.932, -78.932]
+mediumarrays cpu_ms: 2515.625 -> 1921.875; paired median -593.750 95% bootstrap [-593.750, -593.750]
+mediumarrays pause_ms: 93.577 -> 99.070; paired median +5.493 95% bootstrap [+5.493, +5.493]
+mediumarrays collections: 89.000 -> 89.000; paired median +0.000 95% bootstrap [+0.000, +0.000]
+mediumarrays peak_rss_mb: 252.273 -> 254.406; paired median +2.133 95% bootstrap [+2.133, +2.133]
+binarytrees limit=512 exit=0
+peak commit of the process (PeakProcessMemoryUsed): 222 MB
+exit=0 limit=512MB
+{"checksum":68332294,"wall_ms":1084.3237,"cpu_ms":1984.375,"pause_ms":101.62969999999996,"collections":58,"peak_rss_mb":227.82421875}
+mediumarrays limit=512 exit=0
+peak commit of the process (PeakProcessMemoryUsed): 242 MB
+exit=0 limit=512MB
+{"checksum":7032863679,"wall_ms":1259.127,"cpu_ms":1875,"pause_ms":98.78289999999998,"collections":101,"peak_rss_mb":251.5625}
+binarytrees limit=1024 exit=0
+peak commit of the process (PeakProcessMemoryUsed): 161 MB
+exit=0 limit=1024MB
+{"checksum":68332294,"wall_ms":976.9843,"cpu_ms":1859.375,"pause_ms":98.81629999999998,"collections":33,"peak_rss_mb":168.65625}
+mediumarrays limit=1024 exit=0
+peak commit of the process (PeakProcessMemoryUsed): 243 MB
+exit=0 limit=1024MB
+{"checksum":7032863679,"wall_ms":1166.7149,"cpu_ms":1718.75,"pause_ms":72.80359999999999,"collections":91,"peak_rss_mb":252.24609375}

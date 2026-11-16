@@ -10,7 +10,7 @@
 #include "gcenv.inl"
 #endif // LXR_SIDE_METADATA_TEST_PLATFORM
 
-// Addresses never change. Admission is suspended; failed commits do not publish capacity.
+// Addresses never change. Callers serialize commits and decommits; failed commits do not publish capacity.
 template <typename T>
 class LxrVirtualArray final
 {
